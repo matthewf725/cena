@@ -178,8 +178,10 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   }
 
   async function clickGotIt(page) {
-    const gotIt = page.getByRole('button', { name: 'Got it', exact: true });
-    if (await gotIt.count()) await gotIt.click();
+    const gotIt = page.getByText('Got it', { exact: true });
+    await gotIt.waitFor({ state: 'visible', timeout: 15000 });
+    await gotIt.click();
+    await gotIt.waitFor({ state: 'hidden', timeout: 10000 });
   }
 
   async function sendAndVerifyAccountOtp(page, email, codeInput, verifyButton) {
@@ -392,10 +394,20 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const checkoutOtp = await readOtp(checkoutEmail);
     mark('checkout OTP received from local Mailpit');
     await customerPage.getByPlaceholder('6-digit email sign-in code').fill(checkoutOtp);
-    const checkoutOtpVerifyPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/verify') && response.request().method() === 'POST', { timeout: 30000 });
+    const checkoutOtpVerifyPromise = customerPage.waitForResponse(response => {
+      const pathname = new URL(response.url()).pathname;
+      return (pathname.endsWith('/auth/v1/verify') || pathname.includes('/auth/v1/token')) && response.request().method() === 'POST';
+    }, { timeout: 30000 }).catch(error => error);
     const noCodeQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 8000 }).catch(() => null);
+    mark('submitting checkout OTP code');
     await customerPage.getByRole('button', { name: 'Verify code and continue', exact: true }).click();
+    mark(`checkout OTP submit click returned; page ${new URL(customerPage.url()).pathname}`);
     const checkoutOtpVerify = await checkoutOtpVerifyPromise;
+    if (checkoutOtpVerify instanceof Error) {
+      const detailsVisible = await customerPage.getByText(/3\s+DETAILS/i).count().catch(() => 0);
+      await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-checkout-otp-submit.png`, fullPage: true }).catch(() => {});
+      throw new Error(`No checkout OTP verify response; URL ${customerPage.url()}; 3 DETAILS visible ${detailsVisible > 0}; API trace: ${apiTrace.slice(-20).join(' | ')}`);
+    }
     mark(`checkout OTP verify returned ${checkoutOtpVerify.status()}`);
     assert.ok(checkoutOtpVerify.ok(), 'Local Supabase checkout OTP verification should succeed');
     let noCodeQuoteResponse = await noCodeQuotePromise;
