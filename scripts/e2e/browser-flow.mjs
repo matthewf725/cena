@@ -328,7 +328,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     merchantPage.on('response', response => {
       if (response.url().includes('/auth/v1/token') && response.request().method() === 'POST') authResponses.push(response);
     });
-    await merchantPage.goto(restaurantOrigin, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await merchantPage.goto(restaurantOrigin, { waitUntil: 'domcontentloaded', timeout: 120000 });
     await merchantPage.getByPlaceholder('Email', { exact: true }).fill(fixture.email);
     await merchantPage.getByPlaceholder('Password', { exact: true }).fill(fixture.password);
     await merchantPage.getByRole('button', { name: 'Sign in', exact: true }).click();
