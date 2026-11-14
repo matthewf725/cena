@@ -150,7 +150,7 @@ export function createFakeStripe({ webhookUrl, webhookSecret, runId = String(Dat
           },
         };
         refunds.set(id, refund);
-        audit.push({ kind: 'refund', refundId: id, account: request.headers['stripe-account'], amountCents: refund.amount });
+        audit.push({ kind: 'refund', refundId: id, orderId: refund.metadata.cena_order_id, account: request.headers['stripe-account'], amountCents: refund.amount });
         return json(response, 200, refund);
       }
       const refundMatch = url.pathname.match(/^\/v1\/refunds\/(re_[A-Za-z0-9]+)$/);

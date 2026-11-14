@@ -3,13 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { chromium, webkit } from 'playwright';
 
 const browserTypes = { chromium, webkit };
-const customerOrigin = process.env.CENA_E2E_CUSTOMER_ORIGIN || 'http://localhost:8081';
-const restaurantOrigin = process.env.CENA_E2E_RESTAURANT_ORIGIN || 'http://localhost:8082';
 const mailpitOrigin = 'http://127.0.0.1:54324';
 const restaurantSlug = 'sunrise-cafe';
 const mealName = 'Rigatoni alla Vodka Kit';
 
-export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, apiOrigin, fake, runId, artifactsDir }) {
+export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, apiOrigin, customerOrigin = process.env.CENA_E2E_CUSTOMER_ORIGIN || 'http://localhost:8081', restaurantOrigin = process.env.CENA_E2E_RESTAURANT_ORIGIN || 'http://localhost:8082', fake, runId, artifactsDir }) {
   const type = browserTypes[browserName];
   if (!type) throw new Error(`Unsupported browser ${browserName}`);
   const browser = await type.launch({ headless: process.env.CENA_E2E_HEADLESS !== '0' });
@@ -113,13 +111,24 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await context.route('**/*', async route => {
       const requestUrl = new URL(route.request().url());
       if (requestUrl.hostname === 'checkout.stripe.com') {
+        if (requestUrl.pathname.startsWith('/__qa/pay/')) {
+          try {
+            const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, fake.origin);
+            const upstream = await route.fetch({ url: target.toString(), method: 'POST', maxRedirects: 0, timeout: 10000 });
+            await route.fulfill({ response: upstream });
+          } catch (error) {
+            networkBlocks.push(`Fake Stripe payment proxy failed: ${error instanceof Error ? error.message : String(error)}`);
+            await route.abort('failed').catch(() => {});
+          }
+          return;
+        }
         const sessionId = requestUrl.pathname.split('/').filter(Boolean).at(-1);
         const current = context.pages().find(candidate => candidate.url().includes('checkout.stripe.com')) || page;
         externalPages.push(current);
         await route.fulfill({
           status: 200,
           contentType: 'text/html; charset=utf-8',
-          body: `<!doctype html><meta name="viewport" content="width=device-width"><main><h1>Fake Stripe Checkout</h1><p>Local QA only. No card details are collected.</p><button id="pay">Pay with fake test card</button><p id="result" aria-live="polite"></p></main><script>document.querySelector('#pay').addEventListener('click',async()=>{const b=document.querySelector('#pay');b.disabled=true;const r=await fetch('${fake.origin}/__qa/pay/${sessionId}',{method:'POST'});const v=await r.json();document.querySelector('#result').textContent=v.paid?'Fake payment confirmed':'Fake payment was not confirmed';if(v.paid)setTimeout(()=>{if(window.opener){window.opener.location.href='${customerOrigin}';window.close()}else location.href='${customerOrigin}'},250);});</script>`,
+          body: `<!doctype html><meta name="viewport" content="width=device-width"><main><h1>Fake Stripe Checkout</h1><p>Local QA only. No card details are collected.</p><button id="pay">Pay with fake test card</button><p id="result" aria-live="polite"></p></main><script>document.querySelector('#pay').addEventListener('click',async()=>{const b=document.querySelector('#pay');b.disabled=true;const r=await fetch('/__qa/pay/${sessionId}',{method:'POST'});const v=await r.json();document.querySelector('#result').textContent=v.paid?'Fake payment confirmed':'Fake payment was not confirmed';if(v.paid)setTimeout(()=>{if(window.opener){window.opener.location.href='${customerOrigin}';window.close()}else location.href='${customerOrigin}'},250);});</script>`,
         });
         return;
       }
@@ -236,7 +245,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   }
 
   async function queryPromo(restaurantId) {
-    const rows = await queryRows('restaurant_promotions', 'id,code,discount_percent,max_redemptions,reserved_redemptions,redeemed_count,active', {
+    const rows = await queryRows('restaurant_promotions', 'id,code,discount_percent,starts_at,max_redemptions,reserved_redemptions,redeemed_count,active', {
       restaurant_id: `eq.${restaurantId}`, code: `eq.${promoCode}`,
     });
     assert.equal(rows.length, 1, `Synthetic promotion ${promoCode} should exist`);
@@ -245,7 +254,11 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
   async function reloadRestaurantData() {
     const refresh = merchantPage.getByRole('button', { name: 'Refresh restaurant data', exact: true });
+    const promotionLoad = merchantPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/rest/v1/rpc/list_restaurant_promotions'), { timeout: 30000 });
     await refresh.click();
+    const promotionResponse = await promotionLoad;
+    assert.ok(promotionResponse.ok(), `Restaurant refresh promotion load failed (${promotionResponse.status()})`);
+    await waitUntil(() => refresh.isEnabled(), 30000);
     await merchantPage.getByText('Payments & payouts', { exact: true }).waitFor();
   }
 
@@ -342,28 +355,59 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     mark('merchant payment readiness displayed with $1.75 fee');
 
     await merchantPage.getByRole('button', { name: '+ Add code', exact: true }).click();
+    const promoModalTitle = merchantPage.getByText('New promo code', { exact: true });
+    await promoModalTitle.waitFor({ state: 'visible', timeout: 10000 });
+    const promoStartField = merchantPage.getByLabel('STARTS (LOCAL TIME)');
+    const promoStartValue = await merchantPage.evaluate(() => {
+      const d = new Date();
+      const part = value => String(value).padStart(2, '0');
+      return `${d.getFullYear()}-${part(d.getMonth() + 1)}-${part(d.getDate())} ${part(d.getHours())}:${part(d.getMinutes())}`;
+    });
+    await promoStartField.fill(promoStartValue);
     await merchantPage.getByLabel('CODE (3–32 CHARACTERS)').fill(promoCode);
     await merchantPage.getByLabel('DISCOUNT PERCENT (1–90)').fill('10');
     await merchantPage.getByLabel('MAX REDEMPTIONS (OPTIONAL)').fill('1');
-    const savePromo = merchantPage.getByText('Save promo code', { exact: true });
-    await savePromo.click();
-    await merchantPage.getByText('Promo code saved', { exact: true }).waitFor({ timeout: 15000 });
+    const savePromoResponsePromise = merchantPage.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/rest/v1/rpc/save_restaurant_promotion') && response.request().method() === 'POST';
+    }, { timeout: 20000 }).catch(error => error);
+    const savePromo = merchantPage.getByRole('button', { name: 'Save promo code', exact: true });
+    await merchantPage.mouse.move(200, 800);
+    await merchantPage.mouse.wheel(0, 700);
+    await merchantPage.waitForTimeout(250);
+    const savePromoBox = await savePromo.boundingBox();
+    const promoViewport = merchantPage.viewportSize();
+    assert.ok(savePromoBox && promoViewport && savePromoBox.x >= 0 && savePromoBox.y >= 0 &&
+      savePromoBox.x + savePromoBox.width <= promoViewport.width && savePromoBox.y + savePromoBox.height <= promoViewport.height,
+    `Save promo button must fit the ${promoViewport?.width}×${promoViewport?.height} viewport after normal modal scroll; box ${JSON.stringify(savePromoBox)}`);
+    mark('promo save button fits the viewport');
+    const saveClickResult = await savePromo.click({ timeout: 15000 }).then(() => null, error => error);
+    const savePromoResponse = await savePromoResponsePromise;
+    if (savePromoResponse instanceof Error) throw new Error(`Save promo did not reach Supabase (${saveClickResult?.message || 'no response'}): ${savePromoResponse.message}`);
+    assert.ok(savePromoResponse.ok(), `Save promo RPC failed (${savePromoResponse.status()})`);
+    if (saveClickResult) mark('promo save completed before its closing modal detached');
     let promo = await queryPromo(fixture.restaurant.id);
     assert.equal(promo.discount_percent, 10);
     assert.equal(promo.max_redemptions, 1);
     assert.equal(promo.reserved_redemptions, 0);
     assert.equal(promo.redeemed_count, 0);
     if (!promo.active) {
+      const enablePromoResponsePromise = merchantPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/rest/v1/rpc/save_restaurant_promotion') && response.request().method() === 'POST', { timeout: 20000 });
       await merchantPage.getByRole('button', { name: 'Enable code', exact: true }).click();
-      await merchantPage.getByText('Promo code enabled', { exact: true }).waitFor({ timeout: 15000 });
+      const enablePromoResponse = await enablePromoResponsePromise;
+      assert.ok(enablePromoResponse.ok(), `Enable promo RPC failed (${enablePromoResponse.status()})`);
       promo = await queryPromo(fixture.restaurant.id);
     }
     assert.equal(promo.active, true, 'The saved promo must be enabled before customer quote tests');
+    assert.ok(Date.parse(promo.starts_at) <= Date.now(), 'The enabled test promotion must be available immediately');
+    assert.ok(Date.parse(promo.starts_at) <= Date.now(), 'The enabled test promotion must be available immediately');
     mark('merchant created one-use 10% promotion in the app');
 
     customerPage = await context.newPage();
     await createRoutes(customerPage);
-    await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await customerPage.goto(customerOrigin, { waitUntil: 'commit', timeout: 30000 });
+    mark('customer document response committed');
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 45000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
     await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
     const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first();
@@ -474,11 +518,13 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     orderId = firstCheckout.body.order_id;
     customerToken = firstCheckout.token;
     customerUserId = decodeJwt(customerToken).sub;
+    mark('customer checkout created with fake Stripe session; checking pending status');
     const statusResponse = await context.request.get(`${apiOrigin}/v1/checkout/${orderId}`, {
       headers: { authorization: `Bearer ${customerToken}` },
     });
-    assert.ok(statusResponse.ok());
-    assert.equal((await statusResponse.json()).status, 'pending');
+    const statusBody = await statusResponse.text();
+    assert.ok(statusResponse.ok(), `Pending checkout status GET failed (${statusResponse.status()}): ${statusBody}`);
+    assert.equal(JSON.parse(statusBody).status, 'pending');
     const firstOrder = await queryOrder(orderId);
     assert.equal(firstOrder.payment_status, 'pending');
     assert.equal(firstOrder.total_cents, expectedAmountCents);
@@ -490,7 +536,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const hiddenResponse = await fetch(`${supabase.apiUrl}/rest/v1/orders?${merchantOrderQuery}`, {
       headers: { apikey: supabase.anonKey, authorization: `Bearer ${merchantToken}` },
     });
-    assert.ok(hiddenResponse.ok());
+    assert.ok(hiddenResponse.ok);
     assert.deepEqual(await hiddenResponse.json(), [], 'Merchant must not see an unpaid checkout');
 
     const sessionCountBeforeReplay = fake.audit.filter(entry => entry.kind === 'checkout_session' && entry.orderId === orderId).length;
@@ -567,7 +613,17 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const redeemedPromo = await queryPromo(fixture.restaurant.id);
     assert.equal(redeemedPromo.reserved_redemptions, 0);
     assert.equal(redeemedPromo.redeemed_count, 1);
+    const promoDisplay = merchantPage.getByText(`${promoCode} · 10% off`, { exact: true });
+    await promoDisplay.scrollIntoViewIfNeeded();
+    await promoDisplay.waitFor({ state: 'visible', timeout: 15000 });
+    const merchantDocumentWidth = await merchantPage.evaluate(() => document.documentElement.scrollWidth);
+    assert.ok(merchantDocumentWidth <= 390, `Restaurant screen must not overflow the 390px viewport (document scrollWidth ${merchantDocumentWidth}px)`);
+    await merchantPage.screenshot({ path: `${artifactsDir}/${browserName}-merchant-promo.png` });
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
+    await customerPage.getByRole('button', { name: 'View order progress', exact: true }).waitFor({ timeout: 30000 });
+    const successEmail = customerPage.getByText(checkoutEmail, { exact: false });
+    await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-customer-success.png`, mask: [successEmail], maskColor: '#FAF6F3' });
+    await customerPage.getByRole('button', { name: 'View order progress', exact: true }).click();
     await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click();
     await customerPage.getByText('Paid · awaiting kitchen', { exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByText(`$${(expectedAmountCents / 100).toFixed(2)}`, { exact: true }).last().waitFor();
@@ -595,17 +651,26 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await merchantPage.getByText(orderPrefix, { exact: false }).first().click();
     await merchantPage.getByRole('button', { name: 'Cancel and refund', exact: true }).click();
     await merchantPage.getByRole('button', { name: 'Keep order', exact: true }).click();
-    assert.equal(fake.audit.filter(entry => entry.kind === 'refund').length, 0, 'Dismissed refund confirmation must not contact Stripe');
+    assert.equal(fake.audit.filter(entry => entry.kind === 'refund' && entry.orderId === paidOrderId).length, 0, 'Dismissed refund confirmation must not contact Stripe for this order');
     await merchantPage.getByRole('button', { name: 'Cancel and refund', exact: true }).click();
+    const refundResponsePromise = merchantPage.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === `/v1/orders/${paidOrderId}/refund` && response.request().method() === 'POST';
+    }, { timeout: 30000 });
     await merchantPage.getByRole('button', { name: 'Confirm refund and cancel', exact: true }).click();
+    const refundResponse = await refundResponsePromise;
+    if (!refundResponse.ok()) {
+      const refundBody = await refundResponse.text().catch(() => '');
+      throw new Error(`Mocked local refund endpoint returned ${refundResponse.status()}: ${refundBody.slice(0, 300)}`);
+    }
     await waitUntil(async () => (await queryOrder(paidOrderId)).payment_status === 'refunded');
     assert.equal((await queryOrder(paidOrderId)).status, 'cancelled');
-    assert.equal(fake.audit.filter(entry => entry.kind === 'refund').length, 1);
+    assert.equal(fake.audit.filter(entry => entry.kind === 'refund' && entry.orderId === paidOrderId).length, 1);
     mark('merchant accepted/prepared/readied order; unsafe cancel rejected; refund confirmation guard and fake refund passed');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
-    await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click().catch(() => {});
+    await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click();
     await customerPage.getByText('Refunded', { exact: true }).waitFor({ timeout: 30000 });
     const customerHistory = await queryRows('orders', 'id,payment_status,status', { id: `eq.${paidOrderId}`, user_id: `eq.${customerUserId}` });
     assert.equal(customerHistory.length, 1);

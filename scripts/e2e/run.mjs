@@ -122,13 +122,13 @@ async function main() {
 
   const appEnv = { EXPO_NO_DOTENV: '1', EXPO_PUBLIC_SUPABASE_URL: supabase.apiUrl, EXPO_PUBLIC_SUPABASE_ANON_KEY: supabase.anonKey, EXPO_PUBLIC_CENA_API_URL: apiOrigin, CI: '1' };
   const previews = [
-    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--non-interactive', '--clear'] },
-    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--non-interactive', '--clear'] },
+    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--clear'] },
+    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--clear'] },
   ];
   for (const preview of previews) {
     if (!await portAvailable(preview.port)) throw new Error(`Preview port ${preview.port} is occupied. Set CENA_E2E_CUSTOMER_PORT and CENA_E2E_RESTAURANT_PORT to free ports; the runner never reuses potentially stale preview bundles.`);
     console.log(`Starting fresh Expo preview at ${preview.origin} with local API ${apiOrigin}`);
-    const previewProcess = start(pnpmBin(), preview.args, appEnv);
+    const previewProcess = start(pnpmBin(), preview.args, { ...appEnv, BROWSER: 'none' }, root, true);
     await waitHttp(preview.origin, 120000, previewProcess);
     await new Promise(resolve => setTimeout(resolve, 250));
     if (previewProcess.cenaExitCode !== undefined || previewProcess.exitCode !== null) throw new Error(`Expo preview process exited for ${preview.origin}`);
@@ -137,11 +137,11 @@ async function main() {
   try {
     const browsers = (process.env.CENA_E2E_BROWSERS || 'chromium').split(',').map(value => value.trim()).filter(Boolean);
     const results = [];
-    for (const browserName of browsers) {
-      results.push(await runBrowserFlow({ browserName, supabase: { apiUrl: supabase.apiUrl, anonKey: supabase.anonKey }, serviceRoleKey: supabase.SERVICE_ROLE_KEY, apiOrigin, fake: { ...fake, origin: fakeOrigin }, runId, artifactsDir }));
-    }
     const { writeFile } = await import('node:fs/promises');
-    await writeFile(path.join(artifactsDir, 'report.json'), JSON.stringify({ runId, results }, null, 2));
+    for (const browserName of browsers) {
+      results.push(await runBrowserFlow({ browserName, supabase: { apiUrl: supabase.apiUrl, anonKey: supabase.anonKey }, serviceRoleKey: supabase.SERVICE_ROLE_KEY, apiOrigin, customerOrigin, restaurantOrigin, fake: { ...fake, origin: fakeOrigin }, runId, artifactsDir }));
+      await writeFile(path.join(artifactsDir, 'report.json'), JSON.stringify({ runId, results }, null, 2));
+    }
     for (const result of results) console.log(`${result.browser}: PASS (${result.stages.length} stages, final ${result.finalStatus}, order ${result.orderId})`);
   } finally {
     await fake.close();
