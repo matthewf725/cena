@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import CoreLocation
+import SafariServices
 
 @main struct CenaCustomerApp: App {
     init() {
@@ -59,6 +60,10 @@ struct CustomerHome: View {
     @State private var pendingCheckoutID = UserDefaults.standard.string(forKey: "cena.checkout.pendingOrderID")
     @State private var pendingCheckoutURL: String?
     @State private var pendingCheckoutOwnerID = UserDefaults.standard.string(forKey: "cena.checkout.pendingOwnerID")
+    @State private var checkoutSafariPresented = false
+    @State private var checkoutSafariURL: URL?
+    @State private var checkoutSafariOrderID: String?
+    @State private var checkoutSafariOwnerID: String?
     @State private var paymentStatus = "pending"
     @State private var paymentMessage: String?
     @State private var paymentCheckBusy = false
@@ -447,10 +452,14 @@ struct CustomerHome: View {
                 Image(systemName: "creditcard.circle").font(.system(size: 46)).foregroundStyle(CenaStyle.maroon)
                 Text("Finish payment in Cena").font(.title2.bold()).foregroundStyle(CenaStyle.maroon)
                 Text("Your bag is saved for order \(orderID.prefix(8).uppercased()). Return here after paying. Cena will confirm the payment with the provider before marking the order complete.").font(.body).foregroundStyle(.secondary)
+                Text("Secure Stripe Checkout opens in this sheet. Close it to return to Cena; payment status is always confirmed with Cena before your order is completed.")
+                    .font(.caption).foregroundStyle(CenaStyle.clay)
                 if let paymentMessage { Text(paymentMessage).font(.subheadline).foregroundStyle(paymentStatus == "paid" ? .green : .secondary) }
                 if paymentCheckBusy { ProgressView("Checking payment…") }
                 if pendingCheckoutURL != nil {
-                    Button("Continue to secure Stripe checkout") { Task { await openPendingCheckout() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+                    Button("Continue to secure Stripe checkout") { openPendingCheckout() }
+                        .buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+                        .accessibilityHint("Opens Stripe Checkout in an in-app browser. Close the sheet to return and check payment status.")
                 }
                 Button("Check payment status") { Task { await refreshPendingCheckout() } }.buttonStyle(.bordered)
                 if !["expired", "failed", "cancelled", "paid", "refunded"].contains(paymentStatus.lowercased()) {
@@ -471,6 +480,15 @@ struct CustomerHome: View {
         }
         .scrollIndicators(.hidden)
         .navigationTitle("Payment")
+        .sheet(isPresented: $checkoutSafariPresented, onDismiss: checkoutSafariDidDismiss) {
+            if let checkoutSafariURL {
+                StripeCheckoutSafari(url: checkoutSafariURL)
+                    .accessibilityLabel("Secure Stripe Checkout")
+                    .ignoresSafeArea()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
     }
 
     @ViewBuilder private var cancelCheckoutConfirmationButtons: some View {
@@ -923,11 +941,12 @@ struct CustomerHome: View {
     private func validatedStripeURL(_ raw: String?) -> URL? {
         guard let raw, let url = URL(string: raw), let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https", components.host?.lowercased() == "checkout.stripe.com",
-              components.user == nil, components.password == nil else { return nil }
+              components.user == nil, components.password == nil, components.fragment == nil,
+              components.port == nil || components.port == 443 else { return nil }
         return url
     }
 
-    private func openPendingCheckout() async {
+    private func openPendingCheckout() {
         guard pendingCheckoutOwnerID == profileUserID, api.signedIn else {
             paymentMessage = "Sign in to the same Cena account that started this checkout before continuing."
             return
@@ -936,13 +955,35 @@ struct CustomerHome: View {
             paymentMessage = "The payment link is unavailable or not a trusted Stripe Checkout URL. Your bag is still saved."
             return
         }
-        let opened = await UIApplication.shared.open(url)
-        if !opened { paymentMessage = "Couldn’t open secure checkout. Try again or check payment status." }
+        guard let orderID = pendingCheckoutID, let ownerID = profileUserID,
+              ownerID == pendingCheckoutOwnerID else {
+            paymentMessage = "Sign in to the same Cena account that started this checkout before continuing."
+            return
+        }
+        checkoutSafariURL = url
+        checkoutSafariOrderID = orderID
+        checkoutSafariOwnerID = ownerID
+        checkoutSafariPresented = true
+        paymentMessage = "Secure checkout is ready. Close the sheet to return to Cena."
+    }
+
+    private func checkoutSafariDidDismiss() {
+        let orderID = checkoutSafariOrderID
+        let ownerID = checkoutSafariOwnerID
+        checkoutSafariURL = nil
+        checkoutSafariOrderID = nil
+        checkoutSafariOwnerID = nil
+        guard let orderID, orderID == pendingCheckoutID,
+              let ownerID, ownerID == pendingCheckoutOwnerID, ownerID == profileUserID,
+              api.signedIn else { return }
+        Task { await refreshPendingCheckout() }
     }
 
     private func handleReturnURL(_ url: URL) {
         guard url.scheme?.lowercased() == "cena", url.host?.lowercased() == "checkout", url.path == "/return",
-              pendingCheckoutID != nil else { return }
+              pendingCheckoutID != nil,
+              pendingCheckoutOwnerID == profileUserID, api.signedIn,
+              checkoutSafariOrderID == nil || (checkoutSafariOrderID == pendingCheckoutID && checkoutSafariOwnerID == profileUserID) else { return }
         Task { await refreshPendingCheckout() }
     }
 
@@ -958,18 +999,20 @@ struct CustomerHome: View {
             paymentStatus = status
             switch status {
             case "paid":
+                checkoutSafariPresented = false
                 clearPendingCheckout(resetIdempotency: false)
                 clearBag()
                 orderNumber = orderID
                 paymentMessage = nil
                 await load(); await loadHistory()
             case "refunded":
+                checkoutSafariPresented = false
                 clearPendingCheckout(resetIdempotency: true)
                 tab = 2
                 message = "This checkout was refunded. Your bag is still saved if you’d like to place a new order."
                 await loadHistory()
-            case "expired": paymentMessage = "This checkout expired. Your bag is saved; start a new checkout to try again."
-            case "failed", "cancelled": paymentMessage = "This payment wasn’t completed. Your bag is saved; start a new checkout to try again."
+            case "expired": checkoutSafariPresented = false; paymentMessage = "This checkout expired. Your bag is saved; start a new checkout to try again."
+            case "failed", "cancelled": checkoutSafariPresented = false; paymentMessage = "This payment wasn’t completed. Your bag is saved; start a new checkout to try again."
             default: paymentMessage = "Payment isn’t confirmed yet. Your bag will stay here until Cena confirms it."
             }
         } catch { paymentMessage = "Couldn’t verify payment yet. Your order and bag remain pending; try again shortly." }
@@ -1098,7 +1141,7 @@ struct CustomerHome: View {
             UserDefaults.standard.removeObject(forKey: "cena.checkout.pendingURL")
             tab = 2
             if response["status"] as? String == "paid" { await refreshPendingCheckout() }
-            else { paymentMessage = "Opening secure Stripe Checkout…"; await openPendingCheckout() }
+            else { paymentMessage = "Opening secure Stripe Checkout…"; openPendingCheckout() }
         } catch let CenaBackendError.conflict(detail) {
             clearPendingCheckout(resetIdempotency: true)
             checkoutQuote = nil; quoteFingerprint = nil
@@ -1163,6 +1206,19 @@ struct CustomerHome: View {
             ZStack { CenaStyle.cream; Image(systemName: "fork.knife").font(.largeTitle).foregroundStyle(CenaStyle.maroon.opacity(0.55)) }.accessibilityLabel("Food photo unavailable")
         }
     }
+}
+
+private struct StripeCheckoutSafari: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let controller = SFSafariViewController(url: url)
+        controller.dismissButtonStyle = .close
+        controller.preferredControlTintColor = UIColor(red: 93.0 / 255.0, green: 16.0 / 255.0, blue: 10.0 / 255.0, alpha: 1)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }
 
 private var isoNow: String { ISO8601DateFormatter().string(from: Date()) }
