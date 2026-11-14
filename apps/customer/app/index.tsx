@@ -23,6 +23,20 @@ type Tab = typeof footerTabs[number]['name'] | 'Account';
 const maroon='#5D100A', ivory='#FAF6F3', ink='#271D19', muted='#77645B', line='#E8DCD5', green='#245C40';
 const checkoutLeadMs=33*60*1000;
 const quoteKey=(restaurantId:string,slotId:string,items:{item_id:string;quantity:number}[],promoCode:string)=>JSON.stringify({restaurantId,slotId,items:[...items].sort((a,b)=>a.item_id.localeCompare(b.item_id)),promoCode:promoCode.trim().toUpperCase()||null});
+const checkoutRejectionMessages={
+  promo_unavailable:'That discount code is unavailable. Check the code or continue without it.',
+  pickup_unavailable:'That pickup time is no longer available. Choose another time.',
+  item_unavailable:'A meal kit in your bag is unavailable for that pickup time. Update your bag or choose another time.',
+  curbside_unavailable:'Curbside is unavailable. Choose counter pickup to continue.',
+  restaurant_unavailable:'This restaurant isn’t taking online orders right now.',
+  order_total_too_low:'The order total is too low for online payment. Update your bag or remove the discount code.',
+} as const;
+type CheckoutRejection=keyof typeof checkoutRejectionMessages;
+function knownCheckoutRejection(error:unknown):{reason:CheckoutRejection;message:string}|null{
+  if(!(error instanceof CheckoutRequestError)||error.status!==422||typeof error.reason!=='string'||!Object.prototype.hasOwnProperty.call(checkoutRejectionMessages,error.reason))return null;
+  const reason=error.reason as CheckoutRejection;
+  return {reason,message:checkoutRejectionMessages[reason]};
+}
 const dollars=(n:number)=>`$${n.toFixed(2)}`;
 const recentlyOrdered: Record<string,{qty:number; options:string}> = { lasagna:{qty:2,options:'Extra parmesan · No parsley'}, tacos:{qty:1,options:'Salsa on the side'} };
 
@@ -302,6 +316,7 @@ export default function Home() {
   const selectedPickup=eligibleSlots?.find(x=>dayOffset(x.startsAt,active?.timezone)===date&&formatTime(x.startsAt,active?.timezone)===slot);
   const quoteItems=Object.values(cart).map(item=>({item_id:item.meal.backendItemId||item.meal.id,quantity:item.qty}));
   const currentQuoteKey=active?.backendId&&selectedPickup?quoteKey(active.backendId,selectedPickup.id,quoteItems,promoCode):'';
+  const currentQuoteKeyRef=useRef(currentQuoteKey);currentQuoteKeyRef.current=currentQuoteKey;
   const quoteMatches=Boolean(quote&&currentQuoteKey&&quote.fingerprint===currentQuoteKey);
   useEffect(()=>{
     if(!supabase||!authenticated||!authUserId||flow!=='contact'||checkout||promoCode.trim()||!active?.backendId||!selectedPickup||!currentQuoteKey||quoteMatches)return;
@@ -313,13 +328,18 @@ export default function Home() {
     setQuoteError('');
     void quoteCheckout({restaurantId:active.backendId,slotId:selectedPickup.id,items:quoteItems,promoCode:''})
       .then(data=>{
-        if(cancelled||currentAuthUserId.current!==authUserId)return;
+          if(cancelled||currentAuthUserId.current!==authUserId||currentQuoteKeyRef.current!==currentQuoteKey||flowRef.current!=='contact')return;
         setQuote({data,fingerprint:currentQuoteKey});
         setQuoteError('');
         setQuoteRecovery(null);
       })
       .catch(error=>{
-        if(!cancelled&&currentAuthUserId.current===authUserId)setQuoteError(error instanceof Error?error.message:'Couldn’t check this total. Please try again.');
+        if(cancelled||currentAuthUserId.current!==authUserId||currentQuoteKeyRef.current!==currentQuoteKey||flowRef.current!=='contact')return;
+        const rejection=knownCheckoutRejection(error);
+        if(rejection){
+          setQuote(current=>current?.fingerprint===currentQuoteKey?null:current);
+          setQuoteError(rejection.message);setQuoteRecovery(rejection.reason);
+        }else setQuoteError('Couldn’t check this total. Please try again.');
       })
       .finally(()=>{
         if(quoteFlight.current===requestKey){quoteFlight.current=null;setQuoteLoading(false);}
@@ -503,22 +523,32 @@ export default function Home() {
       if(!active?.backendId||!selectedSlot||Object.values(cart).some(x=>!x.meal.backendItemId)||Object.values(cart).some(x=>selectedSlot.remaining[x.meal.backendItemId!]<(x.qty||0))){setNotice({title:'Pickup availability changed',message:'One or more meal kits are no longer available for that window. Choose another time or update your bag.'});return;}
       if(curb&&(!vehicleMake.trim()||!vehicleModel.trim()||!vehicleColor.trim())){setNotice({title:'Add your vehicle details',message:'Curbside pickup needs your vehicle make, model, and color.'});return;}
       const orderInput={restaurantId:active.backendId,slotId:selectedSlot.id,pickupMode:curb?'curbside' as const:'counter' as const,vehicle:curb?{make:vehicleMake,model:vehicleModel,color:vehicleColor}:undefined,items:Object.values(cart).map(x=>({item_id:x.meal.backendItemId!,quantity:x.qty}))};
+      const requestCartRevision=cartRevisionRef.current;
+      const requestItems=Object.values(cart).map(({meal,qty})=>({meal,qty}));
       const checkoutSession=await supabase.auth.getSession();
       const ownerUserId=checkoutSession.data.session?.user.id;
       if(!ownerUserId){setNotice({title:'Sign in again',message:'Your secure session expired. Sign in to continue checkout.'});return;}
+      if(currentAuthUserId.current!==ownerUserId)return;
       const normalizedPromo=promoCode.trim().toUpperCase();
       const fingerprint=quoteKey(orderInput.restaurantId,orderInput.slotId,orderInput.items,normalizedPromo);
       if(!quote||quote.fingerprint!==fingerprint){
         const requestKey=`${ownerUserId}:${fingerprint}`;
         if(quoteFlight.current===requestKey)return;
         quoteFlight.current=requestKey;
-        setQuoteLoading(true);setQuoteError('');
+        setQuoteLoading(true);setQuoteError('');setQuoteRecovery(null);
         try{
           const data=await quoteCheckout({restaurantId:orderInput.restaurantId,slotId:orderInput.slotId,items:orderInput.items,promoCode:normalizedPromo});
-          if(currentAuthUserId.current!==ownerUserId)return;
+          if(currentAuthUserId.current!==ownerUserId||currentQuoteKeyRef.current!==fingerprint||flowRef.current!=='contact')return;
           setQuote({data,fingerprint});
           setPromoCode(data.promo_code??'');
-        }catch(error){setQuoteError(error instanceof Error?error.message:'Couldn’t check this total. Please try again.');}
+        }catch(error){
+          if(currentAuthUserId.current!==ownerUserId||currentQuoteKeyRef.current!==fingerprint||flowRef.current!=='contact')return;
+          const rejection=knownCheckoutRejection(error);
+          if(rejection){
+            setQuote(current=>current?.fingerprint===fingerprint?null:current);
+            setQuoteError(rejection.message);setQuoteRecovery(rejection.reason);
+          }else setQuoteError('Couldn’t check this total. Please try again.');
+        }
         finally{if(quoteFlight.current===requestKey){quoteFlight.current=null;setQuoteLoading(false);}}
         return;
       }
@@ -529,6 +559,7 @@ export default function Home() {
         idempotency.current=saved?.fingerprint===checkoutFingerprint?saved:{fingerprint:checkoutFingerprint,key:`cena-${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
         await AsyncStorage.setItem(idempotencyStorageKey(ownerUserId),JSON.stringify(idempotency.current));
       }
+      if(currentAuthUserId.current!==ownerUserId||currentQuoteKeyRef.current!==fingerprint||flowRef.current!=='contact')return;
       let session;
       try{session=await createCheckout({...orderInput,idempotencyKey:idempotency.current.key,promoCode:normalizedPromo||undefined,expectedAmountCents:quote.data.amount_cents});}
       catch(error){
@@ -536,7 +567,7 @@ export default function Home() {
         if(error instanceof CheckoutRequestError&&error.status===409&&error.checkoutStatus==='refunded'&&error.orderId){
           const checkoutState=await fetchCheckoutStatus(error.orderId);
           if(currentAuthUserId.current!==ownerUserId)return;
-          const prior={orderId:error.orderId,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))};
+          const prior={orderId:error.orderId,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:requestCartRevision,items:requestItems};
           if(checkoutState==='refunded')await resolveRefundedCheckout(prior);
           else if(checkoutState==='paid')await confirmPaidCheckout(prior);
           else setNotice({title:'Checking your payment',message:'The previous order state is being confirmed. Your bag is saved and won’t be resubmitted yet.'});
@@ -544,44 +575,39 @@ export default function Home() {
         }
         if(error instanceof CheckoutRequestError&&error.status===409&&(error.checkoutStatus==='expired'||error.checkoutStatus==='failed')){
           await AsyncStorage.removeItem(idempotencyStorageKey(ownerUserId)).catch(()=>{});
+          if(currentAuthUserId.current!==ownerUserId)return;
           idempotency.current={fingerprint:'',key:''};setPaymentStatus(error.checkoutStatus);setQuote(null);
           setNotice({title:'Payment session ended',message:'Your bag is saved. Choose another pickup time or start a new secure checkout.'});return;
         }
-        if(error instanceof CheckoutRequestError&&error.status===409){setQuote(current=>current?.fingerprint===fingerprint?null:current);setQuoteError(error.message||'Your total changed. Check the updated total before continuing.');setQuoteRecovery(null);return;}
-        if(error instanceof CheckoutRequestError&&error.status===422){
-          const messages={
-            promo_unavailable:'That discount code is unavailable. Check the code or continue without it.',
-            pickup_unavailable:'That pickup time is no longer available. Choose another time.',
-            item_unavailable:'A meal kit in your bag is unavailable for that pickup time. Update your bag or choose another time.',
-            curbside_unavailable:'Curbside is unavailable. Choose counter pickup to continue.',
-            restaurant_unavailable:'This restaurant isn’t taking online orders right now.',
-            order_total_too_low:'The order total is too low for online payment. Update your bag or remove the discount code.',
-          } as const;
-          const reason=error.reason as keyof typeof messages;
-          const message=messages[reason];
-          if(message){
-            setQuote(current=>current?.fingerprint===fingerprint?null:current);
-            setQuoteError(message);
-            setQuoteRecovery(reason);
-            return;
-          }
+        if(error instanceof CheckoutRequestError&&error.status===409){if(currentQuoteKeyRef.current!==fingerprint||flowRef.current!=='contact')return;setQuote(current=>current?.fingerprint===fingerprint?null:current);setQuoteError(error.message||'Your total changed. Check the updated total before continuing.');setQuoteRecovery(null);return;}
+        const rejection=knownCheckoutRejection(error);
+        if(rejection){
+          if(currentQuoteKeyRef.current!==fingerprint||flowRef.current!=='contact')return;
+          setQuote(current=>current?.fingerprint===fingerprint?null:current);
+          setQuoteError(rejection.message);
+          setQuoteRecovery(rejection.reason);
+          return;
         }
         throw error;
       }
       if('status' in session){
+        if(currentAuthUserId.current!==ownerUserId)return;
         const confirmed=await fetchCheckoutStatus(session.order_id);
-        if(confirmed==='paid')await confirmPaidCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))});
-        else if(confirmed==='refunded')await resolveRefundedCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))});
+        if(currentAuthUserId.current!==ownerUserId)return;
+        if(confirmed==='paid')await confirmPaidCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:requestCartRevision,items:requestItems});
+        else if(confirmed==='refunded')await resolveRefundedCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:requestCartRevision,items:requestItems});
         else if(confirmed==='expired'||confirmed==='failed'){
           await AsyncStorage.removeItem(idempotencyStorageKey(ownerUserId)).catch(()=>{});
+          if(currentAuthUserId.current!==ownerUserId)return;
           idempotency.current={fingerprint:'',key:''};setPaymentStatus(confirmed);
           setNotice({title:'Payment session ended',message:'Your bag is saved. Choose another pickup time or start a new secure checkout.'});
         }else setNotice({title:'Checking your payment',message:'Your bag is saved. Cena is still confirming the previous checkout; try checking again shortly.'});
         return;
       }
       const checkoutUrl=session.checkout_url;
-      const pending={orderId:session.order_id,url:checkoutUrl,restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))};
+      const pending={orderId:session.order_id,url:checkoutUrl,restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:requestCartRevision,items:requestItems};
       await AsyncStorage.setItem(pendingStorageKey(ownerUserId),JSON.stringify(pending));
+      if(currentAuthUserId.current!==ownerUserId)return;
       setCheckout(pending);setPaymentStatus('pending');setShowCheckoutRecovery(true);
       try{await Linking.openURL(checkoutUrl);}catch{setNotice({title:'Checkout is ready',message:'Your bag is saved. Open secure checkout to complete payment, then return here to confirm it.'});}
       return;
