@@ -83,7 +83,7 @@ flowchart TD
 | R18 | Wrong restaurant, duplicate transition, or out-of-sequence update. Status remains consistent. | Partial · SQL status/ownership rules. Multi-device UI behavior open. |
 | R19 | New order arrives during a shift. Queue refresh preserves in-progress forms and location. | Open · test scheduled/foreground refresh and accessibility. |
 | R20 | Counter order versus curbside. Restaurant sees correct pickup time and vehicle details. | Partial · SQL vehicle persistence. Mobile presentation open. |
-| R21 | Refund confirmation, pending refund, retry, and history. Paid orders become canceled only after a verified refund. | Pass · Go/SQL contract; app taps and native retry open. |
+| R21 | Refund confirmation, pending refund, retry, and history. Paid orders become canceled only after a verified refund. | Partial · SQL rejects direct cancellation and fulfillment during pending refunds, rejects staff, and settles successful retries. App confirmation and native retry are open. |
 | R22 | Order totals and sales summaries use paid snapshots including discounts and fees. | Partial · price persistence tests. Customer receipt and merchant analytics visual reconciliation open. |
 | R23 | Analytics, privacy opt-out, and operator visibility. Behavioral events respect consent and reports are role-scoped. | Partial · consent test. Operator analytics and client telemetry exercise open. |
 | R24 | Create, schedule, pause, and enable promo. New codes default paused and ownership is enforced. | Pass · SQL role/schedule/cap tests. Browser save and native forms open. |
@@ -106,8 +106,8 @@ flowchart TD
 | P08 | Unpaid orders are invisible to merchants. Signed completion exposes the order only after payment. | Pass · Go and SQL. |
 | P09 | Missing/wrong signature, wrong account, wrong total, delayed event, and duplicate event. Only matching provider state changes orders. | Partial · Go signed webhook cases and SQL matching, async and idempotency. Real event sequencing open. |
 | P10 | Resume paid/expired/refunded session. State is checked via API rather than a callback parameter. | Pass · Go with simulated provider. Browser and native recovery open. |
-| P11 | Authorized full refund. Stripe result, order status, and inventory reflect verified state. | Partial · local SQL role/settlement coverage. Real refund open. |
-| P12 | Refund failure, pending result, or repeated request. Order stays consistent and retries remain idempotent. | Partial · local SQL lifecycle coverage. Provider-race and native pending/retry are open. |
+| P11 | Authorized full refund. Stripe result, order status, and inventory reflect verified state. | Partial · local SQL verified owner/staff/outsider access, idempotent settlement, wrong-account webhook lookup, and unit/slot release. Real refund open. |
+| P12 | Refund failure, pending result, or repeated request. Order stays consistent and retries remain idempotent. | Partial · local SQL verified pending reuse, incremented attempt after failure, and rejection of stale attempt or mismatched provider ID. Provider-race and native pending/retry are open. |
 | P13 | Simultaneous purchase, expiration, and stock edit. Postgres enforces lock order and never oversells. | Partial · PGlite state tests and static lock ordering; true concurrency open. |
 | P14 | Stripe sandbox account live connection, hosted Checkout completion, asynchronous webhook, and refund. | Open · real account, webhook URL, credentials, and dedicated fixtures required. |
 | P15 | Hosted API, database migrations, Auth email delivery, and signed store builds. | Open · local health confirmed, hosted production parity and release build evidence missing. |

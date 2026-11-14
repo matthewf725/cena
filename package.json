@@ -9,9 +9,11 @@
     "site:build": "pnpm --dir apps/site build",
     "site:typecheck": "pnpm --dir apps/site typecheck",
     "typecheck": "pnpm -r run typecheck",
-    "test": "node --test scripts/*.test.mjs"
+    "test": "node --test scripts/*.test.mjs",
+    "test:e2e": "node scripts/e2e/run.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.16"
+    "@electric-sql/pglite": "0.5.16",
+    "playwright": "1.62.1"
   }
 }
