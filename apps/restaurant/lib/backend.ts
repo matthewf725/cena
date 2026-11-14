@@ -157,6 +157,13 @@ export async function createCatalogItem(restaurantId:string,values:Record<string
   if(!saved?.catalog_item_id)throw new Error('The catalog item was not created.');
   return {id:saved.catalog_item_id,draftId:saved.prep_draft_id,updatedAt:saved.draft_updated_at};
 }
+export async function saveCatalogPrepMinutes(itemId:string,restaurantId:string,prepMinutes:number) {
+  if(!supabase) return;
+  if(!Number.isInteger(prepMinutes)||prepMinutes<0||prepMinutes>240)throw new Error('Estimated prep time must be a whole number from 0 to 240.');
+  const {data,error}=await supabase.from('catalog_items').update({prep_minutes:prepMinutes}).eq('id',itemId).eq('restaurant_id',restaurantId).select('id').maybeSingle();
+  if(error)throw error;
+  if(!data)throw new Error('This restaurant account cannot update the prep time for this item.');
+}
 export async function generatePrep(itemId:string) {
   if(!supabase)throw new Error('Configure Supabase before generating chef steps.');
   const {data,error}=await supabase.functions.invoke('generate-prep',{body:{item_id:itemId}});if(error)throw error;return data as {generated_steps:string[];updated_at:string};

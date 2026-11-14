@@ -384,12 +384,28 @@ test('merchant catalog create and save stay atomic and private until manager rev
     'select id from prep_drafts where id=$1', [created.prep_draft_id],
   )), /permission denied/);
 
+  await withRole('authenticated',outsider,(tx)=>tx.query(
+    'update prep_drafts set generated_steps=$1 where id=$2', [['Generated proposal'],created.prep_draft_id],
+  ));
+  const saveMetadata = (tx) => tx.query(`select * from save_catalog_item_draft($1,$2,'R07 metadata edit',null,1850,null,null,'{}','{}',true,$3)`,[
+    created.catalog_item_id,fixture.restaurant,['Chef supplied step'],
+  ]);
+  const {rows:[metadataSaved]}=await withRole('authenticated',outsider,saveMetadata);
+  const {rows:[preservedDraft]}=await withRole('authenticated',outsider,(tx)=>tx.query(
+    'select generated_steps from prep_drafts where id=$1',[created.prep_draft_id],
+  ));
+  assert.deepEqual(preservedDraft.generated_steps,['Generated proposal'],'unchanged chef source keeps the generated proposal');
+
   const save = (tx) => tx.query(`select * from save_catalog_item_draft($1,$2,'R07 saved kit',null,1900,null,null,'{}','{}',true,$3)`,[
     created.catalog_item_id,fixture.restaurant,['Updated chef step'],
   ]);
   const {rows:[saved]}=await withRole('authenticated',outsider,save);
+  const {rows:[invalidatedDraft]}=await withRole('authenticated',outsider,(tx)=>tx.query(
+    'select generated_steps from prep_drafts where id=$1',[created.prep_draft_id],
+  ));
+  assert.deepEqual(invalidatedDraft.generated_steps,[],'changed chef source invalidates the outdated proposal');
   await assert.rejects(withRole('authenticated',outsider,(tx)=>tx.query(
-    'select * from publish_prep_draft($1,$2,$3)',[created.prep_draft_id,saved.draft_updated_at,['Reviewed final step']],
+    'select * from publish_prep_draft($1,$2,$3)',[created.prep_draft_id,metadataSaved.draft_updated_at,['Reviewed final step']],
   )),/not authorized/);
 
   await database.exec(`
