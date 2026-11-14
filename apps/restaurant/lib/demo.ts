@@ -1,5 +1,5 @@
 export type OrderStatus='New'|'Accepted'|'Preparing'|'Ready'|'Completed'|'Cancelled';
-export type Order={id:string;backendId?:string;name:string;time:string;items:{name:string;qty:number;note?:string}[];total:number;status:OrderStatus;type:'Pickup'|'Curbside';slot:string;phone:string;paymentStatus?:'paid'|'refunded'|'pay_at_pickup'|'pending'|'expired'|'failed';applicationFeeCents?:number};
+export type Order={id:string;backendId?:string;name:string;time:string;items:{name:string;qty:number;note?:string}[];total:number;discountCents?:number;status:OrderStatus;type:'Pickup'|'Curbside';slot:string;phone:string;paymentStatus?:'paid'|'refunded'|'pay_at_pickup'|'pending'|'expired'|'failed';applicationFeeCents?:number};
 export const seedOrders:Order[]=[
  {id:'CN-2048',name:'Maya Chen',time:'6:42 PM',items:[{name:'Sunday gravy rigatoni',qty:2,note:'One without parmesan'},{name:'Burrata & tomatoes',qty:1}],total:64,status:'New',type:'Pickup',slot:'6:45–7:00 PM',phone:'(415) 555-0184'},
  {id:'CN-2047',name:'Jordan Ellis',time:'6:38 PM',items:[{name:'Crispy chicken parm',qty:1},{name:'Tiramisu',qty:2}],total:48,status:'Preparing',type:'Curbside',slot:'6:45–7:00 PM',phone:'(415) 555-0123'},

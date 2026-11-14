@@ -66,7 +66,7 @@ export async function refundOrder(id:string):Promise<OrderRefundResult>{
 export async function fetchOrders(restaurantId:string) {
   if(!supabase) return null;
   const from=new Date(Date.now()-30*24*60*60_000).toISOString();
-  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
+  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
   if(error) throw error; return data;
 }
 export async function setOrderStatus(id:string,status:string) {
