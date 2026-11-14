@@ -133,9 +133,20 @@ export async function upsertCustomerProfile(displayName: string, phone: string, 
   if (!user) return { error: new Error('Sign in first') };
   return supabase.from('profiles').upsert({ id: user.id, display_name: displayName, phone: phone || null, equipment }, { onConflict: 'id' });
 }
-export async function fetchOrderHistory() {
+export async function fetchOrderHistory(userId: string) {
   if (!supabase) return { data: null, error: null };
-  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').order('created_at',{ascending:false}).limit(20);
+  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').eq('user_id',userId).order('created_at',{ascending:false}).limit(20);
+}
+
+export async function fetchRestaurantRecentOrders(userId: string, restaurantId: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('orders')
+    .select('id,pickup_starts_at,order_items(item_id,name_snapshot,quantity)')
+    .eq('user_id', userId).eq('restaurant_id', restaurantId)
+    .in('payment_status', ['paid', 'pay_at_pickup']).in('status', ['placed', 'accepted', 'preparing', 'ready', 'completed'])
+    .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(3);
+  if (error) throw error;
+  return data;
 }
 export async function trackEvent(eventType: string, restaurantId?: string, payload: Record<string, unknown> = {}) {
   if (!supabase) return { error: null };

@@ -81,22 +81,35 @@ await context.route('**/*', async route => {
 try {
   const response = await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
   assert.ok(response?.ok(), `Preview returned ${response?.status() ?? 'no response'}`);
-  await page.getByRole('textbox', { name: 'Search restaurants and meal kits' }).waitFor({ timeout: 30000 });
+  await page.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ timeout: 30000 });
   await page.getByRole('button', { name: /Change pickup area/ }).waitFor();
   const mediaReduced = await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   assert.equal(mediaReduced, true, 'Browser reduced-motion preference should be honored');
 
   await page.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
-  await page.getByText('Recent meal kits', { exact: true }).waitFor({ timeout: 30000 });
   await page.getByText('Near you', { exact: true }).waitFor({ timeout: 30000 });
-  const headings = await page.getByText(/^(Recents|Recent meal kits|Near you)$/).allTextContents();
+  const headings = await page.getByText(/^(Recents|Near you)$/).allTextContents();
   const recentsIndex = headings.indexOf('Recents');
-  const mealIndex = headings.indexOf('Recent meal kits');
   const nearbyIndex = headings.indexOf('Near you');
   assert.ok(recentsIndex >= 0, `Recents heading should render (headings: ${JSON.stringify(headings)})`);
-  assert.ok(mealIndex > recentsIndex, `Recent meal kits should follow Recents (headings: ${JSON.stringify(headings)})`);
-  assert.ok(nearbyIndex > mealIndex, `Near you should follow Recent meal kits (headings: ${JSON.stringify(headings)})`);
+  assert.ok(nearbyIndex > recentsIndex, `Near you should follow Recents (headings: ${JSON.stringify(headings)})`);
+  assert.equal(await page.getByText(/^(Recent meal kits|Matching meal kits)$/).count(), 0,
+    'Home should not render a recent or matching meal-kit carousel');
   const hasRecentKitchen = await page.getByRole('button', { name: /^View .+ menu$/ }).count() > 0;
+  const search = page.getByRole('textbox', { name: 'Search restaurants' });
+  const firstKitchenLabelLocator = page.getByRole('button', { name: /^View .+ menu$/ }).first();
+  const firstKitchenLabel = await firstKitchenLabelLocator.getAttribute('aria-label');
+  assert.ok(firstKitchenLabel, 'First kitchen must be present in discovery');
+  const firstRestaurantName = firstKitchenLabel.replace(/^View /, '').replace(/ menu$/, '');
+  await search.fill(`cena-e2e-no-match-${Date.now()}`);
+  await page.getByText('No restaurants match that search.', { exact: true }).waitFor({ timeout: 15000 });
+  await search.fill(firstRestaurantName);
+  await page.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
+  assert.equal(await page.getByText('Matching meal kits', { exact: true }).count(), 0,
+    'Restaurant search should not render a matching meal-kit carousel');
+  await page.getByRole('button', { name: firstKitchenLabel, exact: true }).first().waitFor({ state: 'visible', timeout: 15000 });
+  await search.fill('');
+  await page.getByRole('heading', { name: 'Near you', exact: true }).waitFor({ timeout: 15000 });
 
   const timer = page.getByRole('timer');
   let countdown = 'not rendered (no currently eligible same-day pickup slot)';
@@ -113,7 +126,7 @@ try {
   const layout = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
     document: document.documentElement.scrollWidth,
-    search: (() => { const r = document.querySelector('input[aria-label="Search restaurants and meal kits"]')?.getBoundingClientRect(); return r && { left: r.left, right: r.right, width: r.width }; })(),
+    search: (() => { const r = document.querySelector('input[aria-label="Search restaurants"]')?.getBoundingClientRect(); return r && { left: r.left, right: r.right, width: r.width }; })(),
     reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
   }));
   assert.ok(layout.document <= layout.viewport + 1, `Horizontal overflow: ${JSON.stringify(layout)}`);
@@ -121,10 +134,7 @@ try {
 
   // Add one kit, then force the next menu response to expose tomorrow-only windows.
   // This is a loopback response override; it performs no order, auth, or database write.
-  const firstKitchen = page.getByRole('button', { name: /^View .+ menu$/ }).first();
-  const firstKitchenLabel = await firstKitchen.getAttribute('aria-label');
-  assert.ok(firstKitchenLabel, 'First kitchen must be present in discovery');
-  await firstKitchen.click();
+  await page.getByRole('button', { name: firstKitchenLabel, exact: true }).first().click();
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
   const addButton = page.getByRole('button', { name: /^Add .+ to bag$/ }).first();
   await addButton.waitFor({ timeout: 15000 });
@@ -174,7 +184,7 @@ try {
   console.log(JSON.stringify({
     result: 'PASS', engine, viewport: '390x844 CSS px, DPR 2', reducedMotion: mediaReduced,
     noHorizontalOverflow: layout.document <= layout.viewport + 1,
-    recentSectionOrder: 'Recents -> Recent meal kits -> Near you',
+    recentSectionOrder: 'Recents -> Near you; meal-kit carousel removed',
     recentKitchenPresent: hasRecentKitchen,
     countdown,
     bagConflict: 'second kitchen add rejected while first kitchen item remains in bag',

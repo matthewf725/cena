@@ -430,10 +430,12 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     mark('customer document DOM content loaded');
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
-    await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
+    await customerPage.getByLabel('Search restaurants').fill(fixture.restaurant.name);
+    await customerPage.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
     const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first();
     await restaurantCard.waitFor({ timeout: 45000 });
     await restaurantCard.click();
+    await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
@@ -809,8 +811,10 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     let bagCount = Number(bagLabel?.match(/^Bag, (\d+)/)?.[1] || 0);
     assert.ok(bagCount <= 2, `Second paid-order setup expected an empty or two-item bag, got ${bagLabel || 'no label'}`);
     if (bagCount < 2) {
-      await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
+      await customerPage.getByLabel('Search restaurants').fill(fixture.restaurant.name);
+      await customerPage.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
       await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first().click();
+      await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
       const addItem = customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true });
       await addItem.waitFor({ timeout: 30000 });
       for (let i = bagCount; i < 2; i += 1) await addItem.click();
@@ -901,6 +905,15 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.deepEqual(completedHistory, [{ id: secondCompletedOrderId, payment_status: 'paid', status: 'completed' }]);
     await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-customer-completed.png`, fullPage: true });
     mark('customer Orders refreshed and showed Picked up for the completed paid order');
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
+    await customerPage.getByLabel('Search restaurants').fill(fixture.restaurant.name);
+    await customerPage.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
+    await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first().click();
+    await customerPage.getByText('Recent orders', { exact: true }).waitFor({ timeout: 15000 });
+    await customerPage.getByText(`2 × ${mealName}`, { exact: true }).waitFor({ timeout: 15000 });
+    await customerPage.getByRole('button', { name: `Order ${mealName} again`, exact: true }).waitFor({ timeout: 15000 });
+    mark('restaurant menu shows Recent orders after a completed paid order for that restaurant');
+    await customerPage.getByRole('button', { name: 'Go back', exact: true }).click();
 
     await customerPage.getByRole('button', { name: 'Open account', exact: true }).click();
     await customerPage.getByRole('button', { name: 'Sign out', exact: true }).click();

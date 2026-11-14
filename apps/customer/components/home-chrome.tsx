@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
 import { Search, X } from 'lucide-react-native';
-import { Text, TextInput, sans } from './type';
+import { Text, TextInput } from './type';
 
 export const welcomeHeight = 60;
+export const welcomeFadeEnd = 140;
 export const searchGap = 12;
 export const homeContentMaxWidth = 760;
 
 const maroon = '#5D100A';
 const muted = '#77645B';
+const greetingFont = Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' });
 const fade = 'linear-gradient(180deg, #000 0%, #000 28%, transparent 100%)';
 const blur = Platform.select<ViewStyle>({ web: {
   backdropFilter: 'blur(14px)',
@@ -40,7 +42,7 @@ export function HomeHeader({ children, scrollY, reduced, greeting, collapsed, si
   topInset: number;
 }) {
   const collapse = (start: number, end: number) => scrollY.interpolate({
-    inputRange: [0, welcomeHeight], outputRange: [start, end], extrapolate: 'clamp',
+    inputRange: [0, 20, welcomeFadeEnd], outputRange: [start, start, end], extrapolate: 'clamp',
   });
 
   return <View pointerEvents="box-none" style={s.header}>
@@ -71,8 +73,8 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
   return <View pointerEvents="box-none" style={[s.searchDock, { bottom, left: side, right: side }]}>
     <View style={[s.search, { borderRadius: radius, height }]}>
       <Search size={18} color={maroon} aria-hidden />
-      <TextInput accessibilityLabel="Search restaurants and meal kits" value={query} onChangeText={setQuery}
-        placeholder="Search restaurants and meal kits" placeholderTextColor={muted} style={s.input} maxLength={120}
+      <TextInput accessibilityLabel="Search restaurants" value={query} onChangeText={setQuery}
+        placeholder="Search restaurants" placeholderTextColor={muted} style={s.input} maxLength={120}
         autoCorrect={false} returnKeyType="search" clearButtonMode="never" />
       {!!query && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={s.clear}>
         <X size={18} color={maroon} aria-hidden />
@@ -85,8 +87,8 @@ const s = StyleSheet.create({
   header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 },
   headerSurface: { position: 'absolute', left: 0, right: 0, overflow: 'hidden' },
   welcome: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', overflow: 'hidden' },
-  greeting: { color: maroon, fontFamily: sans, fontWeight: '500', lineHeight: 42 },
-  staticGreeting: { color: maroon, fontSize: 32, fontWeight: '500', lineHeight: 42, marginBottom: 16 },
+  greeting: { color: maroon, fontFamily: greetingFont, fontWeight: '400', lineHeight: 42, letterSpacing: -0.7 },
+  staticGreeting: { color: maroon, fontFamily: greetingFont, fontSize: 32, fontWeight: '400', lineHeight: 42, letterSpacing: -0.7, marginBottom: 16 },
   searchDock: { position: 'absolute', alignItems: 'center', zIndex: 1 },
   search: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 1, borderColor: '#DCCAC1', backgroundColor: '#FFFFFF', paddingLeft: 13, paddingRight: 4, boxShadow: '0 4px 16px rgba(39,29,25,.10)' },
   input: { minWidth: 0, flex: 1, height: '100%', fontSize: 16, color: '#271D19', paddingRight: 8 },

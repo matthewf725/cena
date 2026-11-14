@@ -71,10 +71,10 @@ try {
 
     const response = await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
     assert.ok(response?.ok(), `${viewport.name}: preview HTTP ${response?.status() ?? 'no response'}`);
-    await page.getByRole('textbox', { name: 'Search restaurants and meal kits' }).waitFor({ timeout: 30000 });
+    await page.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ timeout: 30000 });
     await page.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
     await verifyNoOverflow(page, viewport, 'discovery');
-    const searchBox = await page.getByRole('textbox', { name: 'Search restaurants and meal kits' }).boundingBox();
+    const searchBox = await page.getByRole('textbox', { name: 'Search restaurants' }).boundingBox();
     assert.ok(searchBox && searchBox.x >= 0 && searchBox.x + searchBox.width <= viewport.width + 1,
       `${viewport.name}: search input clipped: ${JSON.stringify(searchBox)}`);
     await page.screenshot({ path: `${artifacts}/${viewport.name}-discovery.png` });

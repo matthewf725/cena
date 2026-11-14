@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, FlatList, ImageBackground, Pressable, ScrollView, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Text } from './type';
-import { discoverPickupFeed, type DiscoveryPage, type MealTile, type PickupOrigin } from '../lib/discovery';
+import { discoverPickupFeed, type DiscoveryPage, type PickupOrigin } from '../lib/discovery';
 import type { Kitchen } from '../lib/data';
-import { foodPhoto } from '../lib/food-photos';
-import { MealPrice } from './meal-price';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fromCity, recentIds, recentMealIds, open, openMeal, headerHeight, bottomSpace, onScroll, welcome }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fromCity, recentIds, open, headerHeight, bottomSpace, onScroll, welcome }: {
   width: number;
   side: number;
   radius: number;
@@ -16,9 +14,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
   origin: PickupOrigin;
   fromCity: boolean;
   recentIds: string[];
-  recentMealIds: string[];
   open: (kitchen: Kitchen) => void;
-  openMeal: (entry: MealTile) => void;
   headerHeight: number;
   bottomSpace: number;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -35,7 +31,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
   const generation = useRef(0);
   const inFlight = useRef(false);
   const cursor = useRef<string | null>(null);
-  const recentKey = recentMealIds.join(',');
   const restaurantRecentKey = recentIds.join(',');
 
   useEffect(() => {
@@ -60,7 +55,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
         query: filter,
         after: after ?? undefined,
         recentIds: append || filter || !restaurantRecentKey ? [] : restaurantRecentKey.split(','),
-        recentMealIds: append || filter || !recentKey ? [] : recentKey.split(','),
       });
       if (generation.current !== requestGeneration) return;
       const nextCursor = result.nextCursor === after ? null : result.nextCursor;
@@ -68,11 +62,9 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
       setPage(previous => {
         if (!append || !previous) return { ...result, nextCursor };
         const seen = new Set(previous.categories.map(category => category.name.toLowerCase()));
-        const seenMealIds = new Set(previous.explore.map(entry => entry.meal.id));
         return {
           ...previous,
-          recentMeals: previous.recentMeals,
-          explore: [...previous.explore, ...result.explore.filter(entry => !seenMealIds.has(entry.meal.id))],
+          nearby: [...previous.nearby, ...result.nearby.filter(kitchen => !previous.nearby.some(existing => existing.id === kitchen.id))],
           categories: [...previous.categories, ...result.categories.filter(category => !seen.has(category.name.toLowerCase()))],
           nextCursor,
         };
@@ -85,7 +77,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
         setLoading(false);
       }
     }
-  }, [origin, filter, recentKey, restaurantRecentKey]);
+  }, [origin, filter, restaurantRecentKey]);
 
   useEffect(() => {
     const requestGeneration = ++generation.current;
@@ -105,8 +97,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
   const loadMore = () => {
     if (!error) void load(true, generation.current);
   };
-  const visibleMeals = filter ? page?.explore ?? [] : page?.recentMeals ?? [];
-  const mealsHeading = filter ? 'Matching meal kits' : 'Recent meal kits';
   const rail = { width, radius, open, reduced, fromCity };
   const content = (
     <>
@@ -117,34 +107,12 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
             ? <KitchenRail title="Recents" kitchens={page.recents} {...rail} />
             : <View style={styles.empty}>
               <Text accessibilityRole="header" style={styles.heading}>Recents</Text>
-              <Text style={styles.help}>Kitchens you order from will appear here.</Text>
+              <Text style={styles.help}>Restaurants you order from will appear here.</Text>
             </View>)}
-          <View style={styles.meals}>
-            <Text accessibilityRole="header" style={styles.heading}>{mealsHeading}</Text>
-            {visibleMeals.length > 0 ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled"
-                decelerationRate={reduced ? 'normal' : 'fast'} snapToInterval={reduced ? undefined : 168}
-                contentContainerStyle={styles.mealRail}>
-                {visibleMeals.map(entry => {
-                  const { meal } = entry;
-                  return (
-                    <Pressable key={meal.id} accessibilityRole="button" accessibilityLabel={`View ${meal.name}`}
-                      onPress={() => openMeal(entry)} style={({ pressed }) => [styles.tile, pressed && styles.pressed]}>
-                      <ImageBackground source={foodPhoto(meal.image.startsWith('http') ? meal.id : meal.image)}
-                        resizeMode="cover" style={[styles.photo, { borderRadius: radius }]} />
-                      <Text numberOfLines={2} style={styles.mealName}>{meal.name}</Text>
-                      <Text numberOfLines={1} style={styles.kitchen}>{entry.kitchen.name}</Text>
-                      <MealPrice meal={meal} />
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            ) : <Text style={styles.help}>{filter ? 'No matching meal kits.' : 'Kits you order will appear here.'}</Text>}
-          </View>
-          {page.nearby.length ? <KitchenRail title={filter ? 'Matching kitchens' : 'Near you'} kitchens={page.nearby} {...rail} />
+          {page.nearby.length ? <KitchenRail title={filter ? 'Matching restaurants' : 'Near you'} kitchens={page.nearby} {...rail} />
             : <View style={styles.empty}>
-              <Text accessibilityRole="header" style={styles.heading}>{filter ? 'Matching kitchens' : 'Near you'}</Text>
-              <Text style={styles.help}>{filter ? 'No kitchens match that search.' : 'No kitchens have pickup windows right now.'}</Text>
+              <Text accessibilityRole="header" style={styles.heading}>{filter ? 'Matching restaurants' : 'Near you'}</Text>
+              <Text style={styles.help}>{filter ? 'No restaurants match that search.' : 'No restaurants have pickup windows right now.'}</Text>
             </View>}
         </>
       )}
@@ -180,13 +148,6 @@ const styles = StyleSheet.create({
   empty: { marginBottom: 20 },
   heading: { fontWeight:'500', color: ink, fontSize: 25, lineHeight: 30, marginBottom: 10 },
   help: { color: muted, fontSize: 14 },
-  meals: { marginBottom: 23 },
-  mealRail: { gap: 12, paddingBottom: 3 },
-  tile: { width: 156 },
-  photo: { width: '100%', height: 98, overflow: 'hidden', backgroundColor: '#E8DCD5' },
-  mealName: { color: ink, fontSize: 14, lineHeight: 18, fontWeight: '500', marginTop: 7 },
-  kitchen: { color: muted, fontSize: 13, marginTop: 3 },
   price: { color: maroon, fontSize: 14, fontWeight: '500', marginTop: 3 },
-  pressed: { opacity: 0.72 },
   footer: { paddingVertical: 16, alignItems: 'center' },
 });
