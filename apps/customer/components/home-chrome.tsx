@@ -15,7 +15,7 @@ function gradient(image: string) {
   return Platform.OS === 'web' ? { backgroundImage: image } as ViewStyle : { experimental_backgroundImage: image };
 }
 
-const warmSurface = gradient('linear-gradient(180deg, #FFDACE 0%, #F9E4DC 43%, #FAF2ED 76%, #FAF6F3 100%)');
+const warmSurface = gradient('linear-gradient(180deg, #FFE1D5 0%, #FFE1D5 58%, rgba(255,225,213,.72) 76%, rgba(255,225,213,0) 100%)');
 
 export function PageHeader({ children, identityHeight, topInset, expanded = false, reduced = true }: {
   children: ReactNode;
@@ -45,22 +45,10 @@ export function HomeWelcome({ greeting }: { greeting: string }) {
   return <Text accessibilityRole="header" numberOfLines={1} style={s.greeting}>{greeting}</Text>;
 }
 
-export function HeaderWordmark({ children, hidden, reduced }: {
+export function HeaderWordmark({ children }: {
   children: ReactNode;
-  hidden: boolean;
-  reduced: boolean;
 }) {
-  const opacity = useRef(new Animated.Value(hidden ? 0 : 1)).current;
-  useEffect(() => {
-    const toValue = hidden ? 0 : 1;
-    if (reduced) { opacity.setValue(toValue); return; }
-    const animation = Animated.timing(opacity, { toValue, duration: 240, useNativeDriver: Platform.OS !== 'web' });
-    animation.start();
-    return () => animation.stop();
-  }, [hidden, opacity, reduced]);
-
-  return <Animated.View pointerEvents="none" aria-hidden={hidden} accessibilityElementsHidden={hidden}
-    importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'} style={[s.wordmark, { opacity }]}>{children}</Animated.View>;
+  return <View pointerEvents="none" style={s.wordmark}>{children}</View>;
 }
 
 export function HeaderButton({ ref, label, onPress, children, reduced }: {

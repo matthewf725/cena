@@ -25,6 +25,19 @@ export async function verifyCustomerSignInCode(email: string, token: string) {
   return data.session.user;
 }
 
+export async function signInCustomerWithPassword(email: string, password: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) throw new Error('Enter a valid email address.');
+  if (!password) throw new Error('Enter your password.');
+  const { data, error } = await client().auth.signInWithPassword({ email: normalized, password });
+  if (error) {
+    if (/invalid login credentials|email or password/i.test(error.message)) throw new Error('Email or password is incorrect.');
+    throw error;
+  }
+  if (!data.session) throw new Error('Sign-in was accepted, but no session was created. Try again.');
+  return data.session.user;
+}
+
 /** Load only the signed-in user's real backend name for lightweight UI surfaces. */
 export async function loadCustomerDisplayName(expectedUserId: string): Promise<string> {
   const api = client();

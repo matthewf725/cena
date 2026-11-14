@@ -67,7 +67,9 @@ export default function Home() {
   const navPadding=Math.max(shortScreen?4:9,insets.bottom);
   const navHeight=(shortScreen?48:safeWidth>=640?64:56)+navPadding;
   const hasScrolledHome=useRef(false);
+  const [welcomeDismissed,setWelcomeDismissed]=useState(false);
   const [homeCompact,setHomeCompact]=useState(false);
+  const homeCompactRef=useRef(false);
   const [expandedMeal,setExpandedMeal]=useState<string|null>(null);
   const bagPulse=useRef(new Animated.Value(1)).current;
   const mealQuantity=useRef(1);
@@ -137,10 +139,21 @@ export default function Home() {
   const greeting=profileName?`Welcome back, ${profileName}`:'Welcome back';
   const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
   const updateHomeScroll=(event:NativeSyntheticEvent<NativeScrollEvent>)=>{
-    if(hasScrolledHome.current||event.nativeEvent.contentOffset.y<=0)return;
-    hasScrolledHome.current=true;
-    setHomeCompact(true);
+    const scrolled=event.nativeEvent.contentOffset.y>0;
+    if(scrolled&&!hasScrolledHome.current){
+      hasScrolledHome.current=true;
+      setWelcomeDismissed(true);
+    }
+    if(homeCompactRef.current!==scrolled){
+      homeCompactRef.current=scrolled;
+      setHomeCompact(scrolled);
+    }
   };
+  useEffect(()=>{
+    if(tab==='Home')return;
+    homeCompactRef.current=false;
+    setHomeCompact(false);
+  },[tab]);
   useEffect(()=>{
     if(!authUserId)return;
     let active=true;
@@ -771,7 +784,7 @@ export default function Home() {
   const onAccount=tab==='Account';
   const compactHome=tab==='Home'&&homeCompact;
   const identityBar=<View pointerEvents="box-none" style={[s.topbar,{height:identityHeight,paddingHorizontal:headerSide,gap:safeWidth<390?8:14}]}>
-    <HeaderWordmark hidden={compactHome} reduced={reduceMotion}>
+    <HeaderWordmark>
       <View style={s.brand}><LogoText style={s.wordmark}>cena</LogoText><View style={s.logodot}/></View>
     </HeaderWordmark>
     <PickupAreaButton ref={pickupAreaButtonRef} label={locationLabel} compact={compactHome} reduced={reduceMotion}
@@ -783,12 +796,12 @@ export default function Home() {
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}><View style={{flex:1,width:'100%'}}>
     <View style={{flex:1}} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
-      <PageHeader identityHeight={identityHeight} topInset={insets.top} expanded={tab==='Home'&&!homeCompact} reduced={reduceMotion}>{identityBar}</PageHeader>
+      <PageHeader identityHeight={identityHeight} topInset={insets.top} expanded={tab==='Home'&&!welcomeDismissed} reduced={reduceMotion}>{identityBar}</PageHeader>
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           bottomSpace={navHeight+searchHeight+2*searchGap}
-          onScroll={updateHomeScroll} welcome={!homeCompact?<HomeWelcome greeting={greeting}/>:undefined}
+          onScroll={updateHomeScroll} welcome={!welcomeDismissed?<HomeWelcome greeting={greeting}/>:undefined}
       open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<Account
           userId={authUserId} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}

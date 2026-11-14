@@ -3,7 +3,7 @@ import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, View } f
 import { Text, TextInput } from './type';
 import { Check, ChevronRight, Mail, Phone, Soup, UserRound } from 'lucide-react-native';
 import { supabase } from '../lib/supabase';
-import { loadCustomerAccount, saveCustomerAccount, sendCustomerSignInCode, signOutCustomer, verifyCustomerSignInCode } from '../lib/profile';
+import { loadCustomerAccount, saveCustomerAccount, sendCustomerSignInCode, signInCustomerWithPassword, signOutCustomer, verifyCustomerSignInCode } from '../lib/profile';
 
 type Props = {
   userId: string | null;
@@ -20,6 +20,8 @@ export function Account(props: Props) {
   const [signedIn, setSignedIn] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
+  const [passwordMode, setPasswordMode] = useState(false);
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [hydrating, setHydrating] = useState(Boolean(supabase));
   const [message, setMessage] = useState('');
@@ -30,7 +32,7 @@ export function Account(props: Props) {
 
   useEffect(() => {
     let alive = true;
-    setSignedIn(false); setCodeSent(false); setCode(''); setError('');
+    setSignedIn(false); setCodeSent(false); setCode(''); setPasswordMode(false); setPassword(''); setError('');
     if (!supabase) { setHydrating(false); return; }
     setHydrating(true);
     async function hydrate() {
@@ -87,6 +89,25 @@ export function Account(props: Props) {
     } catch (e) { reportError(e); }
     finally { setBusy(false); setHydrating(false); }
   }
+  async function signInWithPassword() {
+    setBusy(true); setHydrating(true); setError(''); setMessage('');
+    try {
+      const user = await signInCustomerWithPassword(props.email, password);
+      const account = await loadCustomerAccount();
+      const { data: { user: sessionUser } } = await supabase!.auth.getUser();
+      if (sessionUser?.id !== user.id || activeUserId.current && activeUserId.current !== user.id) return;
+      if (account && account.userId === user.id) {
+        props.setEmail(account.email);
+        if (account.profile.displayName) props.setDisplayName(account.profile.displayName);
+        if (account.profile.phone) props.setPhone(account.profile.phone);
+        if (account.profile.equipment.length) props.setEquipment(account.profile.equipment);
+        props.setAnalyticsConsented(account.analyticsConsented);
+      }
+      setSignedIn(true); setCodeSent(false); setCode(''); setPassword(''); setPasswordMode(false);
+      setMessage('Signed in. Your saved Cena profile is ready.');
+    } catch (e) { reportError(e); }
+    finally { setBusy(false); setHydrating(false); }
+  }
   async function save() {
     if (!supabase || !signedIn) { setMessage(supabase ? 'Sign in with the email above to save your profile across visits.' : 'Profile details stay available for this session.'); return; }
     setBusy(true); setError(''); setMessage('');
@@ -103,7 +124,7 @@ export function Account(props: Props) {
     setBusy(true); setError(''); setMessage('');
     try {
       await signOutCustomer();
-      setSignedIn(false); setCodeSent(false); setCode(''); props.setEmail(''); props.setDisplayName(''); props.setPhone(''); props.setEquipment([]);
+      setSignedIn(false); setCodeSent(false); setCode(''); setPassword(''); setPasswordMode(false); props.setEmail(''); props.setDisplayName(''); props.setPhone(''); props.setEquipment([]);
       props.setAnalyticsConsented(false);
       setMessage('You are signed out. Account details were cleared from this device.');
     }
@@ -132,10 +153,11 @@ export function Account(props: Props) {
     {hydrating && <View style={s.loading}><ActivityIndicator color={maroon}/><Text style={s.hint}>Loading your saved profile…</Text></View>}
     <Text style={s.section}>YOUR DETAILS</Text>
     <Field icon={<UserRound size={17} color={maroon}/>} label="Name"><TextInput style={s.input} value={props.displayName} onChangeText={props.setDisplayName} autoCapitalize="words" maxLength={80} placeholder="Add your name" placeholderTextColor={muted} editable={!locked}/></Field>
-    <Field icon={<Mail size={17} color={maroon}/>} label="Email"><TextInput style={s.input} value={props.email} onChangeText={value => { props.setEmail(value); setCodeSent(false); setCode(''); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="Add an email address" placeholderTextColor={muted} editable={!signedIn&&!locked}/></Field>
+    <Field icon={<Mail size={17} color={maroon}/>} label="Email"><TextInput style={s.input} value={props.email} onChangeText={value => { props.setEmail(value); setCodeSent(false); setCode(''); setPassword(''); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="Add an email address" placeholderTextColor={muted} editable={!signedIn&&!locked}/></Field>
     <Field icon={<Phone size={17} color={maroon}/>} label="Mobile number"><TextInput style={s.input} value={props.phone} onChangeText={props.setPhone} keyboardType="phone-pad" placeholder="Add a phone number" placeholderTextColor={muted} editable={!locked}/></Field>
     {supabase && !signedIn && <View style={s.authBox}>
-      {!codeSent ? <Pressable accessibilityRole="button" disabled={locked || !props.email.includes('@')} onPress={() => void requestCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Email me a sign-in code</Text>}</Pressable> : <><TextInput style={s.code} value={code} onChangeText={setCode} keyboardType="number-pad" maxLength={8} placeholder="6-digit code" placeholderTextColor={muted} editable={!locked}/><Pressable accessibilityRole="button" disabled={locked || code.trim().length<6} onPress={() => void verifyCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Verify and load profile</Text>}</Pressable><Pressable disabled={locked} onPress={() => void requestCode()}><Text style={s.link}>Send a new code</Text></Pressable></>}
+      {passwordMode ? <><TextInput accessibilityLabel="Account password" style={s.code} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType="password" autoComplete="current-password" placeholder="Password" placeholderTextColor={muted} editable={!locked}/><Pressable accessibilityRole="button" accessibilityLabel="Sign in with password" disabled={locked || !props.email.includes('@') || !password} onPress={() => void signInWithPassword()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Sign in with password</Text>}</Pressable><Pressable accessibilityRole="button" accessibilityLabel="Use email code instead" disabled={locked} onPress={() => { setPasswordMode(false); setPassword(''); setError(''); setMessage(''); }}><Text style={s.link}>Use email code instead</Text></Pressable></> : <>{!codeSent ? <Pressable accessibilityRole="button" accessibilityLabel="Email me a sign-in code" disabled={locked || !props.email.includes('@')} onPress={() => void requestCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Email me a sign-in code</Text>}</Pressable> : <><TextInput accessibilityLabel="6-digit sign-in code" style={s.code} value={code} onChangeText={setCode} keyboardType="number-pad" maxLength={8} placeholder="6-digit code" placeholderTextColor={muted} editable={!locked}/><Pressable accessibilityRole="button" accessibilityLabel="Verify and load profile" disabled={locked || code.trim().length<6} onPress={() => void verifyCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Verify and load profile</Text>}</Pressable><Pressable disabled={locked} onPress={() => void requestCode()}><Text style={s.link}>Send a new code</Text></Pressable></>}
+      <Pressable accessibilityRole="button" accessibilityLabel="Use password instead" disabled={locked} onPress={() => { setPasswordMode(true); setCodeSent(false); setCode(''); setError(''); setMessage(''); }}><Text style={s.link}>Use password instead</Text></Pressable></>}
     </View>}
     <View style={s.equipment}><View style={s.rowTitle}><Soup size={17} color={green}/><Text accessibilityRole="header" style={s.equipmentTitle}>Kitchen equipment you have</Text></View><View style={s.chips}>{options.map(x=><Pressable key={x} disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.equipment.includes(x)}} onPress={()=>props.setEquipment(props.equipment.includes(x)?props.equipment.filter(y=>y!==x):[...props.equipment,x])} style={[s.chip,props.equipment.includes(x)&&s.chipOn,locked&&s.disabled]}><Text style={[s.chipText,props.equipment.includes(x)&&{color:maroon}]}>{props.equipment.includes(x)?'✓  ':''}{x}</Text></Pressable>)}</View></View>
     <Text style={s.section}>PRIVACY</Text><Pressable disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.analyticsConsented}} onPress={()=>changeAnalyticsConsent(!props.analyticsConsented)} style={[s.consent,locked&&s.disabled]}><View style={[s.checkbox,props.analyticsConsented&&s.checkboxOn]}>{props.analyticsConsented&&<Check size={14} color="#FFF"/>}</View><View style={{flex:1}}><Text style={s.label}>Share anonymous usage data</Text><Text style={s.desc}>Optional browsing events; change this choice any time.</Text></View></Pressable>
