@@ -33,17 +33,19 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
         snapToAlignment="start"
         contentContainerStyle={styles.rail}
         renderItem={({ item: kitchen }) => (
-          <View style={[styles.card, { width: cardWidth }]}>
+          <View style={[styles.card, { width: cardWidth, borderRadius: radius }]}>
             <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
               style={({ pressed }) => pressed && styles.pressed}>
               <ImageBackground source={foodPhoto(kitchen.image.startsWith('http') ? kitchen.id : kitchen.image)}
-                resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16), borderRadius: radius }]} />
+                resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16) }]} />
               <View style={styles.caption}>
                 <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
                 <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles, fromCity), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
               </View>
             </Pressable>
-            {kitchen.pickupSlots !== undefined && <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} />}
+            {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>
+              <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} />
+            </View>}
           </View>
         )}
       />
@@ -55,9 +57,10 @@ const styles = StyleSheet.create({
   section: { marginBottom: 22, minWidth: 0 },
   title: { color: '#271D19', fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
   rail: { gap: 12, paddingBottom: 2 },
-  card: { flexShrink: 0 },
+  card: { flexShrink: 0, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8DCD5', overflow: 'hidden' },
   photo: { width: '100%', overflow: 'hidden', backgroundColor: '#F0E1D9' },
-  caption: { paddingTop: 8, paddingBottom: 9 },
+  caption: { paddingTop: 10, paddingBottom: 10, paddingHorizontal: 12 },
+  countdown: { paddingHorizontal: 12, paddingBottom: 12 },
   name: { color: '#271D19', fontSize: 15, lineHeight: 19, fontWeight: '800' },
   details: { color: '#77645B', fontSize: 13, lineHeight: 17, marginTop: 2 },
   pressed: { opacity: 0.72 },

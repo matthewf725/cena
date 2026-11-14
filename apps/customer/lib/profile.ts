@@ -25,6 +25,22 @@ export async function verifyCustomerSignInCode(email: string, token: string) {
   return data.session.user;
 }
 
+/** Load only the signed-in user's real backend name for lightweight UI surfaces. */
+export async function loadCustomerDisplayName(expectedUserId: string): Promise<string> {
+  const api = client();
+  const { data: { session }, error: sessionError } = await api.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (!session || session.user.id !== expectedUserId) throw new Error('Your account changed. Reload and try again.');
+
+  const { data, error } = await api.from('profiles').select('display_name').eq('id', expectedUserId).maybeSingle();
+  if (error) throw error;
+
+  const { data: { session: currentSession }, error: currentSessionError } = await api.auth.getSession();
+  if (currentSessionError) throw currentSessionError;
+  if (!currentSession || currentSession.user.id !== expectedUserId) throw new Error('Your account changed. Reload and try again.');
+  return typeof data?.display_name === 'string' ? data.display_name.trim() : '';
+}
+
 export async function loadCustomerAccount(): Promise<CustomerAccount | null> {
   const api = client();
   const { data: { session }, error: sessionError } = await api.auth.getSession();

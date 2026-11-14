@@ -1,17 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, ImageBackground, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Search } from 'lucide-react-native';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, FlatList, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { discoverPickupFeed, type DiscoveryPage, type MealTile, type PickupOrigin } from '../lib/discovery';
 import type { Kitchen } from '../lib/data';
 import { foodPhoto } from '../lib/food-photos';
 import { MealPrice } from './meal-price';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin, fromCity, recentIds, recentMealIds, open, openMeal }: {
+export function DiscoveryFeed({ width, radius, query, reduced, origin, fromCity, recentIds, recentMealIds, open, openMeal, headerHeight, bottomSpace, onScroll, welcome }: {
   width: number;
   radius: number;
   query: string;
-  setQuery: (query: string) => void;
   reduced: boolean;
   origin: PickupOrigin;
   fromCity: boolean;
@@ -19,7 +17,12 @@ export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin,
   recentMealIds: string[];
   open: (kitchen: Kitchen) => void;
   openMeal: (entry: MealTile) => void;
+  headerHeight: number;
+  bottomSpace: number;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  welcome?: ReactNode;
 }) {
+  const list = useRef<FlatList<DiscoveryPage['categories'][number]>>(null);
   const [page, setPage] = useState<DiscoveryPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -34,9 +37,14 @@ export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin,
   const restaurantRecentKey = recentIds.join(',');
 
   useEffect(() => {
-    const wait = setTimeout(() => setFilter(normalizeQuery(query)), 250);
+    const next = normalizeQuery(query);
+    if (next === filter) return;
+    const wait = setTimeout(() => {
+      list.current?.scrollToOffset({ offset: 0, animated: false });
+      setFilter(next);
+    }, 250);
     return () => clearTimeout(wait);
-  }, [query]);
+  }, [query, filter]);
 
   const load = useCallback(async (append: boolean, requestGeneration: number) => {
     const after = append ? cursor.current : null;
@@ -100,12 +108,7 @@ export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin,
   const rail = { width, radius, open, reduced, fromCity };
   const content = (
     <>
-      <View style={styles.search}>
-        <Search size={18} color={muted} />
-        <TextInput accessibilityLabel="Search restaurants and meal kits" value={query} onChangeText={setQuery}
-          placeholder="Search restaurants and meal kits" placeholderTextColor={muted} style={styles.input} maxLength={120}
-          autoCorrect={false} returnKeyType="search" />
-      </View>
+      {welcome}
       {page && (
         <>
           {!filter && (page.recents.length > 0
@@ -153,15 +156,16 @@ export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin,
     : null;
 
   return (
-    <FlatList data={page?.categories ?? []} keyExtractor={item => item.name}
+    <FlatList ref={list} data={page?.categories ?? []} keyExtractor={item => item.name}
       ListHeaderComponent={content} ListFooterComponent={footer}
       renderItem={({ item }) => <KitchenRail title={item.name.split(' · ')[0]} kitchens={item.kitchens} {...rail} />}
       onEndReached={loadMore} onEndReachedThreshold={0.65}
       onLayout={event => setViewportHeight(event.nativeEvent.layout.height)}
       onContentSizeChange={(_width, height) => setContentHeight(height)}
+      onScroll={onScroll} scrollEventThrottle={16}
       showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
       initialNumToRender={4} maxToRenderPerBatch={4} windowSize={5}
-      contentContainerStyle={{ paddingHorizontal: width < 390 ? 14 : 18, paddingBottom: 110 }}
+      contentContainerStyle={{ paddingHorizontal: width < 390 ? 14 : 18, paddingTop: headerHeight + 12, paddingBottom: bottomSpace }}
     />
   );
 }
@@ -171,8 +175,6 @@ const ink = '#271D19';
 const muted = '#77645B';
 const normalizeQuery = (query: string) => Array.from(query.trim()).slice(0, 120).join('');
 const styles = StyleSheet.create({
-  search: { minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#E8DCD5', borderRadius: 12, backgroundColor: '#FFFDFA', paddingHorizontal: 14, marginBottom: 18 },
-  input: { minWidth: 0, flex: 1, fontSize: 16, color: ink },
   empty: { marginBottom: 20 },
   heading: { color: ink, fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
   help: { color: muted, fontSize: 14 },

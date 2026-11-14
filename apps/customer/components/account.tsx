@@ -11,6 +11,7 @@ type Props = {
   email: string; setEmail: (value: string) => void;
   phone: string; setPhone: (value: string) => void;
   displayName: string; setDisplayName: (value: string) => void;
+  onProfileSaved: () => void;
 };
 
 const options = ['Oven', 'Stovetop', 'Microwave', 'Air fryer', 'Toaster', 'Panini press'];
@@ -91,6 +92,7 @@ export function Account(props: Props) {
     try {
       if (!props.userId || activeUserId.current !== props.userId) throw new Error('Your account changed. Reload the profile and try again.');
       await saveCustomerAccount({ displayName: props.displayName, phone: props.phone, equipment: props.equipment }, props.analyticsConsented, props.userId);
+      props.onProfileSaved();
       setMessage('Your profile and privacy choice are saved.');
     }
     catch (e) { reportError(e); }
