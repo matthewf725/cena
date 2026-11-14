@@ -414,7 +414,7 @@ export default function Home() {
       if('status' in session){
         const confirmed=await fetchCheckoutStatus(session.order_id);
         if(confirmed==='paid')await confirmPaidCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))});
-        else if(confirmed==='refunded')await resolveRefundedCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:subtotal,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))});
+        else if(confirmed==='refunded')await resolveRefundedCheckout({orderId:session.order_id,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))});
         else if(confirmed==='expired'||confirmed==='failed'){
           await AsyncStorage.removeItem(idempotencyStorageKey(ownerUserId)).catch(()=>{});
           idempotency.current={fingerprint:'',key:''};setPaymentStatus(confirmed);
@@ -423,7 +423,7 @@ export default function Home() {
         return;
       }
       const checkoutUrl=session.checkout_url;
-      const pending={orderId:session.order_id,url:checkoutUrl,restaurantId:active.id,date,slot,email,total:subtotal,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))};
+      const pending={orderId:session.order_id,url:checkoutUrl,restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))};
       await AsyncStorage.setItem(pendingStorageKey(ownerUserId),JSON.stringify(pending));
       setCheckout(pending);setPaymentStatus('pending');setShowCheckoutRecovery(true);
       try{await Linking.openURL(checkoutUrl);}catch{setNotice({title:'Checkout is ready',message:'Your bag is saved. Open secure checkout to complete payment, then return here to confirm it.'});}
