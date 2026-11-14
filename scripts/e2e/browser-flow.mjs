@@ -694,6 +694,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.reload({ waitUntil: 'domcontentloaded' });
     await openAccountIfClosed(customerPage);
     mark('profile editor reopened after reload');
+    await customerPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor({ timeout: 15000 });
+    mark('customer remains authenticated after profile reload');
     assert.equal(await customerPage.getByPlaceholder('Add your name').inputValue(), `E2E ${browserName} Customer`);
     const profileRows = await queryRows('profiles', 'display_name,phone', { display_name: `eq.E2E ${browserName} Customer`, phone: 'eq.5105550147' });
     assert.ok(profileRows.length > 0, 'Saved profile should be backed by local Supabase');
