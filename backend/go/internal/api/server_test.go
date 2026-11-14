@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -157,6 +158,9 @@ func TestCatalogUsesFixedSafeReads(t *testing.T) {
 		if strings.Contains(r.URL.RawQuery, "drop") {
 			t.Errorf("caller query leaked")
 		}
+		if strings.Contains(r.URL.Path, "catalog_items") && !strings.Contains(r.URL.Query().Get("select"), "prepared_meal_total_cents") {
+			t.Errorf("prepared meal total missing from catalog projection")
+		}
 		io.WriteString(w, "[]")
 	})
 	r := httptest.NewRequest("GET", "/v1/catalog?drop=table", nil)
@@ -164,5 +168,63 @@ func TestCatalogUsesFixedSafeReads(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || count != 4 {
 		t.Fatalf("status %d count %d body %s", w.Code, count, w.Body.String())
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return fn(r) }
+
+func TestGeocodeUsesCensusAndReturnsCaliforniaCoordinates(t *testing.T) {
+	calls := 0
+	geocoder := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Host != "geocoding.geo.census.gov" || r.URL.Path != "/geocoder/locations/onelineaddress" {
+			t.Errorf("unexpected geocoder target: %s", r.URL)
+		}
+		if r.URL.Query().Get("address") != "420 Mission Street, San Francisco, CA 94105" || r.URL.Query().Get("format") != "json" || r.URL.Query().Get("benchmark") != "Public_AR_Current" {
+			t.Errorf("unexpected Census parameters: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected credentials sent to Census")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"result":{"addressMatches":[{"matchedAddress":"420 MISSION ST, SAN FRANCISCO, CA, 94105","coordinates":{"x":-122.3967,"y":37.7909},"addressComponents":{"state":"CA"}}]}}`))}, nil
+	})}
+	h := New(Config{SupabaseURL: "http://127.0.0.1", SupabaseAnonKey: "x", GeocoderClient: geocoder})
+	address := "420 Mission Street, San Francisco, CA 94105"
+	r := httptest.NewRequest("GET", "/v1/geocode?address="+url.QueryEscape(address), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("status=%d calls=%d body=%s", w.Code, calls, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got["label"] != "420 MISSION ST, SAN FRANCISCO, CA, 94105" || got["latitude"] != 37.7909 || got["longitude"] != -122.3967 {
+		t.Fatalf("unexpected public geocode response: %#v", got)
+	}
+}
+
+func TestGeocodeValidatesInputAndRestrictsCaliforniaResults(t *testing.T) {
+	calls := 0
+	geocoder := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		body := `{"result":{"addressMatches":[{"matchedAddress":"1600 PENNSYLVANIA AVE NW, WASHINGTON, DC, 20500","coordinates":{"x":-77.0365,"y":38.8977},"addressComponents":{"state":"DC"}}]}}`
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	h := New(Config{SupabaseURL: "http://127.0.0.1", SupabaseAnonKey: "x", GeocoderClient: geocoder})
+	for _, target := range []string{"/v1/geocode", "/v1/geocode?address=short", "/v1/geocode?address=123%20Main%20St%0ASeattle%20WA", "/v1/geocode?address=123%20Main%20Street&address=456%20Second%20Street"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", target, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s returned %d %s", target, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/geocode?address="+url.QueryEscape("1600 Pennsylvania Ave NW, Washington, DC 20500"), nil))
+	if w.Code != http.StatusUnprocessableEntity || calls != 1 || strings.Contains(w.Body.String(), "1600 PENNSYLVANIA") {
+		t.Fatalf("out-of-scope response=%d calls=%d body=%s", w.Code, calls, w.Body.String())
 	}
 }

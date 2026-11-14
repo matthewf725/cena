@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Kitchen, Meal } from './data';
+import { kitchens, toMeal, type Kitchen } from './data';
 
 // Public reads work anonymously; order writes require an email OTP session.
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -32,23 +32,13 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
   if (!supabase || !kitchen.backendId) return kitchen;
   const restaurantId = kitchen.backendId;
   const [menu, availability] = await Promise.all([
-    supabase.from('catalog_items').select('id,name,description,price_cents,regular_price_cents,equipment,published_steps,image_key')
+    supabase.from('catalog_items').select('id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key')
       .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null).order('name'),
     fetchPickupAvailability(restaurantId),
   ]);
   if (menu.error || availability.error) throw menu.error ?? availability.error;
   const slots = (availability.data ?? []).filter(slot => slot.reserved_count < slot.capacity);
-  const meals: Meal[] = (menu.data ?? []).map(item => ({
-    id: item.id,
-    backendItemId: item.id,
-    name: item.name,
-    subtitle: item.description,
-    price: item.price_cents / 100,
-    was: (item.regular_price_cents ?? item.price_cents) / 100,
-    image: item.image_key ?? 'mediterranean',
-    equipment: item.equipment?.[0],
-    publishedSteps: item.published_steps ?? [],
-  }));
+  const meals = (menu.data ?? []).map(toMeal);
   return {
     ...kitchen,
     meals: meals.filter(meal => slots.some(slot => slot.items.some(item => item.item_id === meal.id && item.remaining > 0))),
@@ -57,6 +47,19 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
       remaining: Object.fromEntries(slot.items.map(item => [item.item_id, item.remaining])),
     })),
   };
+}
+
+export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> {
+  if (!supabase) return kitchens.find(kitchen => kitchen.id === slug) ?? null;
+  const { data, error } = await supabase.from('restaurants')
+    .select('id,slug,name,cuisine,image_key,address,timezone,curbside_enabled')
+    .eq('slug', slug).eq('active', true).maybeSingle();
+  if (error) throw error;
+  return data ? {
+    id: data.slug, backendId: data.id, name: data.name, cuisine: data.cuisine,
+    image: data.image_key ?? 'mediterranean', address: data.address, timezone: data.timezone,
+    curbsideEnabled: data.curbside_enabled, meals: [],
+  } : null;
 }
 
 export async function placeOrder(input: { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[] }) {

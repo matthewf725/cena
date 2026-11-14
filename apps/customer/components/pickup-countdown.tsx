@@ -3,10 +3,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Clock3 } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 
-export function PickupCountdown({ slots }: { slots: Kitchen['pickupSlots'] }) {
+export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlots']; timezone?: string }) {
   const [now, setNow] = useState(Date.now);
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, dateStyle: 'short' });
+  const today = day.format(now);
   const upcoming = (slots ?? []).filter(slot => Date.parse(slot.cutoffAt) > now && Date.parse(slot.startsAt) > now);
-  const next = upcoming[0];
+  const next = upcoming.find(slot => day.format(new Date(slot.startsAt)) === today);
 
   useEffect(() => {
     if (!next) return;
@@ -14,7 +16,7 @@ export function PickupCountdown({ slots }: { slots: Kitchen['pickupSlots'] }) {
     return () => clearInterval(timer);
   }, [next?.id]);
 
-  if (!next) return <Text style={styles.unavailable}>No pickup windows available</Text>;
+  if (!next) return <Text style={styles.unavailable}>{upcoming.length ? 'Order ahead for pickup' : 'No pickup windows available'}</Text>;
 
   const seconds = Math.max(0, Math.ceil((Date.parse(next.cutoffAt) - now) / 1000));
   const hours = Math.floor(seconds / 3600);
@@ -24,7 +26,7 @@ export function PickupCountdown({ slots }: { slots: Kitchen['pickupSlots'] }) {
   return (
     <View style={styles.outline}>
       <Clock3 size={16} color={green} accessibilityElementsHidden importantForAccessibility="no" />
-      <Text style={styles.label}>Order cutoff</Text>
+      <Text style={styles.label}>Order cutoff for pickup today</Text>
       <Text style={styles.counter} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
         {clock}
       </Text>

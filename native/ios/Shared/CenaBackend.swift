@@ -51,6 +51,9 @@ enum CenaBackendError: LocalizedError {
     func patch(_ table: String, query: String, body: [String: Any], authenticated: Bool = false) async throws -> Data {
         try await request("/rest/v1/\(table)?\(query)", method: "PATCH", body: body, authenticated: authenticated, prefer: "return=minimal")
     }
+    func upsert(_ table: String, query: String, body: [String: Any], authenticated: Bool = true) async throws -> Data {
+        try await request("/rest/v1/\(table)?\(query)", method: "POST", body: body, authenticated: authenticated, prefer: "resolution=merge-duplicates,return=minimal")
+    }
     func apiRequest(_ path: String, method: String = "GET", body: Any? = nil, authenticated: Bool = false) async throws -> Any {
         guard let apiBase, let url = URL(string: apiBase + path) else { throw CenaBackendError.server("CENA_API_URL is invalid.") }
         var req = URLRequest(url: url); req.httpMethod = method

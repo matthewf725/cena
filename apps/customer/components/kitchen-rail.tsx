@@ -1,11 +1,10 @@
 import { FlatList, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Heart } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 import { formatDistance } from '../lib/discovery';
 import { foodPhoto } from '../lib/food-photos';
 import { PickupCountdown } from './pickup-countdown';
 
-export function KitchenRail({ title, kitchens, width, radius, open, reduced, fromCity, saved, toggleSaved }: {
+export function KitchenRail({ title, kitchens, width, radius, open, reduced, fromCity }: {
   title: string;
   kitchens: Kitchen[];
   width: number;
@@ -13,8 +12,6 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
   open: (kitchen: Kitchen) => void;
   reduced: boolean;
   fromCity: boolean;
-  saved: string[];
-  toggleSaved: (id: string) => void;
 }) {
   if (!kitchens.length) return null;
   const cardWidth = Math.max(210, Math.min(320, width - (width < 390 ? 54 : 84)));
@@ -45,13 +42,7 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
                 <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles, fromCity), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
               </View>
             </Pressable>
-            <Pressable accessibilityRole="button"
-              accessibilityLabel={`${saved.includes(kitchen.id) ? 'Unsave' : 'Save'} ${kitchen.name}`}
-              accessibilityState={{ selected: saved.includes(kitchen.id) }}
-              onPress={() => toggleSaved(kitchen.id)} style={styles.favorite}>
-              <Heart size={17} color="#5D100A" fill={saved.includes(kitchen.id) ? '#5D100A' : 'transparent'} />
-            </Pressable>
-            {kitchen.pickupSlots !== undefined && <PickupCountdown slots={kitchen.pickupSlots} />}
+            {kitchen.pickupSlots !== undefined && <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} />}
           </View>
         )}
       />
@@ -69,5 +60,4 @@ const styles = StyleSheet.create({
   name: { color: '#25211F', fontSize: 15, lineHeight: 19, fontWeight: '800' },
   details: { color: '#605751', fontSize: 13, lineHeight: 17, marginTop: 2 },
   pressed: { opacity: 0.72 },
-  favorite: { position: 'absolute', top: 7, right: 7, backgroundColor: '#FFFDFA', width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
 });

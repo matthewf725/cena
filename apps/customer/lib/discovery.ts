@@ -1,5 +1,5 @@
-import type { Kitchen, Meal } from './data';
-import { kitchens } from './data';
+import type { CatalogMealRow, Kitchen, Meal } from './data';
+import { kitchens, toMeal } from './data';
 import { supabase } from './supabase';
 
 export type PickupOrigin = { latitude: number; longitude: number };
@@ -9,6 +9,7 @@ export type MealTile = { kitchen: Kitchen; meal: Meal };
 export type CuisineRail = { name: string; kitchens: Kitchen[] };
 export type DiscoveryPage = {
   recents: Kitchen[];
+  recentMeals: MealTile[];
   explore: MealTile[];
   nearby: Kitchen[];
   categories: CuisineRail[];
@@ -18,6 +19,7 @@ export type DiscoveryPage = {
 type DiscoveryInput = {
   origin: PickupOrigin;
   recentIds: string[];
+  recentMealIds: string[];
   after?: string;
   query: string;
 };
@@ -36,16 +38,7 @@ type RestaurantRow = {
   distance_miles: number | null;
   next_slot: { id: string; starts_at: string; ends_at: string; cutoff_at: string } | null;
 };
-type MealRow = {
-  id: string;
-  name: string;
-  description: string;
-  price_cents: number;
-  regular_price_cents: number | null;
-  image_key: string | null;
-  equipment: string[];
-  published_steps: string[];
-};
+type MealRow = CatalogMealRow;
 type DiscoveryResponse = {
   recent: RestaurantRow[];
   explore: { restaurant: RestaurantRow; meal: MealRow }[];
@@ -78,18 +71,23 @@ function toKitchen(row: RestaurantRow): Kitchen {
   };
 }
 
-export function toMeal(row: MealRow): Meal {
-  return {
-    id: row.id,
-    backendItemId: row.id,
-    name: row.name,
-    subtitle: row.description,
-    price: row.price_cents / 100,
-    was: (row.regular_price_cents ?? row.price_cents) / 100,
-    image: row.image_key ?? 'mediterranean',
-    equipment: row.equipment?.[0],
-    publishedSteps: row.published_steps ?? [],
-  };
+async function fetchRecentMeals(ids: string[]): Promise<MealTile[]> {
+  if (!supabase || ids.length === 0) return [];
+  const { data, error } = await supabase.from('catalog_items').select(`
+    id,name,description,price_cents,prepared_meal_total_cents,image_key,equipment,published_steps,
+    restaurants!inner(id,slug,name,cuisine,image_key,address,timezone,curbside_enabled,latitude,longitude)
+  `).in('id', [...new Set(ids)]).eq('active', true).not('published_at', 'is', null);
+  if (error) throw error;
+  const byId = new Map((data ?? []).map((item: any) => [item.id, item]));
+  return [...new Set(ids)].flatMap(id => {
+    const item = byId.get(id) as (MealRow & { restaurants: Omit<RestaurantRow, 'next_slot'|'distance_miles'> }) | undefined;
+    if (!item) return [];
+    const restaurant = item.restaurants;
+    return [{
+      kitchen: toKitchen({ ...restaurant, next_slot: null, distance_miles: null }),
+      meal: toMeal(item),
+    }];
+  });
 }
 
 export function formatDistance(miles: number | undefined, fromCity = false): string | undefined {
@@ -107,7 +105,7 @@ function demoDistance(origin: PickupOrigin, restaurant: Kitchen) {
   return 3958.7613 * 2 * Math.asin(Math.min(1, Math.sqrt(angle)));
 }
 
-function demoDiscovery({ query, origin, recentIds }: DiscoveryInput): DiscoveryPage {
+function demoDiscovery({ query, origin, recentIds, recentMealIds }: DiscoveryInput): DiscoveryPage {
   const matches = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
   const byDistance = kitchens.map(kitchen => ({ ...kitchen, distanceMiles: demoDistance(origin, kitchen) }))
     .sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity));
@@ -115,7 +113,9 @@ function demoDiscovery({ query, origin, recentIds }: DiscoveryInput): DiscoveryP
     || kitchen.meals.some(meal => matches(meal.name) || matches(meal.subtitle)));
 
   return {
-    recents: recentIds.flatMap(id => byDistance.filter(kitchen => kitchen.id === id)),
+    recents: [...new Set(recentIds)].flatMap(id => byDistance.filter(kitchen => kitchen.id === id)),
+    recentMeals: [...new Set(recentMealIds)].flatMap(id => byDistance.flatMap(kitchen => kitchen.meals
+      .filter(meal => meal.id === id).map(meal => ({ kitchen, meal })))),
     explore: available.flatMap(kitchen => kitchen.meals.filter(meal =>
       matches(meal.name) || matches(meal.subtitle) || matches(kitchen.name) || matches(kitchen.cuisine),
     ).map(meal => ({ kitchen, meal }))).slice(0, 8),
@@ -153,8 +153,10 @@ export async function discoverPickupFeed(input: DiscoveryInput): Promise<Discove
     result = data as DiscoveryResponse;
   }
 
+  const recentMeals = input.query.trim() ? [] : await fetchRecentMeals(input.recentMealIds.slice(0, 20));
   return {
     recents: result.recent.map(toKitchen),
+    recentMeals,
     explore: result.explore.map(({ restaurant, meal }) => ({ kitchen: toKitchen(restaurant), meal: toMeal(meal) })),
     nearby: result.nearby.map(toKitchen),
     categories: result.categories.map(({ name, restaurants }) => ({ name, kitchens: restaurants.map(toKitchen) })),

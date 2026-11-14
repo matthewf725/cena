@@ -6,6 +6,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 
 const database = new PGlite({ extensions: { pgcrypto } });
 let sampleRestaurant;
+const comparisonCustomer = '10000000-0000-4000-8000-000000000004';
 
 before(async () => {
   await database.exec(`
@@ -21,6 +22,7 @@ before(async () => {
     await database.exec(await readFile(new URL(file, migrations), 'utf8'));
   }
   await database.exec(await readFile(new URL('../supabase/seed.sql', import.meta.url), 'utf8'));
+  await database.query('insert into auth.users(id) values($1)', [comparisonCustomer]);
 
   // Local-only fixtures broaden cuisine paging without adding fake production seed data.
   await database.query(`
@@ -63,6 +65,14 @@ async function asAnon(operation) {
   });
 }
 
+async function asCustomer(operation) {
+  return database.transaction(async (tx) => {
+    await tx.exec('set local role authenticated');
+    await tx.query("select set_config('request.jwt.claim.sub',$1,true)", [comparisonCustomer]);
+    return operation(tx);
+  });
+}
+
 test('discovery pages lexicographic cuisine rails without returning menu dumps', async () => {
   const first = await feed();
   assert.equal(first.categories.length, 4);
@@ -92,6 +102,40 @@ test('anonymous discovery RPC respects public row policies', async () => {
   assert.ok(row.feed.nearby.length > 0);
   assert.ok(row.feed.categories.length > 0);
   assert.ok(row.feed.explore.every((entry) => entry.meal.id && entry.restaurant.id));
+});
+
+test('prepared meal total is explicit and does not change kit checkout price', async () => {
+  const { rows: [rigatoni] } = await database.query(`
+    select id,price_cents,regular_price_cents,prepared_meal_total_cents from catalog_items
+    where name='Rigatoni alla Vodka Kit'
+  `);
+  assert.equal(rigatoni.price_cents,1695);
+  assert.equal(rigatoni.regular_price_cents,2260);
+  assert.equal(rigatoni.prepared_meal_total_cents,2455);
+  const { rows: [taco] } = await database.query(`
+    select prepared_meal_total_cents,regular_price_cents from catalog_items where name='Baja Chicken Taco Kit'
+  `);
+  assert.equal(taco.prepared_meal_total_cents,null);
+  assert.equal(taco.regular_price_cents,2125);
+
+  const preparedFeed = await feed(null,null,null,'Rigatoni');
+  assert.equal(preparedFeed.explore[0].meal.prepared_meal_total_cents,2455);
+  const unpricedFeed = await feed(null,null,null,'Taco');
+  assert.equal(unpricedFeed.explore[0].meal.prepared_meal_total_cents,null);
+
+  const { rows: [order] } = await asCustomer((tx) => tx.query(`
+    with fixture as (
+      select ci.id as item_id,ci.restaurant_id,s.id as slot_id
+      from catalog_items ci join pickup_slots s on s.restaurant_id=ci.restaurant_id
+      where ci.name='Rigatoni alla Vodka Kit' and s.cutoff_at>now() order by s.starts_at limit 1
+    )
+    select created.* from fixture f cross join lateral create_order(f.restaurant_id,f.slot_id,'prepared-total-test','counter','{}',
+      jsonb_build_array(jsonb_build_object('item_id',f.item_id,'quantity',1))) created
+  `));
+  assert.ok(order, 'order fixture exists');
+  assert.equal(order.subtotal_cents,1695);
+  const { rows: [snapshot] } = await database.query('select unit_price_cents from order_items where order_id=$1', [order.id]);
+  assert.equal(snapshot.unit_price_cents,1695);
 });
 
 test('discovery computes true miles, filters search and shows sold-out recent restaurants', async () => {

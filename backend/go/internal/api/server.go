@@ -19,11 +19,13 @@ type Config struct {
 	SupabaseURL, SupabaseAnonKey string
 	AllowedOrigins               []string
 	Client                       *http.Client
+	GeocoderClient               *http.Client
 }
 type Server struct {
-	cfg    Config
-	client *http.Client
-	mux    *http.ServeMux
+	cfg            Config
+	client         *http.Client
+	geocoderClient *http.Client
+	mux            *http.ServeMux
 }
 
 func New(cfg Config) http.Handler {
@@ -36,8 +38,13 @@ func New(cfg Config) http.Handler {
 	if c == nil {
 		c = &http.Client{Timeout: 8 * time.Second}
 	}
-	s := &Server{cfg: cfg, client: c, mux: http.NewServeMux()}
+	gc := cfg.GeocoderClient
+	if gc == nil {
+		gc = &http.Client{Timeout: 4 * time.Second}
+	}
+	s := &Server{cfg: cfg, client: c, geocoderClient: gc, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", s.health)
+	s.mux.HandleFunc("GET /v1/geocode", s.geocode)
 	s.mux.HandleFunc("GET /v1/catalog", s.catalog)
 	s.mux.HandleFunc("POST /v1/discovery", s.discovery)
 	s.mux.HandleFunc("POST /v1/orders", s.createOrder)
@@ -89,7 +96,7 @@ func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
 	// The query parameters are fixed server-side; caller filters cannot broaden table access.
 	paths := []string{
 		"restaurants?select=id,slug,name,cuisine,image_key,description,address,timezone,curbside_enabled&active=eq.true&order=name&limit=200",
-		"catalog_items?select=id,restaurant_id,name,description,price_cents,regular_price_cents,equipment,allergens,published_steps,image_key,category,prep_minutes&active=eq.true&published_at=not.is.null&order=name&limit=1000",
+		"catalog_items?select=id,restaurant_id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,image_key,category,prep_minutes&active=eq.true&published_at=not.is.null&order=name&limit=1000",
 		"pickup_slots?select=id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count&active=eq.true&starts_at=gt." + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&cutoff_at=gt." + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&order=starts_at&limit=1000",
 		"slot_item_inventory?select=slot_id,item_id,available_qty,reserved_qty&limit=5000",
 	}
