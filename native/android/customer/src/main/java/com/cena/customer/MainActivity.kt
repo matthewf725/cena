@@ -34,7 +34,7 @@ private fun profilePage(){base();profileControl();title("Your Cena profile");if(
  private fun addToBag(r:JSONObject,m:JSONObject){if(paymentRequestInFlight||pref.getString("pending_checkout_order",null)!=null||pref.getString("checkout_request",null)!=null){Toast.makeText(this,"Finish or cancel the current checkout before changing your bag.",Toast.LENGTH_LONG).show();return};val rid=r.optString("id");val current=bag.firstOrNull()?.restaurant?.optString("id");if(current!=null&&current!=rid){AlertDialog.Builder(this).setTitle("One restaurant per order").setMessage("Your bag has items from ${bag.first().restaurant.optString("name")}. Replace it with items from ${r.optString("name")}?").setNegativeButton("Keep current bag",null).setPositiveButton("Replace bag"){_,_->bag.clear();bag.add(BagLine(r,m,1));persistBag();updateBagBadge();Toast.makeText(this,"Added to bag",Toast.LENGTH_SHORT).show()}.show();return};val existing=bag.firstOrNull{it.meal.optString("id")==m.optString("id")};if(existing!=null)existing.quantity++ else bag.add(BagLine(r,m,1));persistBag();updateBagBadge();Toast.makeText(this,"Added to bag",Toast.LENGTH_SHORT).show()}
  private fun bagScreen(){base();title("Your bag");if(bag.isEmpty()){text("Your bag is empty.");button("Explore meal kits"){catalog()};return};val pending=pref.getString("pending_checkout_order",null);val request=pref.getString("checkout_request",null);if(paymentRequestInFlight){text("Your secure checkout is being prepared. The bag is locked.");return};if(pending!=null||request!=null){if(!paymentOwnerMatches()){text("This checkout belongs to another Cena account. Sign in with the account that started it.");button("Switch account"){pref.edit().remove("token").remove("email").remove("refresh").remove("user_id").apply();auth()};return};if(pending==null){text("Your checkout request is saved. Your bag is locked while payment is confirmed.");button("Retry secure checkout"){startCheckout()};return};text("Payment for order $pending is still being confirmed. Your bag is saved.");button("Continue secure checkout"){checkPendingPayment(true,true)};button("Check payment status"){checkPendingPayment(true)};button("Cancel checkout"){cancelPendingCheckout()};return};text("${bag.first().restaurant.optString("name")} · pickup orders are placed one restaurant at a time");for(line in bag.toList()){val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(0,8,0,8)};row.addView(TextView(this).apply{text="${line.meal.optString("name")}\nMeal kit · $${"%.2f".format(line.meal.optInt("price_cents")/100.0)} each";textSize=14f;setTextColor(wine);layoutParams=LinearLayout.LayoutParams(0,-2,1f)});row.addView(Button(this).apply{text="−";contentDescription="Remove one ${line.meal.optString("name")}";setOnClickListener{if(line.quantity<=1)bag.remove(line)else line.quantity--;persistBag();updateBagBadge();bagScreen()}});row.addView(TextView(this).apply{text=line.quantity.toString();textSize=15f;setTextColor(wine);setPadding(8,0,8,0)});row.addView(Button(this).apply{text="+";contentDescription="Add one ${line.meal.optString("name")}";setOnClickListener{line.quantity++;persistBag();updateBagBadge();bagScreen()}});row.addView(Button(this).apply{text="Remove";contentDescription="Remove ${line.meal.optString("name")} from bag";setOnClickListener{bag.remove(line);persistBag();updateBagBadge();bagScreen()}});body.addView(row)};val subtotal=bag.sumOf{it.meal.optInt("price_cents",0)*it.quantity};title("Kit subtotal · $${"%.2f".format(subtotal/100.0)}",18f);button("Continue to pickup"){restaurant=bag.first().restaurant;meal=bag.first().meal;qty=bag.first().quantity;loadSlots()};button("Browse this restaurant"){restaurant=bag.first().restaurant;menu()}}
  private fun home(){base();brandHeader();text("Good food, slower hours. Reserve local meal kits for pickup.");paidNotice?.let{title(it,16f);paidNotice=null};body.addView(TextView(this).apply{text="⌖  FROM SAN FRANCISCO\nPickup-area center · distances are approximate";textSize=19f;setTextColor(wine);setPadding(18,28,18,28);background=GradientDrawable().apply{setColor(peach);cornerRadius=18*resources.displayMetrics.density;setStroke((1*resources.displayMetrics.density).toInt(),coral)};setOnClickListener{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("geo:37.7749,-122.4194?q=meal+kit+pickup")))}});text("Discover neighborhood kitchens and their next available pickup times.");button("Browse pickup options"){catalog()};text("Same-day or scheduled pickup · Pay securely in Cena")}
- private fun auth(){base();title("Your Cena account");text("We'll email you a one-time sign-in code.");val e=field("Email address");val c=field("6-digit code");button("Send code"){go({req("/auth/v1/otp","POST",JSONObject().put("email",e.text.toString().trim()).put("create_user",true))}){Toast.makeText(this,"Check your email",Toast.LENGTH_LONG).show()}};button("Verify code"){go({req("/auth/v1/verify","POST",JSONObject().put("email",e.text.toString().trim()).put("token",c.text.toString().trim()).put("type","email"))}){val j=JSONObject(it);pref.edit().putString("token",j.optString("access_token")).putString("refresh",j.optString("refresh_token")).putString("email",e.text.toString().trim()).putString("user_id",j.optJSONObject("user")?.optString("id")?:"").apply();persistBag();if(resumeQuoteAfterAuth){resumeQuoteAfterAuth=false;applyPromoAndContinue(pendingQuotePromo)}else catalog()}};button("Back"){home()}}
+ private fun auth(){base();title("Your Cena account");text("We'll email you a one-time sign-in code.");val e=field("Email address");val c=field("6-digit code");button("Send code"){go({req("/auth/v1/otp","POST",JSONObject().put("email",e.text.toString().trim()).put("create_user",true))}){Toast.makeText(this,"Check your email",Toast.LENGTH_LONG).show()}};button("Verify code"){go({req("/auth/v1/verify","POST",JSONObject().put("email",e.text.toString().trim()).put("token",c.text.toString().trim()).put("type","email"))}){val j=JSONObject(it);pref.edit().putString("token",j.optString("access_token")).putString("refresh",j.optString("refresh_token")).putString("email",e.text.toString().trim()).putString("user_id",j.optJSONObject("user")?.optString("id")?:"").apply();persistBag();if(resumeQuoteAfterAuth){resumeQuoteAfterAuth=false;checkout();applyPromoAndContinue(pendingQuotePromo)}else catalog()}};button("Back"){home()}}
 private val sfLat=37.7749
  private val sfLon=-122.4194
  private var originLat=sfLat;private var originLon=sfLon;private var usingDeviceLocation=false;private var manualLocation:String?=null
@@ -75,21 +75,59 @@ private fun applyPromoAndContinue(code:String?){
   val items=JSONArray();for(line in bag)items.put(JSONObject().put("item_id",line.meal.getString("id")).put("quantity",line.quantity))
   val request=JSONObject().put("p_restaurant_id",bag.first().restaurant.getString("id")).put("p_slot_id",slot!!.optString("id")).put("p_items",items)
   code?.takeIf{it.isNotBlank()}?.let{request.put("promo_code",it)}
-  go({apiReq("/v1/checkout/quote","POST",request)}){raw->
-    val quote=JSONObject(raw)
-    val subtotal=quote.optInt("subtotal_cents",-1);val discount=quote.optInt("discount_cents",-1);val total=quote.optInt("amount_cents",-1)
-    val currency=quote.optString("currency","USD").uppercase()
-    if(subtotal<0||discount<0||total<0||discount>subtotal||total!=subtotal-discount||currency!="USD"){Toast.makeText(this,"Cena returned an incomplete price quote. Try again.",Toast.LENGTH_LONG).show();activePromoCode=null;expectedAmountCents=null;return@go}
-    val serverCode=quote.optString("promo_code").takeIf{it.isNotBlank()}
-    val requestedCode=code?.trim()?.takeIf{it.isNotBlank()}
-    if(requestedCode!=null&&serverCode==null){
-      activePromoCode=null;expectedAmountCents=null
-      AlertDialog.Builder(this).setTitle("Promo code not applied").setMessage("Cena could not apply $requestedCode. Your total without a discount is $${"%.2f".format(total/100.0)} USD.").setNegativeButton("Edit code",null).setPositiveButton("Continue without code"){_,_->expectedAmountCents=total;startCheckout()}.show()
-      return@go
+  val requestOwner=pref.getString("user_id",null)
+  val requestSlot=slot!!.optString("id")
+  val checkoutScreen=body
+  ex.execute {
+    val raw=try {
+      apiReq("/v1/checkout/quote","POST",request)
+    } catch(error:Exception) {
+      val payload=runCatching { JSONObject(error.message.orEmpty()) }.getOrNull()
+      runOnUiThread {
+        if(body!==checkoutScreen||pref.getString("user_id",null)!=requestOwner||slot?.optString("id")!=requestSlot)return@runOnUiThread
+        activePromoCode=null;expectedAmountCents=null
+        val message=payload?.optString("error")?.takeIf { it.isNotBlank() } ?: "Couldn’t check your pickup total. Please try again."
+        if(code!=null&&payload?.optString("code")=="promo_unavailable") {
+          AlertDialog.Builder(this).setTitle("Discount code unavailable").setMessage(message)
+            .setNegativeButton("Edit code",null)
+            .setPositiveButton("Review total without code"){_,_->applyPromoAndContinue(null)}.show()
+        } else {
+          AlertDialog.Builder(this).setTitle("Couldn’t check your total").setMessage(message).setPositiveButton("OK",null).show()
+        }
+      }
+      return@execute
     }
-    activePromoCode=serverCode;expectedAmountCents=total
-    val discountLine=if(discount>0)"Discount · −$${"%.2f".format(discount/100.0)}\n" else ""
-    AlertDialog.Builder(this).setTitle(if(serverCode!=null)"Promo code applied" else "Confirm pickup total").setMessage("Kit subtotal · $${"%.2f".format(subtotal/100.0)}\n${discountLine}Due today · $${"%.2f".format(total/100.0)} $currency\n\nCena will recheck this amount when your order is placed.").setNegativeButton("Review order",null).setPositiveButton("Continue to secure payment"){_,_->startCheckout()}.show()
+    runOnUiThread {
+    if(body!==checkoutScreen||pref.getString("user_id",null)!=requestOwner||slot?.optString("id")!=requestSlot)return@runOnUiThread
+      val quote=runCatching { JSONObject(raw) }.getOrNull() ?: JSONObject()
+      val subtotal=quote.optInt("subtotal_cents",-1)
+      val discount=quote.optInt("discount_cents",-1)
+      val total=quote.optInt("amount_cents",-1)
+      val currency=quote.optString("currency").uppercase(java.util.Locale.ROOT)
+      if(subtotal<0||discount<0||total<0||discount>subtotal||total!=subtotal-discount||currency!="USD") {
+        Toast.makeText(this,"Cena returned an incomplete price quote. Try again.",Toast.LENGTH_LONG).show()
+        activePromoCode=null
+        expectedAmountCents=null
+        return@runOnUiThread
+      }
+      val serverCode=if(quote.isNull("promo_code"))null else quote.optString("promo_code").takeIf{it.isNotBlank()}
+      val requestedCode=code?.trim()?.uppercase(java.util.Locale.ROOT)?.takeIf{it.isNotBlank()}
+      if(serverCode!=requestedCode||(serverCode==null&&discount!=0)||(serverCode!=null&&discount<=0)) {
+        activePromoCode=null
+        expectedAmountCents=null
+        Toast.makeText(this,"The discount and quote did not match. Try again.",Toast.LENGTH_LONG).show()
+        return@runOnUiThread
+      }
+      activePromoCode=serverCode
+      expectedAmountCents=total
+      val discountLine=if(discount>0)"Discount · −$${"%.2f".format(discount/100.0)}\n" else ""
+      AlertDialog.Builder(this)
+        .setTitle(if(serverCode!=null)"Promo code applied" else "Confirm pickup total")
+        .setMessage("Kit subtotal · $${"%.2f".format(subtotal/100.0)}\n${discountLine}Due today · $${"%.2f".format(total/100.0)} $currency\n\nCena will recheck this amount when your order is placed.")
+        .setNegativeButton("Review order",null)
+        .setPositiveButton("Continue to secure payment"){_,_->startCheckout()}
+        .show()
+    }
   }
 }
 private fun checkout(){if(bag.isEmpty()){bagScreen();return};restaurant=bag.first().restaurant;base();profileControl();title("Pickup details");text(restaurant?.optString("name")?:"");for(line in bag)text("${line.quantity} × ${line.meal.optString("name")} · $${"%.2f".format(line.meal.optInt("price_cents")*line.quantity/100.0)}");val subtotal=bag.sumOf{it.meal.optInt("price_cents",0)*it.quantity};title("Kit subtotal · $${"%.2f".format(subtotal/100.0)}",18f);text("Pickup ${slot?.optString("starts_at")?.replace("T"," · ")?.take(16)?:"time selected"}");val curbAllowed=restaurant?.optBoolean("curbside_enabled",false)==true;curbsideForCheckout=curbsideForCheckout&&curbAllowed;val curb=CheckBox(this).apply{text="Curbside pickup";isChecked=curbsideForCheckout;setTextColor(wine)};var vehicleInputs=listOf<EditText>();if(curbAllowed){body.addView(curb);val brand=field("Vehicle make");brand.setText(curbMake);val model=field("Vehicle model");model.setText(curbModel);val color=field("Vehicle color");color.setText(curbColor);vehicleInputs=listOf(brand,model,color);vehicleInputs.forEach{it.visibility=if(curb.isChecked)View.VISIBLE else View.GONE};curb.setOnCheckedChangeListener{_,checked->curbsideForCheckout=checked;vehicleInputs.forEach{it.visibility=if(checked)View.VISIBLE else View.GONE}}};val promo=field("Promo code (optional)");promo.isSingleLine=true;button("Pay securely in Cena"){curbsideForCheckout=curbAllowed&&curb.isChecked;if(curbsideForCheckout&&vehicleInputs.size==3){curbMake=vehicleInputs[0].text.toString();curbModel=vehicleInputs[1].text.toString();curbColor=vehicleInputs[2].text.toString()};val code=promo.text.toString().trim().takeIf{it.isNotBlank()};pendingQuotePromo=code;if(pref.getString("token",null).isNullOrBlank()){resumeQuoteAfterAuth=true;auth()}else applyPromoAndContinue(code)};button("Back to pickup times"){loadSlots()}}

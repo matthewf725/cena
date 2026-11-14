@@ -110,6 +110,9 @@ func (s *Server) quoteCheckout(w http.ResponseWriter, r *http.Request) {
 		"p_user_id": userID, "p_restaurant_id": in.RestaurantID, "p_slot_id": in.SlotID, "p_items": in.Items, "p_promo_code": promo,
 	})
 	if err != nil {
+		if writeCheckoutAvailabilityError(w, status, data) {
+			return
+		}
 		upstreamError(w, status, err)
 		return
 	}
@@ -254,6 +257,9 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "checkout price changed; request a new quote"})
 			return
 		}
+		if writeCheckoutAvailabilityError(w, status, rpcData) {
+			return
+		}
 		upstreamError(w, status, err)
 		return
 	}
@@ -352,6 +358,38 @@ func quoteConflict(status int, body []byte) bool {
 	}
 	message := strings.ToLower(string(body))
 	return strings.Contains(message, "quote changed") || strings.Contains(message, "amount changed")
+}
+
+func writeCheckoutAvailabilityError(w http.ResponseWriter, status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	var errorResponse struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &errorResponse) != nil || errorResponse.Code != "P0001" {
+		return false
+	}
+	var code, message string
+	switch errorResponse.Message {
+	case "promo code is unavailable":
+		code, message = "promo_unavailable", "That discount code is unavailable. Check the code or continue without it."
+	case "pickup slot closed", "pickup slot full", "online checkout closes 32 minutes before pickup":
+		code, message = "pickup_unavailable", "That pickup time is no longer available. Choose another time."
+	case "menu item unavailable for selected slot", "menu item unavailable", "item unavailable for selected slot", "item out of stock":
+		code, message = "item_unavailable", "A meal kit in your bag is unavailable for that pickup time. Update your bag or choose another time."
+	case "restaurant payments are not enabled", "restaurant unavailable":
+		code, message = "restaurant_unavailable", "This restaurant isn’t taking online orders right now."
+	case "curbside unavailable":
+		code, message = "curbside_unavailable", "Curbside is unavailable. Choose counter pickup to continue."
+	case "order total is below the platform fee":
+		code, message = "order_total_too_low", "The order total is too low for online payment. Update your bag or remove the discount code."
+	default:
+		return false
+	}
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"code": code, "error": message})
+	return true
 }
 
 func validReservation(v checkoutReservation) bool {

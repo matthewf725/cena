@@ -150,6 +150,45 @@ func TestCheckoutAndQuoteRequireVerifiedBearerBeforeCallingServices(t *testing.T
 	}
 }
 
+func TestCheckoutAvailabilityUsesPublicErrorCodes(t *testing.T) {
+	const id = "550e8400-e29b-41d4-a716-446655440000"
+	for _, tc := range []struct {
+		name, endpoint, upstream, wantCode, wantMessage string
+	}{
+		{"invalid promotion", "/v1/checkout/quote", `{"code":"P0001","message":"promo code is unavailable","details":"private DB details"}`, "promo_unavailable", "That discount code is unavailable. Check the code or continue without it."},
+		{"closed window", "/v1/checkout", `{"code":"P0001","message":"online checkout closes 32 minutes before pickup"}`, "pickup_unavailable", "That pickup time is no longer available. Choose another time."},
+		{"unknown failure", "/v1/checkout/quote", `{"code":"P0001","message":"private DB details"}`, "", "request rejected by data service"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Path {
+				case "/auth/v1/user":
+					return jsonResponse(http.StatusOK, `{"id":"`+id+`"}`), nil
+				case "/rest/v1/rpc/quote_checkout_order", "/rest/v1/rpc/reserve_checkout_order":
+					return jsonResponse(http.StatusBadRequest, tc.upstream), nil
+				default:
+					t.Fatalf("rejected checkout reached an unexpected endpoint: %s", r.URL)
+					return nil, nil
+				}
+			})}
+			h := New(Config{SupabaseURL: "https://supabase.test", SupabaseAnonKey: "anon", SupabaseServiceRoleKey: "service-role", StripeSecretKey: "sk_test_fake", StripeWebhookSecret: "whsec_fake", WebBaseURL: "https://cena.example", Client: client, StripeClient: client})
+			body := `{"p_restaurant_id":"` + id + `","p_slot_id":"` + id + `","p_items":[{"item_id":"` + id + `","quantity":1}],"promo_code":"SAVE20"`
+			if tc.endpoint == "/v1/checkout" {
+				body += `,"p_idempotency_key":"checkout-12345678","p_pickup_mode":"counter","expected_amount_cents":2599`
+			}
+			r := httptest.NewRequest(http.MethodPost, tc.endpoint, strings.NewReader(body+"}"))
+			r.Header.Set("Authorization", "Bearer user-jwt")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			var response map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != http.StatusUnprocessableEntity ||
+				response["code"] != tc.wantCode || response["error"] != tc.wantMessage {
+				t.Fatalf("%d %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func readBody(r *http.Request) string { b, _ := io.ReadAll(r.Body); return string(b) }
 func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
