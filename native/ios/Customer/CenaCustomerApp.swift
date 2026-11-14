@@ -10,7 +10,9 @@ import CoreLocation
             }
         }
     }
-    var body: some Scene { WindowGroup { CustomerHome().tint(CenaStyle.maroon) } }
+    var body: some Scene {
+        WindowGroup { CustomerHome().tint(CenaStyle.maroon).preferredColorScheme(.light) }
+    }
 }
 
 struct CustomerHome: View {
@@ -118,7 +120,9 @@ struct CustomerHome: View {
             .safeAreaInset(edge: .bottom) {
                 if orderNumber == nil && pendingCheckoutID == nil && !checkoutVisible {
                     HStack { tabButton("Discover", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
-                        .padding(.vertical, 10).background(.white)
+                        .padding(.vertical, 7)
+                        .background(CenaStyle.paper)
+                        .overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
                 }
             }
             .background(CenaStyle.cream)
@@ -150,11 +154,15 @@ struct CustomerHome: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("Dinner, made\na little easier.").font(.largeTitle.weight(.bold)).fontDesign(.default).foregroundStyle(CenaStyle.maroon).accessibilityIdentifier("customer.home.title")
-                    Text("Local meal kits, prepared by neighborhood kitchens.").foregroundStyle(.secondary)
+                    Text("Dinner, made\na little easier.").font(.largeTitle.weight(.bold)).fontDesign(.default).foregroundStyle(CenaStyle.ink).accessibilityIdentifier("customer.home.title")
+                    Text("Local meal kits, prepared by neighborhood kitchens.").foregroundStyle(CenaStyle.clay)
                     if !api.configured { Label("Connect Supabase to browse live menus.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
-                    else { Text("Approximate miles from \(pickupAreaLabel).").font(.caption).foregroundStyle(.secondary) }
-                }.padding(.horizontal, 20).padding(.top, 12)
+                    else { Text("Approximate miles from \(pickupAreaLabel).").font(.caption).foregroundStyle(CenaStyle.clay) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.vertical, 17)
+                .cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose)
+                .padding(.horizontal, 20).padding(.top, 12)
                 recentRail
                 mealExploreRail
                 restaurantRail(title: "Near you", subtitle: "Using \(pickupAreaLabel) as the distance reference.", values: nearbyRestaurants)
@@ -214,7 +222,7 @@ struct CustomerHome: View {
 
     private var recentRail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recents").font(.title2.weight(.bold)).padding(.horizontal, 20)
+            Text("Recents").font(.title2.weight(.bold)).foregroundStyle(CenaStyle.ink).padding(.horizontal, 20)
             if !api.signedIn { Text("Sign in during checkout to keep your recent kitchens here.").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
             else if recentHistoryUnavailable { Text("Sign in again to see your past kitchens. Nearby pickup is still available.").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
             else if recentRestaurants.isEmpty { Text("Your past kitchens will appear here after your first order.").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
@@ -224,7 +232,7 @@ struct CustomerHome: View {
 
     private var mealExploreRail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recent meal kits").font(.title2.weight(.bold)).padding(.horizontal, 20)
+            Text("Recent meal kits").font(.title2.weight(.bold)).foregroundStyle(CenaStyle.ink).padding(.horizontal, 20)
             if exploreMeals.isEmpty { Text(api.signedIn ? "Meal kits from your orders will appear here." : "Sign in during checkout to see meal kits from your orders.").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
             else {
                 GeometryReader { geometry in
@@ -247,8 +255,8 @@ struct CustomerHome: View {
 
     private func restaurantRail(title: String?, subtitle: String?, values: [[String: Any]]) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            if let title { Text(title).font(.title2.weight(.bold)).padding(.horizontal, 20) }
-            if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }
+            if let title { Text(title).font(.title2.weight(.bold)).foregroundStyle(CenaStyle.ink).padding(.horizontal, 20) }
+            if let subtitle { Text(subtitle).font(.caption).foregroundStyle(CenaStyle.clay).padding(.horizontal, 20) }
             if values.isEmpty {
                 if title != nil { Text("No kitchens in this section yet.").font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
             } else {
@@ -272,16 +280,16 @@ struct CustomerHome: View {
         Button { Task { await open(kitchen) } } label: {
             VStack(alignment: .leading, spacing: 0) {
                 foodPhoto(imageKey(for: kitchen)).frame(height: 158).frame(maxWidth: .infinity).clipped()
-                    .overlay(alignment: .bottomLeading) { Text(str(kitchen["cuisine"])).font(.caption.weight(.semibold)).foregroundStyle(.white).padding(.horizontal, 10).padding(.vertical, 6).background(.black.opacity(0.48), in: Capsule()).padding(10) }
+                    .overlay(alignment: .bottomLeading) { Text(str(kitchen["cuisine"])).font(.caption.weight(.semibold)).foregroundStyle(CenaStyle.ink).padding(.horizontal, 10).padding(.vertical, 6).background(CenaStyle.peach, in: Capsule()).padding(10) }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(str(kitchen["name"])).font(.headline.weight(.bold)).foregroundStyle(.primary).lineLimit(1)
-                    Text(str(kitchen["address"])).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(str(kitchen["name"])).font(.headline.weight(.bold)).foregroundStyle(CenaStyle.ink).lineLimit(1)
+                    Text(str(kitchen["address"])).font(.subheadline).foregroundStyle(CenaStyle.clay).lineLimit(1)
                     HStack(spacing: 5) {
                         if let number = kitchen["distance_miles"] as? NSNumber { Label(String(format: "≈ %.1f mi", number.doubleValue), systemImage: "location").font(.caption) }
-                    }.foregroundStyle(CenaStyle.maroon).lineLimit(1)
+                    }.foregroundStyle(CenaStyle.clay).lineLimit(1)
                     cutoffBadge(kitchen["next_slot"] as? [String: Any])
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(width: width).cenaCardBackground(.white, outline: .black.opacity(0.05))
+            }.frame(width: width).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose)
         }.buttonStyle(.plain).accessibilityLabel("\(str(kitchen["name"])), \(str(kitchen["cuisine"])), view menu")
     }
 
@@ -290,12 +298,12 @@ struct CustomerHome: View {
             VStack(alignment: .leading, spacing: 0) {
                 foodPhoto(imageKey(for: meal)).frame(height: 148).frame(maxWidth: .infinity).clipped()
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(str(meal["name"])).font(.headline.weight(.bold)).lineLimit(1).foregroundStyle(.primary)
-                    Text(str(kitchen["name"])).font(.caption).lineLimit(1).foregroundStyle(.secondary)
+                    Text(str(meal["name"])).font(.headline.weight(.bold)).lineLimit(1).foregroundStyle(CenaStyle.ink)
+                    Text(str(kitchen["name"])).font(.caption).lineLimit(1).foregroundStyle(CenaStyle.clay)
                     if meal["historical_order"] as? Bool == true { Text("Last paid $\(money(int(meal["price_cents"])))").font(.subheadline.weight(.semibold)).foregroundStyle(CenaStyle.maroon) }
                     else { priceComparison(meal) }
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(width: width).cenaCardBackground(.white, outline: .black.opacity(0.05))
+            }.frame(width: width).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose)
         }.buttonStyle(.plain).accessibilityLabel(meal["historical_order"] as? Bool == true ? "\(str(meal["name"])), from \(str(kitchen["name"])), last paid \(money(int(meal["price_cents"]))) dollars" : "\(str(meal["name"])), from \(str(kitchen["name"])), \(money(int(meal["price_cents"]))) dollars")
     }
 
@@ -356,7 +364,8 @@ struct CustomerHome: View {
                                 }.disabled(count >= cartQuantityLimit[id, default: 0]).accessibilityLabel("Add another \(str(item["name"]))")
                             }.buttonStyle(.plain).foregroundStyle(CenaStyle.maroon)
                         }
-                    }.padding(14).cenaCardBackground(.white).padding(.vertical, 4)
+                    }.padding(14).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose).padding(.vertical, 4)
+                        .listRowBackground(CenaStyle.cream)
                 }
             }
             if !cart.isEmpty {
@@ -392,14 +401,14 @@ struct CustomerHome: View {
                 TextField("Email for your sign-in code", text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress)
                 if codeSent { TextField("One-time code", text: $code).keyboardType(.numberPad) }
                 TextField("Phone (optional)", text: $phone).keyboardType(.phonePad)
-            }
+            }.listRowBackground(CenaStyle.paper)
             Section("Promo code") {
                 TextField("Enter a promo code", text: $promoCodeInput).textInputAutocapitalization(.characters).autocorrectionDisabled()
                 Button(quoteBusy ? "Checking code…" : (quoteFingerprint == currentQuoteFingerprint ? "Update price quote" : "Apply code and quote total")) { Task { await requestCheckoutQuote() } }
                     .disabled(quoteBusy || !api.signedIn || cart.isEmpty)
                 if !api.signedIn { Text("Sign in to check current pricing and apply a promo code.").font(.caption).foregroundStyle(.secondary) }
                 if let quoteMessage { Text(quoteMessage).font(.caption).foregroundStyle(quoteMessage.hasPrefix("Couldn’t") ? .red : .secondary) }
-            }
+            }.listRowBackground(CenaStyle.peach)
             Section("Order summary") {
                 ForEach(Array(cart.keys.sorted()), id: \.self) { id in
                     if let x = cartItemDetails[id] { HStack { Text("\(cart[id, default: 0]) × \(str(x["name"]))"); Spacer(); Text("$\(money(int(x["price_cents"]) * cart[id, default: 0]))") } }
@@ -413,13 +422,14 @@ struct CustomerHome: View {
                 } else {
                     Text(api.signedIn ? "Get a current Cena quote before paying." : "Sign in to see your confirmed total.").font(.caption).foregroundStyle(.secondary)
                 }
-            }
+            }.listRowBackground(CenaStyle.paper)
             Section {
                 Button(busy ? "Please wait…" : (api.signedIn ? (quoteFingerprint == currentQuoteFingerprint ? "Pay $\(money(int(checkoutQuote?["amount_cents"]))) in Cena" : "Review total") : (codeSent ? "Verify code" : "Email me a sign-in code"))) { Task { await place() } }
                     .disabled(busy || (!api.signedIn && (email.isEmpty || (codeSent && code.isEmpty))) || !api.paymentGatewayConfigured)
                 if !api.paymentGatewayConfigured { Text("Cena’s payment service is not configured. Checkout is unavailable.").font(.caption).foregroundStyle(.orange) }
-            }
-        }.scrollIndicators(.hidden).navigationTitle("Pickup checkout")
+            }.listRowBackground(CenaStyle.paper)
+        }.scrollContentBackground(.hidden).background(CenaStyle.cream)
+            .scrollIndicators(.hidden).navigationTitle("Pickup checkout")
             .task(id: quoteTaskKey) { if api.signedIn { await requestCheckoutQuote() } }
     }
 
@@ -463,7 +473,7 @@ struct CustomerHome: View {
                             Text("\(int(item["quantity"])) × \(str(item["name_snapshot"]))").font(.caption.weight(.medium))
                             if let steps = item["prep_steps_snapshot"] as? [String], !steps.isEmpty { Text(steps.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
                         }
-                    }.padding(12).cenaCardBackground(.white)
+                    }.padding(12).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose)
                 }
             }
             if api.signedIn && history.isEmpty { Text("No orders yet.").foregroundStyle(.secondary) }
@@ -480,14 +490,14 @@ struct CustomerHome: View {
                         Text("Your bag is empty").font(.title3.weight(.semibold))
                         Text("Explore meal kits and add items from one kitchen to get started.").font(.subheadline).foregroundStyle(.secondary)
                         Button("Explore kitchens") { tab = 0; restaurant = nil }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon).padding(.top, 4)
-                    }.padding(18).cenaCardBackground(.white).padding(.horizontal, 20)
+                    }.padding(18).cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose).padding(.horizontal, 20)
                 } else {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(str(cartRestaurantInfo?["name"])).font(.headline)
                         Text(str(cartRestaurantInfo?["address"])).font(.subheadline).foregroundStyle(.secondary)
                         if let pickup = cartPickupSlot { Text(dateRange(pickup)).font(.caption).foregroundStyle(CenaStyle.maroon) }
                         else { Text("Choose a pickup window from this kitchen’s menu.").font(.caption).foregroundStyle(.secondary) }
-                    }.padding(16).cenaCardBackground(.white).padding(.horizontal, 20)
+                    }.padding(16).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose).padding(.horizontal, 20)
 
                     ForEach(Array(cart.keys.sorted()), id: \.self) { id in
                         if let item = cartItemDetails[id] {
@@ -505,7 +515,7 @@ struct CustomerHome: View {
                                     }.buttonStyle(.plain).foregroundStyle(CenaStyle.maroon)
                                 }
                                 Spacer(minLength: 0)
-                            }.padding(14).cenaCardBackground(.white).padding(.horizontal, 20)
+                            }.padding(14).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose).padding(.horizontal, 20)
                         }
                     }
                     VStack(spacing: 12) {
@@ -515,7 +525,7 @@ struct CustomerHome: View {
                             .disabled(cartPickupSlot == nil || !api.paymentGatewayConfigured)
                         if !api.paymentGatewayConfigured { Text("Checkout requires Cena’s payment service.").font(.caption).foregroundStyle(.orange) }
                         Button("Remove all items") { clearBag() }.font(.subheadline).foregroundStyle(.secondary)
-                    }.padding(16).cenaCardBackground(.white).padding(.horizontal, 20)
+                    }.padding(16).cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose).padding(.horizontal, 20)
                 }
             }.padding(.bottom, 24)
         }.scrollIndicators(.hidden).navigationTitle("Bag")
@@ -717,8 +727,13 @@ struct CustomerHome: View {
                         }
                     }
                 Text(title).font(.caption2.weight(tab == value ? .semibold : .regular))
-            }.frame(maxWidth: .infinity).foregroundStyle(tab == value ? CenaStyle.maroon : .secondary).contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(tab == value ? CenaStyle.maroon : CenaStyle.clay)
+            .background(tab == value ? CenaStyle.peach : Color.clear, in: RoundedRectangle(cornerRadius: 14))
+            .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(value == 2 && cartCount > 0 ? "Bag, \(cartCount) items" : title)
+            .accessibilityAddTraits(tab == value ? .isSelected : [])
     }
     private func load() async {
         guard api.configured else { message = "Supabase URL and public anon key are required for live discovery and checkout."; return }

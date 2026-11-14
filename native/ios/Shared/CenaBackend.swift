@@ -353,8 +353,20 @@ enum CenaBackendError: LocalizedError {
 }
 
 enum CenaStyle {
-    static let maroon = Color(red: 0x5D/255, green: 0x10/255, blue: 0x0A/255)
-    static let cream = Color(red: 0xFA/255, green: 0xF6/255, blue: 0xF3/255)
+    static let maroon = color(0x5D100A)
+    static let cream = color(0xFAF6F3)
+    static let ink = color(0x271D19)
+    static let paper = color(0xFFFDFA)
+    static let peach = color(0xFFF0E8)
+    static let rose = color(0xE9CFC4)
+    static let coral = color(0xC57760)
+    static let clay = color(0x85574A)
+
+    private static func color(_ hex: UInt32) -> Color {
+        Color(red: Double((hex >> 16) & 0xFF) / 255,
+              green: Double((hex >> 8) & 0xFF) / 255,
+              blue: Double(hex & 0xFF) / 255)
+    }
 }
 
 extension View {
@@ -375,12 +387,11 @@ struct CenaNotice: View {
     let dismiss: () -> Void
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "info.circle.fill").foregroundStyle(CenaStyle.maroon)
-            Text(message).font(.subheadline).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(.secondary) }.accessibilityLabel("Dismiss message")
+            Image(systemName: "info.circle.fill").foregroundStyle(CenaStyle.clay)
+            Text(message).font(.subheadline).foregroundStyle(CenaStyle.ink).frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(CenaStyle.clay) }.accessibilityLabel("Dismiss message")
         }
-        .padding(14).cenaCardBackground(.white)
-        .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(CenaStyle.maroon.opacity(0.18), lineWidth: 1) }
+        .padding(14).cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose)
         .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
     }
 }
