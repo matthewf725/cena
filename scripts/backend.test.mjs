@@ -44,6 +44,7 @@ before(async () => {
   assert.ok(row, 'Demo catalog has an available pickup slot');
   fixture = row;
   await database.query(`insert into merchant_memberships(user_id,restaurant_id,role) values($1,$2,'owner')`, [merchant, row.restaurant]);
+  await database.query(`insert into restaurant_payment_accounts(restaurant_id,stripe_account_id,application_fee_cents,charges_enabled,payouts_enabled) values($1,'acct_fixture',175,true,true)`, [row.restaurant]);
 });
 
 after(async () => database.close());
@@ -56,11 +57,22 @@ async function withRole(role, user, operation) {
   });
 }
 
-function order(tx, key, overrides = {}) {
+async function withServiceRole(operation) {
+  return database.transaction(async (tx) => {
+    await tx.exec('set local role service_role');
+    return operation(tx);
+  });
+}
+
+function order(user, key, overrides = {}) {
   const { restaurant, slot, item, mode = 'counter', vehicle = {}, quantity = 2 } = { ...fixture, ...overrides };
-  return tx.query('select * from create_order($1,$2,$3,$4,$5,$6)', [
-    restaurant, slot, key, mode, JSON.stringify(vehicle), JSON.stringify([{ item_id: item, quantity }]),
-  ]).then(({ rows }) => rows[0]);
+  return database.transaction(async (tx) => {
+    await tx.query("select set_config('request.jwt.claim.sub',$1,true)", [user]);
+    const { rows } = await tx.query('select * from create_order($1,$2,$3,$4,$5,$6)', [
+      restaurant, slot, key, mode, JSON.stringify(vehicle), JSON.stringify([{ item_id: item, quantity }]),
+    ]);
+    return rows[0];
+  });
 }
 
 test('anonymous waitlist is idempotent and catalog is readable', async () => {
@@ -79,12 +91,13 @@ test('anonymous waitlist is idempotent and catalog is readable', async () => {
   await assert.rejects(withRole('anon', null, (tx) => tx.query('select * from waitlist_entries')), /permission denied/);
 });
 
-test('an order reserves stock once, prices on the server and is visible only to assigned actors', async () => {
-  const created = await withRole('authenticated', customer, (tx) => order(tx, 'test-order-1'));
-  const retry = await withRole('authenticated', customer, (tx) => order(tx, 'test-order-1'));
+test('legacy order history keeps its atomic helper private from app roles', async () => {
+  await assert.rejects(withRole('authenticated', customer, (tx) => tx.query("select * from create_order($1,$2,'forbidden-direct','counter','{}',$3)", [fixture.restaurant, fixture.slot, JSON.stringify([{ item_id: fixture.item, quantity: 1 }])])), /permission denied/);
+  const created = await order(customer, 'test-order-1');
+  const retry = await order(customer, 'test-order-1');
   assert.equal(created.id, retry.id);
   assert.equal(created.subtotal_cents, fixture.price_cents * 2);
-  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-order-1', { quantity: 1 })), /already used|different/);
+  await assert.rejects(order(customer, 'test-order-1', { quantity: 1 }), /already used|different/);
   const { rows: [stock] } = await database.query(`select reserved_qty from slot_item_inventory where slot_id=$1 and item_id=$2`, [fixture.slot, fixture.item]);
   assert.equal(stock.reserved_qty, 2);
   const { rows } = await withRole('authenticated', outsider, (tx) => tx.query('select * from orders where id=$1', [created.id]));
@@ -96,23 +109,23 @@ test('an order reserves stock once, prices on the server and is visible only to 
 });
 
 test('checkout rejects sold-out stock, a missed cutoff and unavailable curbside', async () => {
-  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-stock-1', { quantity: 50 })), /stock|availability/);
+  await assert.rejects(order(customer, 'test-stock-1', { quantity: 50 }), /stock|availability/);
   await database.query('update restaurants set curbside_enabled=false where id=$1', [fixture.restaurant]);
-  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-curbside-1', { mode: 'curbside', vehicle: { make: 'Toyota', model: 'Corolla', color: 'Blue' } })), /curbside/);
+  await assert.rejects(order(customer, 'test-curbside-1', { mode: 'curbside', vehicle: { make: 'Toyota', model: 'Corolla', color: 'Blue' } }), /curbside/);
   await assert.rejects(database.query(`update pickup_slots set cutoff_at=now()-interval '1 second' where id=$1`, [fixture.slot]), /cannot reschedule/);
   const { rows: [closed] } = await database.query(`
     insert into pickup_slots (restaurant_id, starts_at, ends_at, cutoff_at, capacity)
     values ($1, now()+interval '2 seconds', now()+interval '1 hour', now()-interval '1 second', 10)
     returning id
   `, [fixture.restaurant]);
-  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-cutoff-1', { slot: closed.id })), /closed|cutoff/);
+  await assert.rejects(order(customer, 'test-cutoff-1', { slot: closed.id }), /closed|cutoff/);
 });
 
 test('a curbside order completes through restaurant pickup and the customer sees the result', async () => {
   await withRole('authenticated', merchant, (tx) => tx.query('update restaurants set curbside_enabled=true where id=$1', [fixture.restaurant]));
-  const created = await withRole('authenticated', customer, (tx) => order(tx, 'test-curbside-full', {
+  const created = await order(customer, 'test-curbside-full', {
     mode: 'curbside', vehicle: { make: ' Toyota ', model: 'Corolla', color: 'Blue', unrelated: 'Discarded' },
-  }));
+  });
   assert.deepEqual(created.vehicle, { make: 'Toyota', model: 'Corolla', color: 'Blue' });
   assert.equal(created.payment_method, 'pay_at_pickup');
   assert.ok(created.pickup_starts_at);
@@ -127,6 +140,53 @@ test('a curbside order completes through restaurant pickup and the customer sees
   `, [created.id]));
   assert.equal(customerOrder.status, 'completed');
   assert.ok(customerOrder.prep_steps_snapshot.length > 0);
+});
+
+test('online checkout reserves once, hides unpaid orders, and finalizes idempotently', async () => {
+  const reserve = (tx, key) => tx.query(`select reserve_checkout_order($1,$2,$3,$4,$5,$6,$7) as result`, [
+    customer, fixture.restaurant, fixture.slot, key, 'counter', '{}', JSON.stringify([{ item_id: fixture.item, quantity: 1 }]),
+  ]).then(({ rows: [row] }) => row.result);
+  const first = await withServiceRole((tx) => reserve(tx, 'online-checkout-1'));
+  const retry = await withServiceRole((tx) => reserve(tx, 'online-checkout-1'));
+  assert.equal(first.order_id, retry.order_id);
+  assert.equal(first.status, 'pending');
+  assert.equal(first.application_fee_cents, 175);
+  assert.ok(first.expires_at);
+  await assert.rejects(withServiceRole((tx) => reserve(tx, 'online-checkout-2')), /orders_one_pending_online_per_customer_idx|duplicate key/);
+
+  const merchantBefore = await withRole('authenticated', merchant, (tx) => tx.query('select id from orders where id=$1', [first.order_id]));
+  assert.equal(merchantBefore.rows.length, 0);
+  const recorded = await withServiceRole((tx) => tx.query(`select record_checkout_session($1,$2,$3,$4,$5,$6,$7) as result`, [
+    first.order_id, 'cs_fixture_1', 'https://checkout.stripe.com/c/pay/cs_fixture_1', first.stripe_account_id,
+    first.amount_cents, first.application_fee_cents, first.expires_at,
+  ]));
+  assert.equal(recorded.rows[0].result.status, 'pending');
+  await assert.rejects(withRole('authenticated', customer, (tx) => tx.query(`select record_checkout_session($1,'cs_fake','https://checkout.stripe.com/fake',$2,$3,$4,$5)`, [
+    first.order_id, first.stripe_account_id, first.amount_cents, first.application_fee_cents, first.expires_at,
+  ])), /permission denied/);
+
+  const finalize = (tx, eventId) => tx.query(`select finalize_checkout_event($1,'checkout.session.completed',$2,'cs_fixture_1',$3,$4,$5,'usd','paid',now()) as status`, [
+    eventId, first.order_id, first.stripe_account_id, first.amount_cents, first.application_fee_cents,
+  ]).then(({ rows: [row] }) => row.status);
+  assert.equal(await withServiceRole((tx) => finalize(tx, 'evt_fixture_paid')), 'paid');
+  assert.equal(await withServiceRole((tx) => finalize(tx, 'evt_fixture_paid')), 'paid');
+  const merchantAfter = await withRole('authenticated', merchant, (tx) => tx.query('select status,payment_status from orders where id=$1', [first.order_id]));
+  assert.deepEqual(merchantAfter.rows[0], { status: 'placed', payment_status: 'paid' });
+  const { rows: analytics } = await database.query(`select count(*)::int as count from analytics_events where event_type='order_placed' and payload->>'order_id'=$1`, [first.order_id]);
+  assert.equal(analytics[0].count, 1);
+  await assert.rejects(withRole('authenticated', merchant, (tx) => tx.query("select update_order_status($1,'cancelled')", [first.order_id])), /refund/);
+
+  await assert.rejects(withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2)', [outsider, first.order_id])), /authorized/);
+  const { rows: [refund] } = await withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2) as result', [merchant, first.order_id]));
+  assert.equal(refund.result.status, 'pending');
+  assert.equal(refund.result.amount_cents, first.amount_cents);
+  await assert.rejects(withRole('authenticated', merchant, (tx) => tx.query("select update_order_status($1,'accepted')", [first.order_id])), /refund/);
+  const recordRefund = (tx) => tx.query("select record_checkout_refund($1,$2,'re_fixture','succeeded') as status", [first.order_id, refund.result.attempt]);
+  await assert.rejects(withRole('authenticated', merchant, recordRefund), /permission denied/);
+  assert.equal((await withServiceRole(recordRefund)).rows[0].status, 'refunded');
+  assert.equal((await withServiceRole(recordRefund)).rows[0].status, 'refunded');
+  const { rows: [cancelled] } = await withRole('authenticated', merchant, (tx) => tx.query('select status,payment_status from orders where id=$1', [first.order_id]));
+  assert.deepEqual(cancelled, { status: 'cancelled', payment_status: 'refunded' });
 });
 
 test('behavioral analytics requires an explicit opt-in', async () => {

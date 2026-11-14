@@ -17,14 +17,22 @@ const maxBody = 64 << 10
 
 type Config struct {
 	SupabaseURL, SupabaseAnonKey string
+	SupabaseServiceRoleKey       string
 	AllowedOrigins               []string
 	Client                       *http.Client
 	GeocoderClient               *http.Client
+	StripeClient                 *http.Client
+	StripeAPIBaseURL             string
+	StripeSecretKey              string
+	StripeWebhookSecret          string
+	ApplicationFeeCents          int
+	WebBaseURL                   string
 }
 type Server struct {
 	cfg            Config
 	client         *http.Client
 	geocoderClient *http.Client
+	stripeClient   *http.Client
 	mux            *http.ServeMux
 }
 
@@ -42,14 +50,43 @@ func New(cfg Config) http.Handler {
 	if gc == nil {
 		gc = &http.Client{Timeout: 4 * time.Second}
 	}
-	s := &Server{cfg: cfg, client: c, geocoderClient: gc, mux: http.NewServeMux()}
+	sc := cfg.StripeClient
+	if sc == nil {
+		sc = &http.Client{Timeout: 10 * time.Second}
+	}
+	if cfg.ApplicationFeeCents == 0 {
+		cfg.ApplicationFeeCents = 175
+	}
+	if cfg.ApplicationFeeCents < 150 || cfg.ApplicationFeeCents > 200 {
+		panic("STRIPE_APPLICATION_FEE_CENTS must be from 150 to 200")
+	}
+	if cfg.StripeAPIBaseURL == "" {
+		cfg.StripeAPIBaseURL = "https://api.stripe.com"
+	}
+	if err := validateStripeAPIBaseURL(cfg.StripeAPIBaseURL, cfg.StripeSecretKey); err != nil {
+		panic(err)
+	}
+	if cfg.WebBaseURL != "" {
+		web, parseErr := url.Parse(cfg.WebBaseURL)
+		if parseErr != nil || (web.Scheme != "https" && web.Scheme != "http") || web.Host == "" || web.User != nil || web.RawQuery != "" || web.Fragment != "" {
+			panic("CENA_WEB_BASE_URL must be an http(s) origin or base path")
+		}
+		cfg.WebBaseURL = strings.TrimRight(cfg.WebBaseURL, "/")
+	}
+	s := &Server{cfg: cfg, client: c, geocoderClient: gc, stripeClient: sc, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", s.health)
 	s.mux.HandleFunc("GET /v1/geocode", s.geocode)
 	s.mux.HandleFunc("GET /v1/catalog", s.catalog)
 	s.mux.HandleFunc("POST /v1/discovery", s.discovery)
 	s.mux.HandleFunc("POST /v1/orders", s.createOrder)
 	s.mux.HandleFunc("PATCH /v1/orders/{id}/status", s.updateOrderStatus)
+	s.mux.HandleFunc("POST /v1/checkout", s.startCheckout)
+	s.mux.HandleFunc("GET /v1/checkout/{id}", s.checkoutStatus)
+	s.mux.HandleFunc("DELETE /v1/checkout/{id}", s.cancelCheckout)
+	s.mux.HandleFunc("POST /v1/stripe/webhook", s.stripeWebhook)
 	s.mux.HandleFunc("POST /v1/analytics/events", s.trackEvent)
+	s.registerConnectRoutes()
+	s.registerRefundRoutes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
@@ -65,7 +102,7 @@ func New(cfg Config) http.Handler {
 				return
 			}
 			if allowed {
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
@@ -163,29 +200,7 @@ type orderRequest struct {
 }
 
 func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
-	var in orderRequest
-	if !decodeBody(w, r, &in) {
-		return
-	}
-	if in.RestaurantID == "" || in.SlotID == "" || in.IdempotencyKey == "" || in.PickupMode == "" || !json.Valid(in.Items) || len(in.Items) == 0 {
-		writeJSON(w, 400, map[string]string{"error": "invalid order request"})
-		return
-	}
-	if len(in.Vehicle) == 0 {
-		in.Vehicle = json.RawMessage(`{}`)
-	}
-	if !json.Valid(in.Vehicle) {
-		writeJSON(w, 400, map[string]string{"error": "invalid vehicle"})
-		return
-	}
-	body := map[string]json.RawMessage{}
-	body["p_restaurant_id"], _ = json.Marshal(in.RestaurantID)
-	body["p_slot_id"], _ = json.Marshal(in.SlotID)
-	body["p_idempotency_key"], _ = json.Marshal(in.IdempotencyKey)
-	body["p_pickup_mode"], _ = json.Marshal(in.PickupMode)
-	body["p_vehicle"] = in.Vehicle
-	body["p_items"] = in.Items
-	s.rpc(w, r, "create_order", body)
+	writeJSON(w, http.StatusGone, map[string]string{"error": "online payment is required; use /v1/checkout"})
 }
 func (s *Server) updateOrderStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

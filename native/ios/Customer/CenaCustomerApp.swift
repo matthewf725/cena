@@ -9,6 +9,7 @@ import CoreLocation
 struct CustomerHome: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var api = CenaBackend.shared
     @State private var items: [[String: Any]] = []
     @State private var recentRestaurants: [[String: Any]] = []
@@ -37,7 +38,14 @@ struct CustomerHome: View {
     @State private var locationQuery = "", showLocationEditor = false, locationBusy = false
     @State private var curbside = false, vehicleMake = "", vehicleModel = "", vehicleColor = ""
     @State private var codeSent = false
-    @State private var idempotencyKey = UUID().uuidString
+    @State private var idempotencyKey = UserDefaults.standard.string(forKey: "cena.checkout.idempotencyKey") ?? UUID().uuidString
+    @State private var pendingCheckoutID = UserDefaults.standard.string(forKey: "cena.checkout.pendingOrderID")
+    @State private var pendingCheckoutURL: String?
+    @State private var pendingCheckoutOwnerID = UserDefaults.standard.string(forKey: "cena.checkout.pendingOwnerID")
+    @State private var paymentStatus = "pending"
+    @State private var paymentMessage: String?
+    @State private var paymentCheckBusy = false
+    @State private var confirmCancelCheckout = false
     @State private var busy = false
     @State private var message: String?
     @State private var orderNumber: String?
@@ -58,9 +66,10 @@ struct CustomerHome: View {
         NavigationStack {
             Group {
                 if let orderNumber { orderConfirmation(orderNumber).transition(smoothTransition) }
+                else if tab == 3 { accountScreen.transition(smoothTransition) }
+                else if let pendingCheckoutID { paymentPendingScreen(pendingCheckoutID).transition(smoothTransition) }
                 else if tab == 1 { orderHistory.transition(smoothTransition) }
                 else if tab == 2 { bagScreen.transition(smoothTransition) }
-                else if tab == 3 { accountScreen.transition(smoothTransition) }
                 else if let restaurant { menuScreen(restaurant).transition(smoothTransition) }
                 else { homeScreen.transition(smoothTransition) }
             }
@@ -79,7 +88,7 @@ struct CustomerHome: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if orderNumber == nil && !checkoutVisible {
+                if orderNumber == nil && pendingCheckoutID == nil && !checkoutVisible {
                     HStack { tabButton("Discover", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
                         .padding(.vertical, 10).background(.white)
                 }
@@ -87,7 +96,14 @@ struct CustomerHome: View {
             .background(CenaStyle.cream)
             .overlay(alignment: .top) { if let message { CenaNotice(message: message) { self.message = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
             .animation(.easeInOut(duration: 0.2), value: message)
-            .task { await load() }
+            .task {
+                restoreBag()
+                restoreIdempotencyKey()
+                restorePendingCheckoutForCurrentIdentity(allowLegacyClaim: true)
+                await load()
+                if pendingCheckoutID != nil { await refreshPendingCheckout() }
+            }
+            .onChange(of: scenePhase) { _, phase in if phase == .active, pendingCheckoutID != nil { Task { await refreshPendingCheckout() } } }
             .sheet(isPresented: $showLocationEditor) { locationEditor }
         }
     }
@@ -265,7 +281,7 @@ struct CustomerHome: View {
             Section {
                 Text(str(r["description"])).foregroundStyle(.secondary)
                 if !slots.isEmpty {
-                    Picker("Pickup window", selection: Binding(get: { str(slot?["id"]) }, set: { id in slot = slots.first { str($0["id"]) == id }; if cartRestaurantID == str(restaurant?["id"]) { cartPickupSlot = slot }; idempotencyKey = UUID().uuidString })) {
+                    Picker("Pickup window", selection: Binding(get: { str(slot?["id"]) }, set: { id in slot = slots.first { str($0["id"]) == id }; if cartRestaurantID == str(restaurant?["id"]) { cartPickupSlot = slot; persistBag() }; idempotencyKey = UUID().uuidString })) {
                         ForEach(Array(slots.enumerated()), id: \.offset) { _, s in Text(dateRange(s)).tag(str(s["id"])) }
                     }
                 } else { Label("No upcoming pickup windows", systemImage: "clock").foregroundStyle(.secondary) }
@@ -299,8 +315,8 @@ struct CustomerHome: View {
                         }
                     }
                     NavigationLink { checkoutScreen.onAppear { checkoutVisible = true }.onDisappear { checkoutVisible = false } } label: { Label("Continue to pickup", systemImage: "arrow.right").fontWeight(.semibold).foregroundStyle(CenaStyle.maroon) }
-                        .disabled(checkoutSlot == nil || !api.configured)
-                    if !api.configured { Text("Checkout is disabled until Supabase is configured.").font(.caption).foregroundStyle(.orange) }
+                        .disabled(checkoutSlot == nil || !api.paymentGatewayConfigured)
+                    if !api.paymentGatewayConfigured { Text("Cena’s payment service is not configured.").font(.caption).foregroundStyle(.orange) }
                 }
             }
         }.scrollContentBackground(.hidden).scrollIndicators(.hidden)
@@ -311,7 +327,7 @@ struct CustomerHome: View {
             Section("Pickup details") {
                 Text(str(checkoutRestaurant?["name"]))
                 Text(checkoutSlot.map(dateRange) ?? "Choose an available pickup window")
-                Text("Payment is collected at pickup.").foregroundStyle(.secondary)
+                Text("Pay securely in Cena to place your order.").foregroundStyle(.secondary)
                 if checkoutRestaurant?["curbside_enabled"] as? Bool == true {
                     Toggle("Curbside pickup", isOn: Binding(get: { curbside }, set: { curbside = $0; idempotencyKey = UUID().uuidString }))
                     if curbside {
@@ -325,8 +341,34 @@ struct CustomerHome: View {
                 TextField("Phone (optional)", text: $phone).keyboardType(.phonePad)
             }
             Section("Order summary") { ForEach(Array(cart.keys.sorted()), id: \.self) { id in if let x = cartItemDetails[id] { HStack { Text("\(cart[id, default: 0]) × \(str(x["name"]))"); Spacer(); Text("$\(money(int(x["price_cents"]) * cart[id, default: 0]))") } } }; HStack { Text("Subtotal").fontWeight(.bold); Spacer(); Text("$\(money(subtotal))").fontWeight(.bold) } }
-            Section { Button(busy ? "Please wait…" : (codeSent ? "Verify & place order" : "Email me a sign-in code")) { Task { await place() } }.disabled(busy || email.isEmpty || (codeSent && code.isEmpty)) }
+            Section {
+                Button(busy ? "Please wait…" : (api.signedIn ? "Pay in Cena" : (codeSent ? "Verify code & pay in Cena" : "Email me a sign-in code"))) { Task { await place() } }
+                    .disabled(busy || (!api.signedIn && (email.isEmpty || (codeSent && code.isEmpty))) || !api.paymentGatewayConfigured)
+                if !api.paymentGatewayConfigured { Text("Cena’s payment service is not configured. Checkout is unavailable.").font(.caption).foregroundStyle(.orange) }
+            }
         }.scrollIndicators(.hidden).navigationTitle("Pickup checkout")
+    }
+
+    private func paymentPendingScreen(_ orderID: String) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Image(systemName: "creditcard.circle").font(.system(size: 46)).foregroundStyle(CenaStyle.maroon)
+            Text("Finish payment in Cena").font(.title2.bold()).foregroundStyle(CenaStyle.maroon)
+            Text("Your bag is saved for order \(orderID.prefix(8).uppercased()). Return here after paying. Cena will confirm the payment with the provider before marking the order complete.").font(.body).foregroundStyle(.secondary)
+            if let paymentMessage { Text(paymentMessage).font(.subheadline).foregroundStyle(paymentStatus == "paid" ? .green : .secondary) }
+            if paymentCheckBusy { ProgressView("Checking payment…") }
+            if pendingCheckoutURL != nil {
+                Button("Continue to secure Stripe checkout") { Task { await openPendingCheckout() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+            }
+            Button("Check payment status") { Task { await refreshPendingCheckout() } }.buttonStyle(.bordered)
+            if !["expired", "failed", "cancelled", "paid", "refunded"].contains(paymentStatus.lowercased()) {
+                if confirmCancelCheckout {
+                    HStack { Button("Keep checkout") { confirmCancelCheckout = false }; Button("Confirm cancel") { Task { await cancelPendingCheckout() } }.foregroundStyle(.red) }
+                } else { Button("Cancel checkout") { confirmCancelCheckout = true }.font(.caption).foregroundStyle(.secondary) }
+            }
+            if ["expired", "failed", "cancelled"].contains(paymentStatus.lowercased()) {
+                Button("Start a new checkout") { clearPendingCheckout(resetIdempotency: true); tab = 2 }.foregroundStyle(CenaStyle.maroon)
+            }
+        }.padding(24).frame(maxWidth: .infinity, alignment: .leading).navigationTitle("Payment")
     }
 
     private var orderHistory: some View {
@@ -390,10 +432,10 @@ struct CustomerHome: View {
                     }
                     VStack(spacing: 12) {
                         HStack { Text("Kit subtotal").font(.headline); Spacer(); Text("$\(money(subtotal))").font(.headline) }
-                        Text("The subtotal uses kit prices. Payment is collected at pickup.").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                        Text("The subtotal uses kit prices. Pay securely in Cena to place your order.").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                         NavigationLink { checkoutScreen.onAppear { checkoutVisible = true }.onDisappear { checkoutVisible = false } } label: { Label("Continue to pickup", systemImage: "arrow.right").fontWeight(.semibold).frame(maxWidth: .infinity).padding(14).background(CenaStyle.maroon, in: Capsule()).foregroundStyle(.white) }
-                            .disabled(cartPickupSlot == nil || !api.configured)
-                        if !api.configured { Text("Checkout requires a live backend connection.").font(.caption).foregroundStyle(.orange) }
+                            .disabled(cartPickupSlot == nil || !api.paymentGatewayConfigured)
+                        if !api.paymentGatewayConfigured { Text("Checkout requires Cena’s payment service.").font(.caption).foregroundStyle(.orange) }
                         Button("Remove all items") { clearBag() }.font(.subheadline).foregroundStyle(.secondary)
                     }.padding(16).cenaCardBackground(.white).padding(.horizontal, 20)
                 }
@@ -434,8 +476,10 @@ struct CustomerHome: View {
                     Button(profileSaving ? "Saving…" : "Save profile") { Task { await saveProfile() } }.disabled(profileSaving || profileLoading)
                 }
                 Section("Your orders") { Button("View order history") { tab = 1 }.foregroundStyle(CenaStyle.maroon) }
+                if pendingCheckoutID != nil { Section("Pending payment") { Button("Return to payment") { tab = 2 }.foregroundStyle(CenaStyle.maroon) } }
                 Section { Button("Sign out", role: .destructive) {
-                    api.signOut(); recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; codeSent = false
+                    persistBag(); api.signOut(); cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag(); restoreIdempotencyKey()
+                    recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; codeSent = false
                     profileName = ""; profilePhone = ""; profileEquipment = []; profileNotice = nil; profileEditRevision += 1
                 } }
             }
@@ -447,7 +491,13 @@ struct CustomerHome: View {
         do {
             if !codeSent { try await api.sendCode(email: email); codeSent = true; message = "Check your email for the one-time sign-in code."; return }
             try await api.verifyCode(email: email, code: code)
+            // The signed-in account owns its own saved bag. Preserve the guest bag under
+            // its separate key and restore this account's snapshot after authentication.
+            cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag()
+            restoreIdempotencyKey()
+            restorePendingCheckoutForCurrentIdentity(allowLegacyClaim: false)
             codeSent = false; code = ""; message = "You’re signed in."; await load(); await loadHistory(); await loadProfile()
+            if pendingCheckoutID != nil { tab = 2; await refreshPendingCheckout() }
         } catch { message = error.localizedDescription }
     }
 
@@ -500,6 +550,7 @@ struct CustomerHome: View {
 
 
     private func addToBag(_ item: [String: Any]) {
+        guard pendingCheckoutID == nil else { message = "Finish or cancel the pending checkout before changing your bag."; return }
         let selectedRestaurantID = str(restaurant?["id"])
         if let cartRestaurantID, cartRestaurantID != selectedRestaurantID {
             message = "Your bag is for \(str(cartRestaurantInfo?["name"])) only. Remove those items before starting an order from another kitchen."
@@ -511,15 +562,68 @@ struct CustomerHome: View {
         cartRestaurantID = selectedRestaurantID; cartRestaurantInfo = restaurant; cartPickupSlot = slot
         let id = str(item["id"]); cartItemDetails[id] = item; cartQuantityLimit[id] = remaining
         cart[id, default: 0] += 1
+        persistBag()
     }
 
     private func setBagQuantity(_ id: String, _ quantity: Int) {
+        guard pendingCheckoutID == nil else { message = "Your bag is locked while payment is pending."; return }
         if quantity <= 0 { cart.removeValue(forKey: id); cartItemDetails.removeValue(forKey: id); cartQuantityLimit.removeValue(forKey: id) }
         else { cart[id] = min(quantity, cartQuantityLimit[id, default: 50]) }
         if cart.isEmpty { cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil }
+        persistBag()
     }
 
-    private func clearBag() { cart.removeAll(); cartItemDetails.removeAll(); cartQuantityLimit.removeAll(); cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil }
+    private func persistBag() {
+        guard pendingCheckoutID == nil || pendingCheckoutOwnerID == profileUserID else { return }
+        let snapshot: [String: Any] = ["cart": cart, "details": cartItemDetails, "restaurantID": cartRestaurantID as Any? ?? NSNull(), "restaurant": cartRestaurantInfo as Any? ?? NSNull(), "slot": cartPickupSlot as Any? ?? NSNull(), "limits": cartQuantityLimit]
+        guard JSONSerialization.isValidJSONObject(snapshot), let data = try? JSONSerialization.data(withJSONObject: snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: bagStorageKey)
+    }
+    private func restoreBag() {
+        guard let data = UserDefaults.standard.data(forKey: bagStorageKey),
+              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        cart = snapshot["cart"] as? [String: Int] ?? [:]
+        cartItemDetails = snapshot["details"] as? [String: [String: Any]] ?? [:]
+        cartRestaurantID = snapshot["restaurantID"] as? String
+        cartRestaurantInfo = snapshot["restaurant"] as? [String: Any]
+        cartPickupSlot = snapshot["slot"] as? [String: Any]
+        cartQuantityLimit = snapshot["limits"] as? [String: Int] ?? [:]
+    }
+    private var bagStorageKey: String { "cena.customer.bag.\(profileUserID ?? "anonymous")" }
+    private func clearBag() { cart.removeAll(); cartItemDetails.removeAll(); cartQuantityLimit.removeAll(); cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; UserDefaults.standard.removeObject(forKey: bagStorageKey) }
+    private var idempotencyStorageKey: String { "cena.checkout.idempotencyKey.\(profileUserID ?? "anonymous")" }
+    private func restoreIdempotencyKey() {
+        idempotencyKey = UserDefaults.standard.string(forKey: idempotencyStorageKey) ?? UUID().uuidString
+    }
+    private func pendingIDKey(_ owner: String) -> String { "cena.checkout.pending.\(owner).orderID" }
+    private func pendingURLKey(_ owner: String) -> String { "cena.checkout.pending.\(owner).url" }
+    private func restorePendingCheckoutForCurrentIdentity(allowLegacyClaim: Bool) {
+        let defaults = UserDefaults.standard
+        guard let owner = pendingCheckoutOwnerID else {
+            if allowLegacyClaim, let userID = profileUserID, let legacyID = defaults.string(forKey: "cena.checkout.pendingOrderID") {
+                pendingCheckoutOwnerID = userID
+                defaults.set(userID, forKey: "cena.checkout.pendingOwnerID")
+                defaults.set(legacyID, forKey: pendingIDKey(userID))
+                if let legacyURL = defaults.string(forKey: "cena.checkout.pendingURL") { defaults.set(legacyURL, forKey: pendingURLKey(userID)) }
+                defaults.removeObject(forKey: "cena.checkout.pendingURL")
+                pendingCheckoutID = legacyID
+                pendingCheckoutURL = defaults.string(forKey: pendingURLKey(userID))
+                return
+            }
+            pendingCheckoutURL = nil
+            defaults.removeObject(forKey: "cena.checkout.pendingURL")
+            return
+        }
+        if let scopedID = defaults.string(forKey: pendingIDKey(owner)) { pendingCheckoutID = scopedID }
+        guard owner == profileUserID else { pendingCheckoutURL = nil; return }
+        if defaults.string(forKey: pendingIDKey(owner)) == nil, let legacyID = defaults.string(forKey: "cena.checkout.pendingOrderID") {
+            defaults.set(legacyID, forKey: pendingIDKey(owner))
+            pendingCheckoutID = legacyID
+            if let legacyURL = defaults.string(forKey: "cena.checkout.pendingURL") { defaults.set(legacyURL, forKey: pendingURLKey(owner)) }
+            defaults.removeObject(forKey: "cena.checkout.pendingURL")
+        }
+        pendingCheckoutURL = defaults.string(forKey: pendingURLKey(owner))
+    }
 
     private func orderConfirmation(_ id: String) -> some View {
         VStack(spacing: 16) { Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green); Text("Order placed").font(.largeTitle.bold()).fontDesign(.default).foregroundStyle(CenaStyle.maroon); Text("Order \(id.prefix(8).uppercased())").font(.headline); Text("Your kitchen has received it. Pickup and payment details are available in Orders.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Back to kitchens") { orderNumber = nil; restaurant = nil; clearBag(); slots = []; slot = nil; tab = 0; Task { await load() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.97)))
@@ -616,26 +720,142 @@ struct CustomerHome: View {
             items = try await api.rows("catalog_items", query: "select=id,restaurant_id,name,description,price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,image_key,category,prep_minutes&restaurant_id=eq.\(str(r["id"]))&active=eq.true&published_at=not.is.null&order=category.asc,name.asc")
             let all = try await api.rows("pickup_slots", query: "select=id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count,slot_item_inventory(slot_id,item_id,available_qty,reserved_qty)&restaurant_id=eq.\(str(r["id"]))&active=eq.true&starts_at=gt.\(isoNow)&cutoff_at=gt.\(isoNow)&order=starts_at.asc")
             let liveIDs = Set(items.map { str($0["id"]) })
-            slots = all.filter { s in inventory(s).contains { liveIDs.contains(str($0["item_id"])) && int($0["available_qty"]) > int($0["reserved_qty"]) } }
+            let paymentMinimumCutoff = Date().addingTimeInterval(32 * 60)
+            slots = all.filter { s in
+                guard let cutoff = timestamp(s["cutoff_at"]), cutoff >= paymentMinimumCutoff else { return false }
+                return inventory(s).contains { liveIDs.contains(str($0["item_id"])) && int($0["available_qty"]) > int($0["reserved_qty"]) }
+            }
             slot = slots.first
             if cartRestaurantID == str(r["id"]) { cartPickupSlot = slot }
         } catch { message = error.localizedDescription }
     }
+
+    private func validatedStripeURL(_ raw: String?) -> URL? {
+        guard let raw, let url = URL(string: raw), let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https", components.host?.lowercased() == "checkout.stripe.com",
+              components.user == nil, components.password == nil else { return nil }
+        return url
+    }
+
+    private func openPendingCheckout() async {
+        guard pendingCheckoutOwnerID == profileUserID, api.signedIn else {
+            paymentMessage = "Sign in to the same Cena account that started this checkout before continuing."
+            return
+        }
+        guard let url = validatedStripeURL(pendingCheckoutURL) else {
+            paymentMessage = "The payment link is unavailable or not a trusted Stripe Checkout URL. Your bag is still saved."
+            return
+        }
+        let opened = await UIApplication.shared.open(url)
+        if !opened { paymentMessage = "Couldn’t open secure checkout. Try again or check payment status." }
+    }
+
+    private func refreshPendingCheckout() async {
+        guard let orderID = pendingCheckoutID, !paymentCheckBusy else { return }
+        guard pendingCheckoutOwnerID == profileUserID, api.signedIn else {
+            paymentMessage = "Sign in to the same Cena account that started this checkout to check its status."
+            return
+        }
+        paymentCheckBusy = true; defer { paymentCheckBusy = false }
+        do {
+            let status = try await api.checkoutStatus(orderID).lowercased()
+            paymentStatus = status
+            switch status {
+            case "paid":
+                clearPendingCheckout(resetIdempotency: false)
+                clearBag()
+                orderNumber = orderID
+                paymentMessage = nil
+                await load(); await loadHistory()
+            case "refunded":
+                clearPendingCheckout(resetIdempotency: true)
+                tab = 2
+                message = "This checkout was refunded. Your bag is still saved if you’d like to place a new order."
+                await loadHistory()
+            case "expired": paymentMessage = "This checkout expired. Your bag is saved; start a new checkout to try again."
+            case "failed", "cancelled": paymentMessage = "This payment wasn’t completed. Your bag is saved; start a new checkout to try again."
+            default: paymentMessage = "Payment isn’t confirmed yet. Your bag will stay here until Cena confirms it."
+            }
+        } catch { paymentMessage = "Couldn’t verify payment yet. Your order and bag remain pending; try again shortly." }
+    }
+
+    private func cancelPendingCheckout() async {
+        guard let orderID = pendingCheckoutID else { return }
+        guard pendingCheckoutOwnerID == profileUserID, api.signedIn else {
+            paymentMessage = "Sign in to the same Cena account that started this checkout to cancel it."
+            return
+        }
+        paymentCheckBusy = true; defer { paymentCheckBusy = false; confirmCancelCheckout = false }
+        do {
+            try await api.cancelCheckout(orderID)
+            let status = try await api.checkoutStatus(orderID).lowercased()
+            paymentStatus = status
+            if status == "paid" { paymentCheckBusy = false; await refreshPendingCheckout() }
+            else if status == "refunded" {
+                clearPendingCheckout(resetIdempotency: true); tab = 2
+                message = "This checkout was refunded. Your bag is still saved if you’d like to place a new order."
+                await loadHistory()
+            }
+            else if ["expired", "failed", "cancelled"].contains(status) {
+                clearPendingCheckout(resetIdempotency: true); tab = 2
+                message = "Checkout ended. Your bag is still saved if you want to try again."
+            } else { paymentMessage = "Cancellation was requested, but Cena hasn’t confirmed a terminal checkout status yet. Your bag remains saved." }
+        } catch { paymentMessage = "Couldn’t cancel this checkout: \(error.localizedDescription). Your bag remains saved." }
+    }
+
+    private func clearPendingCheckout(resetIdempotency: Bool) {
+        let owner = pendingCheckoutOwnerID
+        pendingCheckoutID = nil; pendingCheckoutURL = nil; pendingCheckoutOwnerID = nil; paymentStatus = "pending"
+        paymentMessage = nil
+        if let owner {
+            UserDefaults.standard.removeObject(forKey: pendingIDKey(owner))
+            UserDefaults.standard.removeObject(forKey: pendingURLKey(owner))
+        }
+        UserDefaults.standard.removeObject(forKey: "cena.checkout.pendingOrderID")
+        UserDefaults.standard.removeObject(forKey: "cena.checkout.pendingURL")
+        UserDefaults.standard.removeObject(forKey: "cena.checkout.pendingOwnerID")
+        UserDefaults.standard.removeObject(forKey: idempotencyStorageKey)
+        if resetIdempotency { idempotencyKey = UUID().uuidString; UserDefaults.standard.set(idempotencyKey, forKey: idempotencyStorageKey) }
+    }
+
     private func place() async {
+        guard pendingCheckoutID == nil else { paymentMessage = "Finish or check your pending Cena payment first."; return }
         guard let r = checkoutRestaurant, let s = checkoutSlot, !cart.isEmpty else { message = "Choose a pickup window and add an available item."; return }
+        guard api.paymentGatewayConfigured else { message = "Cena’s payment service is not configured. Checkout is unavailable."; return }
         busy = true; defer { busy = false }
         do {
             if !api.signedIn {
                 if !codeSent { try await api.sendCode(email: email); codeSent = true; message = "Check your email for the one-time code."; return }
                 try await api.verifyCode(email: email, code: code)
+                idempotencyKey = UUID().uuidString
+            }
+            guard profileUserID != nil else { throw CenaBackendError.server("Sign in again before starting payment.") }
+            guard let cutoff = timestamp(s["cutoff_at"]), cutoff.timeIntervalSinceNow >= 32 * 60 else {
+                throw CenaBackendError.server("This pickup cutoff is too close for secure payment. Choose another pickup window.")
             }
             if curbside && ([vehicleMake, vehicleModel, vehicleColor].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })) { throw CenaBackendError.server("Enter the vehicle make, model, and color for curbside pickup.") }
             let itemPayload = cart.map { ["item_id": $0.key, "quantity": $0.value] as [String: Any] }
             let vehicle: [String: String] = curbside ? ["make": vehicleMake.trimmingCharacters(in: .whitespacesAndNewlines), "model": vehicleModel.trimmingCharacters(in: .whitespacesAndNewlines), "color": vehicleColor.trimmingCharacters(in: .whitespacesAndNewlines)] : [:]
-            let response = try await api.createOrder(["p_restaurant_id": str(r["id"]), "p_slot_id": str(s["id"]), "p_idempotency_key": idempotencyKey, "p_pickup_mode": curbside ? "curbside" : "counter", "p_vehicle": vehicle, "p_items": itemPayload])
-            let obj = response as? [String: Any]; orderNumber = str(obj?["id"])
-            if orderNumber?.isEmpty == true { throw CenaBackendError.invalidResponse }
-            idempotencyKey = UUID().uuidString
+            persistBag()
+            UserDefaults.standard.set(idempotencyKey, forKey: idempotencyStorageKey)
+            let response = try await api.createCheckout(["p_restaurant_id": str(r["id"]), "p_slot_id": str(s["id"]), "p_idempotency_key": idempotencyKey, "p_pickup_mode": curbside ? "curbside" : "counter", "p_vehicle": vehicle, "p_items": itemPayload])
+            guard let orderID = response["order_id"] as? String, UUID(uuidString: orderID) != nil else { throw CenaBackendError.invalidResponse }
+            let checkoutURL = response["checkout_url"] as? String
+            pendingCheckoutID = orderID; pendingCheckoutURL = checkoutURL; paymentStatus = "pending"
+            pendingCheckoutOwnerID = profileUserID
+            UserDefaults.standard.set(orderID, forKey: "cena.checkout.pendingOrderID")
+            UserDefaults.standard.set(profileUserID, forKey: "cena.checkout.pendingOwnerID")
+            if let profileUserID {
+                UserDefaults.standard.set(orderID, forKey: pendingIDKey(profileUserID))
+                if let checkoutURL { UserDefaults.standard.set(checkoutURL, forKey: pendingURLKey(profileUserID)) }
+            }
+            UserDefaults.standard.removeObject(forKey: "cena.checkout.pendingURL")
+            tab = 2
+            if response["status"] as? String == "paid" { await refreshPendingCheckout() }
+            else { paymentMessage = "Opening secure Stripe Checkout…"; await openPendingCheckout() }
+        } catch let CenaBackendError.conflict(detail) {
+            clearPendingCheckout(resetIdempotency: true)
+            message = "This saved checkout is no longer pending. \(detail) Your bag is saved; start a new payment attempt."
         } catch { message = error.localizedDescription }
     }
     private func loadHistory() async {

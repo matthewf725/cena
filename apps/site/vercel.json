@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "pnpm build && node scripts/configure-vercel.mjs",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/checkout/success", "destination": "/payment-return.html" },
+    { "source": "/checkout/cancel", "destination": "/payment-return.html" },
+    { "source": "/restaurant/connect/return", "destination": "/payment-return.html" },
+    { "source": "/restaurant/connect/refresh", "destination": "/payment-return.html" }
+  ]
 }

@@ -62,32 +62,52 @@ export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> 
   } : null;
 }
 
-export async function placeOrder(input: { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[] }) {
-  if (!supabase) return { data: { id: `CN-${Date.now().toString().slice(-6)}`, status: 'placed' }, error: null };
+export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[] };
+export type CheckoutSession = { order_id: string; checkout_url: string } | { order_id: string; status: 'paid' };
+export function isTrustedCheckoutURL(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'checkout.stripe.com' && !url.username && !url.password && !url.port;
+  } catch { return false; }
+}
+export class CheckoutRequestError extends Error {
+  constructor(message: string, public readonly status: number, public readonly checkoutStatus?: string, public readonly orderId?: string) { super(message); this.name = 'CheckoutRequestError'; }
+}
+async function checkoutRequest(path: string, init: RequestInit = {}) {
+  if (!supabase) throw new Error('Payments require a configured Cena account.');
   const apiUrl = process.env.EXPO_PUBLIC_CENA_API_URL;
-  if (apiUrl) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return { data: null, error: new Error('Sign in to place an order') };
-    try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/orders`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ p_restaurant_id: input.restaurantId, p_slot_id: input.slotId, p_idempotency_key: input.idempotencyKey,
-          p_pickup_mode: input.pickupMode, p_vehicle: input.vehicle || {}, p_items: input.items }),
-      });
-      const data = await response.json();
-      return response.ok ? { data, error: null } : { data: null, error: new Error(data?.error || data?.message || 'Order service could not place your order') };
-    } catch (e) { return { data: null, error: e instanceof Error ? e : new Error('Order service unavailable') }; }
-  }
-  return supabase.rpc('create_order', {
+  if (!apiUrl) throw new Error('Secure checkout is not configured yet. Please try again later.');
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Sign in to continue to secure checkout.');
+  const response = await fetch(`${apiUrl.replace(/\/$/, '')}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, ...(init.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new CheckoutRequestError(data?.error || data?.message || 'Secure checkout could not be started.', response.status, data?.status, data?.order_id);
+  return data;
+}
+export async function createCheckout(input: CheckoutInput): Promise<CheckoutSession> {
+  const data = await checkoutRequest('/v1/checkout', { method: 'POST', body: JSON.stringify({
     p_restaurant_id: input.restaurantId, p_slot_id: input.slotId, p_idempotency_key: input.idempotencyKey,
     p_pickup_mode: input.pickupMode, p_vehicle: input.vehicle || {}, p_items: input.items,
-  });
+  }) });
+  if (typeof data.order_id !== 'string') throw new Error('Secure checkout returned an incomplete session.');
+  if (data.status === 'paid' && typeof data.checkout_url !== 'string') return { order_id: data.order_id, status: 'paid' };
+  if (typeof data.checkout_url !== 'string') throw new Error('Secure checkout returned an incomplete session.');
+  if (!isTrustedCheckoutURL(data.checkout_url)) throw new Error('Secure checkout returned an untrusted payment link.');
+  return { order_id: data.order_id, checkout_url: new URL(data.checkout_url).toString() };
 }
-
-// The illustrative UI catalog uses local demo ids. Keep its checkout local; real catalog
-// records should call placeOrder above once they have database UUIDs and a selected slot.
-export async function saveOrder(order: Record<string, unknown>) {
-  return { data: { ...order, id: `CN-${Date.now().toString().slice(-6)}`, status: 'placed' }, error: null };
+export async function fetchCheckoutStatus(orderId: string): Promise<'pending'|'paid'|'expired'|'failed'|'refunded'> {
+  const data = await checkoutRequest(`/v1/checkout/${encodeURIComponent(orderId)}`, { method: 'GET' });
+  if (['pending', 'paid', 'expired', 'failed', 'refunded'].includes(data.status)) return data.status;
+  throw new Error('Could not confirm payment status.');
+}
+export async function cancelCheckout(orderId: string): Promise<'cancelled'|'paid'|'expired'|'failed'|'pending'|'refunded'> {
+  const data = await checkoutRequest(`/v1/checkout/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+  const status = data.status === 'canceled' ? 'cancelled' : data.status;
+  if (['cancelled', 'paid', 'expired', 'failed', 'pending', 'refunded'].includes(status)) return status;
+  throw new Error('Checkout cancellation could not be confirmed.');
 }
 
 export async function saveAnalyticsConsent(consented: boolean) {
@@ -104,7 +124,7 @@ export async function upsertCustomerProfile(displayName: string, phone: string, 
 }
 export async function fetchOrderHistory() {
   if (!supabase) return { data: null, error: null };
-  return supabase.from('orders').select('id,restaurant_id,status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').order('created_at',{ascending:false}).limit(20);
+  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').order('created_at',{ascending:false}).limit(20);
 }
 export async function trackEvent(eventType: string, restaurantId?: string, payload: Record<string, unknown> = {}) {
   if (!supabase) return { error: null };

@@ -110,33 +110,12 @@ func TestDiscoveryForwardsOptionalBearerAndValidatesCoordinates(t *testing.T) {
 		t.Fatalf("incomplete coords: %d calls=%d", w.Code, calls)
 	}
 }
-func TestCreateOrderForwardsUserTokenAndRPCContract(t *testing.T) {
-	h := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rest/v1/rpc/create_order" {
-			t.Errorf("path %s", r.URL.Path)
-		}
-		if r.Header.Get("apikey") != "public-test-key" {
-			t.Errorf("apikey missing")
-		}
-		if r.Header.Get("Authorization") != "Bearer user-jwt" {
-			t.Errorf("auth not forwarded: %q", r.Header.Get("Authorization"))
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body["p_idempotency_key"] != "abcdefgh" || body["p_pickup_mode"] != "counter" {
-			t.Errorf("RPC args: %#v", body)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"id":"order-1","status":"placed"}`)
-	})
-	body := `{"p_restaurant_id":"r","p_slot_id":"s","p_idempotency_key":"abcdefgh","p_pickup_mode":"counter","p_items":[{"item_id":"i","quantity":1}]}`
-	r := httptest.NewRequest("POST", "/v1/orders", strings.NewReader(body))
-	r.Header.Set("Authorization", "Bearer user-jwt")
+func TestDirectOrderEndpointDisabledForOnlineCheckout(t *testing.T) {
+	h := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("legacy order endpoint must not call Supabase") })
+	r := httptest.NewRequest("POST", "/v1/orders", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":"order-1"`) {
+	if w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "/v1/checkout") {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }

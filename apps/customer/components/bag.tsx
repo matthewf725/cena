@@ -5,11 +5,12 @@ import { foodPhoto } from '../lib/food-photos';
 
 export type BagLine = { meal: Meal; qty: number; options: string; restaurantId: string };
 
-export function Bag({ items, subtotal, radius, loading, bottomNavHeight = 0, change, remove, browse, checkout }: {
+export function Bag({ items, subtotal, radius, loading, locked = false, bottomNavHeight = 0, change, remove, browse, checkout }: {
   items: BagLine[];
   subtotal: number;
   radius: number;
   loading: boolean;
+  locked?: boolean;
   bottomNavHeight?: number;
   change: (id: string, delta: number) => void;
   remove: (id: string) => void;
@@ -31,15 +32,15 @@ export function Bag({ items, subtotal, radius, loading, bottomNavHeight = 0, cha
             </View>
           </View>
           <View style={[styles.row, styles.actions]}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${meal.name}`} onPress={() => remove(meal.id)}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${meal.name}`} disabled={locked} onPress={() => remove(meal.id)}>
               <Text style={styles.remove}>Remove</Text>
             </Pressable>
             <View style={styles.stepper}>
-              <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${meal.name} quantity`}
+              <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${meal.name} quantity`} disabled={locked}
                 onPress={() => change(meal.id, -1)} style={styles.step}><Minus size={16} color={maroon} /></Pressable>
               <Text style={styles.quantity}>{qty}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={`Increase ${meal.name} quantity`} disabled={qty >= 50}
-                onPress={() => change(meal.id, 1)} style={[styles.step, qty >= 50 && styles.disabled]}><Plus size={16} color={maroon} /></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Increase ${meal.name} quantity`} disabled={locked || qty >= 50}
+                onPress={() => change(meal.id, 1)} style={[styles.step, (locked || qty >= 50) && styles.disabled]}><Plus size={16} color={maroon} /></Pressable>
             </View>
           </View>
         </View>

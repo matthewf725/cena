@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#FAF6F3">
+  <title>Return to Cena</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:#FAF6F3; color:#231F1C; font:16px/1.55 system-ui,sans-serif; }
+    main { width:100%; max-width:420px; padding:28px; border:1px solid #EDE5E0; border-radius:22px; background:#FFF; }
+    strong { color:#5D100A; font-size:24px; letter-spacing:-.06em; }
+    h1 { margin:12px 0 6px; font-size:26px; line-height:1.1; letter-spacing:-.025em; }
+    p { margin:10px 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <strong aria-label="Cena">cena</strong>
+    <h1 id="title">Return to Cena</h1>
+    <p id="next">Switch back to the Cena app or browser tab to check your payment and pickup details.</p>
+  </main>
+  <script>
+    if (location.search || location.hash) history.replaceState(null, '', location.pathname);
+    const title = document.getElementById('title');
+    const next = document.getElementById('next');
+    if (location.pathname.startsWith('/restaurant/connect/')) {
+      title.textContent = 'Return to Cena for Restaurants';
+      next.textContent = 'Switch back to Cena for Restaurants to check your Stripe setup or open a fresh setup link.';
+    } else if (location.pathname === '/checkout/cancel') {
+      title.textContent = 'Checkout closed';
+      next.textContent = 'Switch back to Cena to check your payment status, reopen checkout, or release your pickup reservation.';
+    }
+  </script>
+</body>
+</html>

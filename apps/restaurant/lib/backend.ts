@@ -22,10 +22,40 @@ export async function updateCurbside(restaurantId:string,enabled:boolean) {
   if(!supabase)return enabled;
   const {data,error}=await supabase.from('restaurants').update({curbside_enabled:enabled}).eq('id',restaurantId).select('curbside_enabled').single();if(error)throw error;return data.curbside_enabled as boolean;
 }
+export type RestaurantPaymentStatus={status:'not_connected'|'pending'|'ready';application_fee_cents:number};
+async function cenaApiRequest<T>(path:string,method:'GET'|'POST'='GET'):Promise<T>{
+  if(!cenaApiUrl||!supabase)throw new Error('Cena payments API is not configured.');
+  const {data,error}=await supabase.auth.getSession();if(error)throw error;
+  const token=data.session?.access_token;if(!token)throw new Error('Sign in again to manage payouts.');
+  const response=await fetch(`${cenaApiUrl}${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
+  const body=await response.json().catch(()=>null);
+  if(!response.ok)throw new Error(body?.error||body?.message||`Payment request failed (${response.status}).`);
+  return body as T;
+}
+export async function fetchRestaurantPaymentStatus(restaurantId:string):Promise<RestaurantPaymentStatus|null>{
+  if(!cenaApiUrl)return null;
+  return cenaApiRequest<RestaurantPaymentStatus>(`/v1/restaurants/${encodeURIComponent(restaurantId)}/payments`);
+}
+export async function createStripeOnboardingLink(restaurantId:string):Promise<string>{
+  const result=await cenaApiRequest<{url:string}>(`/v1/restaurants/${encodeURIComponent(restaurantId)}/stripe-onboarding`,'POST');
+  if(!result?.url)throw new Error('Stripe setup link was not returned.');
+  return result.url;
+}
+export type OrderRefundResult={status:'refunded'|'pending'|'failed'};
+export async function refundOrder(id:string):Promise<OrderRefundResult>{
+  if(!cenaApiUrl||!supabase)throw new Error('Cena refund API is not configured.');
+  const {data,error}=await supabase.auth.getSession();if(error)throw error;
+  const token=data.session?.access_token;if(!token)throw new Error('Sign in again to refund this order.');
+  const response=await fetch(`${cenaApiUrl}/v1/orders/${encodeURIComponent(id)}/refund`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'}});
+  const body=await response.json().catch(()=>null);
+  if(!response.ok)throw new Error(body?.error||body?.message||`Refund request failed (${response.status}).`);
+  if(!body||!['refunded','pending','failed'].includes(body.status))throw new Error('The refund service returned an unrecognized status.');
+  return body as OrderRefundResult;
+}
 export async function fetchOrders(restaurantId:string) {
   if(!supabase) return null;
   const from=new Date(Date.now()-30*24*60*60_000).toISOString();
-  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
+  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
   if(error) throw error; return data;
 }
 export async function setOrderStatus(id:string,status:string) {

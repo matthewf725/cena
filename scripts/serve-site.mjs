@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../apps/site/dist', import.meta.url));
+const paymentReturnPaths = new Set(['/checkout/success', '/checkout/cancel', '/restaurant/connect/return', '/restaurant/connect/refresh']);
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -24,7 +25,8 @@ createServer(async (request, response) => {
       response.end(`window.CENA_CONFIG = ${config};\n`);
       return;
     }
-    const file = resolve(root, path === '/' ? 'index.html' : `.${path}`);
+    const filename = path === '/' ? 'index.html' : paymentReturnPaths.has(path) ? 'payment-return.html' : `.${path}`;
+    const file = resolve(root, filename);
     if (!file.startsWith(`${root}${sep}`) || !(await stat(file)).isFile()) {
       response.writeHead(404).end();
       return;

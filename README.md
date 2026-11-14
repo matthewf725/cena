@@ -1,6 +1,6 @@
 # Cena
 
-Cena helps local restaurants sell meal kits for pickup during slower hours. Customers reserve same-day or scheduled pickup, then pay the restaurant when they collect their kit.
+Cena helps local restaurants sell meal kits for pickup during slower hours. Customers pay in Cena and pick up their kits during a same-day or scheduled window.
 
 ## Primary app colors
 
@@ -32,6 +32,12 @@ The Go HTTP service runs with `go run ./cmd/cena-api` from `backend/go`. Configu
 5. Add `OPENAI_API_KEY` to Supabase Edge Function secrets and deploy `generate-prep`. `OPENAI_PREP_MODEL` can select another compatible structured-output model. The function drafts from restaurant-provided steps, and a restaurant owner or manager reviews and publishes them.
 
 Supabase stores orders and pickup timestamps, enforces stock and cutoff rules, and computes prices from the published catalog. Behavior analytics use an opt-in consent record. The restaurant app shows order and completed-sales summaries. A privileged `operator_analytics` RPC supplies aggregate counts for the operator role.
+
+## In-app payments
+
+Cena opens Stripe Checkout when a customer confirms a pickup window. The restaurant's connected Stripe account receives the sale. Stripe routes Cena's flat fee to Cena, with a default of **$1.75 per order** and a configurable $1.50–$2.00 range. Processor fees are separate. The customer pays the amount shown at checkout.
+
+Configure the Go API for Stripe Connect in test mode, onboard a restaurant through its Payments screen, and verify a paid order reaches the restaurant before using live keys. See the [payment setup](backend/go/README.md#online-payments). Customer and restaurant builds need the Go API URL in addition to their Supabase settings.
 
 Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`. Distance estimates are straight-line miles from the selected pickup area or an optional approximate device location. General discovery shows kitchens within 35 miles. Restaurants without coordinates can still appear in search and Recents. The request origin is used for ranking and is never written to the application database.
 

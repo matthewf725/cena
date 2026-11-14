@@ -9,11 +9,9 @@ These terms govern a restaurant’s participation in Cena, including menu listin
 
 ## 1. Service and launch payment flow
 
-Cena provides tools to publish meal-kit listings and receive and manage customer pickup orders. In the initial release, customers pay the Restaurant directly at pickup; Cena does not collect or remit customer payments. Restaurant must not represent that Cena processes payment. No commission, subscription, or other fee is charged unless the parties separately accept a written fee schedule or order form identifying the fee and its effective date.
+New orders are paid online in Cena through Stripe-hosted Checkout; pay-at-pickup is not available for new orders. The Restaurant is the seller of the food and must maintain its own Stripe connected account to receive proceeds. Cena facilitates the online payment flow but does not prepare, own, inspect, or deliver food. The Restaurant is responsible for order fulfillment, customer service, and refund decisions.
 
-Cena plans to charge restaurants a flat $1.50–$2.00 per order and a 0% commission. The final amount and billing terms will be listed in the written fee schedule before any fee takes effect.
-
-Cena does not prepare, own, inspect, or deliver food. The Restaurant is the seller of the food and is responsible for each order from acceptance through handoff to the customer.
+At Stripe settlement, Cena deducts the disclosed flat fee of $1.50–$2.00 per paid order from the Restaurant’s proceeds. Cena charges 0% percentage commission. Stripe processing fees are separate and may also be charged or deducted as applicable under Stripe’s terms. The Restaurant authorizes payment routing and the flat-fee deduction through its connected Stripe account. Stripe’s account, processing, and settlement terms apply to the Restaurant’s account and payments.
 
 ## 2. Restaurant responsibilities
 
@@ -22,7 +20,7 @@ The Restaurant will:
 - Provide complete, current, and accurate business, location, menu, price, ingredient, allergen, nutrition, availability, and pickup information, and promptly correct errors or changes.
 - Ensure it has all permits, licenses, registrations, insurance, and staff training required for its operations; comply with applicable food-safety, labeling, consumer-protection, accessibility, privacy, and other laws.
 - Prepare and package orders safely and as described, honor confirmed orders, make them available at the stated location and pickup window, and keep order status current in Cena.
-- Set and clearly disclose its customer-facing cancellation, missed-pickup, refund, and complaint practices before accepting orders; handle payment, refunds, food complaints, and customer remedies directly.
+- Maintain an active Stripe connected account and provide any information required by Stripe; accept online payments through Stripe-hosted Checkout. Set and clearly disclose customer-facing cancellation, missed-pickup, refund, and complaint practices; fulfill orders and make refund decisions. Approved refunds must be handled through the available Cena/Stripe workflow, subject to Stripe processing and applicable law.
 - Use only photos, marks, descriptions, and other content it owns or is authorized to use, and ensure the content does not mislead or infringe another party’s rights.
 - Ensure that only staff members who need access use their own credentials; remove staff access promptly when it is no longer needed and notify Cena of suspected account compromise.
 
@@ -52,7 +50,7 @@ Upon termination, Cena may remove the Restaurant’s listings and disable worksp
 
 ## 7. Disclaimers and limits
 
-Cena provides the Service “as is” and “as available,” to the extent permitted by law. Cena does not guarantee customer traffic, order volume, uninterrupted operation, or the accuracy of user-submitted information. The Restaurant remains solely responsible for its food, staff, premises, permits, customer transactions, and legal compliance.
+Cena provides the Service “as is” and “as available,” to the extent permitted by law. Cena does not guarantee customer traffic, order volume, uninterrupted operation, or the accuracy of user-submitted information. The Restaurant remains responsible for its food, staff, premises, permits, fulfillment, refund decisions, and legal compliance. Payment processing and settlement follow Section 1 and the applicable Stripe terms.
 
 To the extent permitted by law, neither party will be liable to the other for indirect, incidental, special, consequential, or punitive damages or lost profits. To the extent permitted by law, each party’s total liability arising from these terms will not exceed US $1,000. This cap does not apply to a party’s intentional misconduct, infringement or misuse of the other party’s intellectual property, breach of confidentiality or data-use duties, or liability that cannot legally be limited. The parties should have counsel review the allocation and cap before launch.
 

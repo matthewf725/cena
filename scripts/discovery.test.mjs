@@ -123,15 +123,18 @@ test('prepared meal total is explicit and does not change kit checkout price', a
   const unpricedFeed = await feed(null,null,null,'Taco');
   assert.equal(unpricedFeed.explore[0].meal.prepared_meal_total_cents,null);
 
-  const { rows: [order] } = await asCustomer((tx) => tx.query(`
-    with fixture as (
-      select ci.id as item_id,ci.restaurant_id,s.id as slot_id
-      from catalog_items ci join pickup_slots s on s.restaurant_id=ci.restaurant_id
-      where ci.name='Rigatoni alla Vodka Kit' and s.cutoff_at>now() order by s.starts_at limit 1
-    )
-    select created.* from fixture f cross join lateral create_order(f.restaurant_id,f.slot_id,'prepared-total-test','counter','{}',
-      jsonb_build_array(jsonb_build_object('item_id',f.item_id,'quantity',1))) created
-  `));
+  const { rows: [order] } = await database.transaction(async (tx) => {
+    await tx.query("select set_config('request.jwt.claim.sub',$1,true)", [comparisonCustomer]);
+    return tx.query(`
+      with fixture as (
+        select ci.id as item_id,ci.restaurant_id,s.id as slot_id
+        from catalog_items ci join pickup_slots s on s.restaurant_id=ci.restaurant_id
+        where ci.name='Rigatoni alla Vodka Kit' and s.cutoff_at>now() order by s.starts_at limit 1
+      )
+      select created.* from fixture f cross join lateral create_order(f.restaurant_id,f.slot_id,'prepared-total-test','counter','{}',
+        jsonb_build_array(jsonb_build_object('item_id',f.item_id,'quantity',1))) created
+    `);
+  });
   assert.ok(order, 'order fixture exists');
   assert.equal(order.subtotal_cents,1695);
   const { rows: [snapshot] } = await database.query('select unit_price_cents from order_items where order_id=$1', [order.id]);

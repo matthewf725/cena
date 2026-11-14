@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,20 @@ func main() {
 			allowedOrigins = append(allowedOrigins, origin)
 		}
 	}
-	cfg := api.Config{SupabaseURL: os.Getenv("SUPABASE_URL"), SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"), AllowedOrigins: allowedOrigins}
+	feeCents := 175
+	if value := strings.TrimSpace(os.Getenv("STRIPE_APPLICATION_FEE_CENTS")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			feeCents = parsed
+		} else {
+			log.Fatal("STRIPE_APPLICATION_FEE_CENTS must be an integer")
+		}
+	}
+	cfg := api.Config{
+		SupabaseURL: os.Getenv("SUPABASE_URL"), SupabaseAnonKey: os.Getenv("SUPABASE_ANON_KEY"),
+		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"), AllowedOrigins: allowedOrigins,
+		StripeSecretKey: os.Getenv("STRIPE_SECRET_KEY"), StripeWebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		StripeAPIBaseURL: os.Getenv("STRIPE_API_BASE_URL"), ApplicationFeeCents: feeCents, WebBaseURL: os.Getenv("CENA_WEB_BASE_URL"),
+	}
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" {
 		log.Fatal("SUPABASE_URL and SUPABASE_ANON_KEY are required")
 	}

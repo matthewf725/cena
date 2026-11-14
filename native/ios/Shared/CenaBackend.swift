@@ -2,12 +2,13 @@ import Foundation
 import SwiftUI
 
 enum CenaBackendError: LocalizedError {
-    case notConfigured, invalidResponse, server(String)
+    case notConfigured, invalidResponse, server(String), conflict(String)
     var errorDescription: String? {
         switch self {
         case .notConfigured: return "Set SUPABASE_URL and SUPABASE_ANON_KEY at build time to connect Cena."
         case .invalidResponse: return "Cena received an invalid response. Please try again."
         case .server(let message): return message
+        case .conflict(let message): return message
         }
     }
 }
@@ -21,6 +22,7 @@ enum CenaBackendError: LocalizedError {
     private let key: String? = (Bundle.main.object(forInfoDictionaryKey: "SUPABASE_ANON_KEY") as? String).flatMap { $0.isEmpty ? nil : $0 }
     private let apiBase: String? = (Bundle.main.object(forInfoDictionaryKey: "CENA_API_URL") as? String).flatMap { $0.isEmpty ? nil : $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
     var configured: Bool { base != nil && key != nil }
+    var paymentGatewayConfigured: Bool { apiBase != nil }
     var signedIn: Bool { accessToken != nil }
 
     private func request(_ path: String, method: String = "GET", body: Any? = nil, authenticated: Bool = false, prefer: String? = nil) async throws -> Data {
@@ -67,7 +69,9 @@ enum CenaBackendError: LocalizedError {
         guard let http = response as? HTTPURLResponse else { throw CenaBackendError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            throw CenaBackendError.server((obj?["error"] as? String) ?? "Cena API request failed (HTTP \(http.statusCode)).")
+            let message = (obj?["error"] as? String) ?? "Cena API request failed (HTTP \(http.statusCode))."
+            if http.statusCode == 409 { throw CenaBackendError.conflict(message) }
+            throw CenaBackendError.server(message)
         }
         return (try? JSONSerialization.jsonObject(with: data)) ?? [:]
     }
@@ -90,6 +94,23 @@ enum CenaBackendError: LocalizedError {
     func createOrder(_ body: [String: Any]) async throws -> Any {
         if apiBase != nil { return try await apiRequest("/v1/orders", method: "POST", body: body, authenticated: true) }
         return try await rpc("create_order", body: body)
+    }
+    func createCheckout(_ body: [String: Any]) async throws -> [String: Any] {
+        guard apiBase != nil else { throw CenaBackendError.server("Cena’s payment API is not configured. Checkout is unavailable.") }
+        guard let response = try await apiRequest("/v1/checkout", method: "POST", body: body, authenticated: true) as? [String: Any],
+              response["order_id"] is String,
+              response["checkout_url"] is String || (response["status"] as? String)?.lowercased() == "paid" else { throw CenaBackendError.invalidResponse }
+        return response
+    }
+    func checkoutStatus(_ orderID: String) async throws -> String {
+        guard UUID(uuidString: orderID) != nil else { throw CenaBackendError.server("Pending checkout ID is invalid.") }
+        let response = try await apiRequest("/v1/checkout/\(orderID)", authenticated: true)
+        guard let status = (response as? [String: Any])?["status"] as? String else { throw CenaBackendError.invalidResponse }
+        return status
+    }
+    func cancelCheckout(_ orderID: String) async throws {
+        guard UUID(uuidString: orderID) != nil else { throw CenaBackendError.server("Pending checkout ID is invalid.") }
+        _ = try await apiRequest("/v1/checkout/\(orderID)", method: "DELETE", authenticated: true)
     }
     func updateOrder(_ id: String, status: String) async throws {
         if apiBase != nil { _ = try await apiRequest("/v1/orders/\(id)/status", method: "PATCH", body: ["status": status], authenticated: true) }

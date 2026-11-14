@@ -11,7 +11,7 @@ These terms govern your use of the Cena app and related services (the “Service
 
 Cena displays meal kits, descriptions, ingredients or other menu information supplied by participating restaurants, pickup details, and order status. Each restaurant is responsible for preparing and supplying its meal kits and for the accuracy and completeness of its menu and allergen information. Cena is a marketplace and ordering interface; unless a screen says otherwise, Cena does not prepare or sell the food.
 
-The initial service supports pickup and payment at pickup only. Cena does not collect payment for an order through the app in this initial release. A submitted order is a request to reserve the selected item(s), and is subject to the restaurant’s acceptance, availability, and the order details shown in the app. The app should clearly show whether an order is confirmed, its pickup location and window, and the amount due at pickup. Do not travel until the app shows confirmation. Pay the restaurant directly at pickup using payment methods it accepts.
+New orders are paid online in Cena through Stripe-hosted Checkout; pay-at-pickup is not available for new orders. Stripe collects and processes your card details through its hosted checkout page and sends Cena payment status and reference information. Cena does not receive or store full card numbers. The restaurant is the seller of the food and receives payment through its own connected Stripe account, less Cena’s disclosed flat fee of $1.50–$2.00 per paid order and any applicable Stripe processing fees. Review the order details and total shown at checkout before authorizing payment. A submitted order remains subject to the restaurant’s acceptance, availability, and the order details shown in the app. The app will show whether an order is confirmed, its pickup location, and pickup window. Do not travel until the app shows confirmation.
 
 ## 2. Your account and information
 
@@ -21,9 +21,9 @@ You must be legally able to enter these Terms. The Service is not directed to ch
 
 ## 3. Orders, pickup, and food information
 
-Review the restaurant, item, quantity, pickup location, pickup window, and any amount due before submitting an order. A restaurant may reject or cancel an order if an item is unavailable, the restaurant cannot fulfill it, or circumstances change. We or the restaurant will use the contact information or in-app notices available to communicate a cancellation or material change.
+Review the restaurant, item, quantity, pickup location, pickup window, and total due at Stripe Checkout before authorizing payment. A restaurant may reject or cancel an order if an item is unavailable, the restaurant cannot fulfill it, or circumstances change. We or the restaurant will use the contact information or in-app notices available to communicate a cancellation or material change.
 
-Arrive during the stated pickup window and follow the restaurant’s pickup instructions. If you cannot collect an order, contact the restaurant using the details shown in the app. Each restaurant sets and discloses its cancellation, missed-pickup, refund, and food-remedy practices. Because payment is made directly to the restaurant at pickup, ask that restaurant about a payment reversal or refund. Nothing in these Terms limits rights that cannot legally be waived.
+Arrive during the stated pickup window and follow the restaurant’s pickup instructions. If you cannot collect an order, contact the restaurant using the details shown in the app. Each restaurant sets and discloses its cancellation, missed-pickup, refund, and food-remedy practices and is responsible for fulfillment and refund decisions. Approved refunds are processed through Stripe to the original payment method, subject to provider processing times and applicable law. Nothing in these Terms limits rights that cannot legally be waived.
 
 Menu, ingredient, nutrition, and allergen details are supplied by restaurants and may be incomplete or change. Contact the restaurant directly before ordering if you have an allergy, dietary restriction, or food-safety question. Do not rely on the app as a guarantee that a meal is free from an allergen or suitable for a specific diet.
 
@@ -33,7 +33,7 @@ Use the Service only for lawful personal ordering. Do not misuse the Service, in
 
 ## 5. Restaurant relationship
 
-The restaurant—not Cena—is responsible for preparing and handing over the food, food safety, licensing, allergen and menu disclosures, pickup operations, and amounts collected at pickup. Your purchase of food is with the restaurant. Cena is not responsible for a restaurant’s acts or omissions, except to the extent applicable law says otherwise. Please raise food quality, fulfillment, or pickup concerns with the restaurant and contact [SUPPORT EMAIL] for help with app or order-display issues.
+The restaurant—not Cena—is responsible for preparing and handing over the food, food safety, licensing, allergen and menu disclosures, pickup operations, fulfillment, and refund decisions. Your purchase of food is with the restaurant. Online payments are processed through Stripe for the restaurant’s connected account; Cena receives payment statuses and references, not full card numbers. Cena is not responsible for a restaurant’s acts or omissions, except to the extent applicable law says otherwise. Please raise food quality, fulfillment, or pickup concerns with the restaurant and contact [SUPPORT EMAIL] for help with app, order-display, or payment-status issues.
 
 ## 6. Service changes and availability
 
