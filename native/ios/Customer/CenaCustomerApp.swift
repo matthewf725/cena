@@ -106,6 +106,9 @@ struct CustomerHome: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: restaurant?["id"] as? String)
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: tab)
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: orderNumber)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: pendingCheckoutID)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: checkoutVisible)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: paymentStatus)
             .frame(maxWidth: horizontalSizeClass == .regular ? 760 : .infinity)
             .frame(maxWidth: .infinity, alignment: .top)
             .navigationTitle(restaurant == nil ? "cena" : (str(restaurant?["name"]).isEmpty ? "Menu" : str(restaurant?["name"])))
@@ -126,8 +129,8 @@ struct CustomerHome: View {
                 }
             }
             .background(CenaStyle.cream)
-            .overlay(alignment: .top) { if let message { CenaNotice(message: message) { self.message = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
-            .animation(.easeInOut(duration: 0.2), value: message)
+            .overlay(alignment: .top) { if let message { CenaNotice(message: message) { self.message = nil }.padding(.horizontal, 14).padding(.top, 8).transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity)) } }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: message)
             .task {
                 restoreBag()
                 restoreIdempotencyKey()
@@ -434,25 +437,40 @@ struct CustomerHome: View {
     }
 
     private func paymentPendingScreen(_ orderID: String) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "creditcard.circle").font(.system(size: 46)).foregroundStyle(CenaStyle.maroon)
-            Text("Finish payment in Cena").font(.title2.bold()).foregroundStyle(CenaStyle.maroon)
-            Text("Your bag is saved for order \(orderID.prefix(8).uppercased()). Return here after paying. Cena will confirm the payment with the provider before marking the order complete.").font(.body).foregroundStyle(.secondary)
-            if let paymentMessage { Text(paymentMessage).font(.subheadline).foregroundStyle(paymentStatus == "paid" ? .green : .secondary) }
-            if paymentCheckBusy { ProgressView("Checking payment…") }
-            if pendingCheckoutURL != nil {
-                Button("Continue to secure Stripe checkout") { Task { await openPendingCheckout() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Image(systemName: "creditcard.circle").font(.system(size: 46)).foregroundStyle(CenaStyle.maroon)
+                Text("Finish payment in Cena").font(.title2.bold()).foregroundStyle(CenaStyle.maroon)
+                Text("Your bag is saved for order \(orderID.prefix(8).uppercased()). Return here after paying. Cena will confirm the payment with the provider before marking the order complete.").font(.body).foregroundStyle(.secondary)
+                if let paymentMessage { Text(paymentMessage).font(.subheadline).foregroundStyle(paymentStatus == "paid" ? .green : .secondary) }
+                if paymentCheckBusy { ProgressView("Checking payment…") }
+                if pendingCheckoutURL != nil {
+                    Button("Continue to secure Stripe checkout") { Task { await openPendingCheckout() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+                }
+                Button("Check payment status") { Task { await refreshPendingCheckout() } }.buttonStyle(.bordered)
+                if !["expired", "failed", "cancelled", "paid", "refunded"].contains(paymentStatus.lowercased()) {
+                    if confirmCancelCheckout {
+                        ViewThatFits(in: .horizontal) {
+                            HStack { cancelCheckoutConfirmationButtons }
+                            VStack(alignment: .leading, spacing: 8) { cancelCheckoutConfirmationButtons }
+                        }
+                    } else {
+                        Button("Cancel checkout") { confirmCancelCheckout = true }.font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if ["expired", "failed", "cancelled"].contains(paymentStatus.lowercased()) {
+                    Button("Start a new checkout") { clearPendingCheckout(resetIdempotency: true); tab = 2 }.foregroundStyle(CenaStyle.maroon)
+                }
             }
-            Button("Check payment status") { Task { await refreshPendingCheckout() } }.buttonStyle(.bordered)
-            if !["expired", "failed", "cancelled", "paid", "refunded"].contains(paymentStatus.lowercased()) {
-                if confirmCancelCheckout {
-                    HStack { Button("Keep checkout") { confirmCancelCheckout = false }; Button("Confirm cancel") { Task { await cancelPendingCheckout() } }.foregroundStyle(.red) }
-                } else { Button("Cancel checkout") { confirmCancelCheckout = true }.font(.caption).foregroundStyle(.secondary) }
-            }
-            if ["expired", "failed", "cancelled"].contains(paymentStatus.lowercased()) {
-                Button("Start a new checkout") { clearPendingCheckout(resetIdempotency: true); tab = 2 }.foregroundStyle(CenaStyle.maroon)
-            }
-        }.padding(24).frame(maxWidth: .infinity, alignment: .leading).navigationTitle("Payment")
+            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        .navigationTitle("Payment")
+    }
+
+    @ViewBuilder private var cancelCheckoutConfirmationButtons: some View {
+        Button("Keep checkout") { confirmCancelCheckout = false }
+        Button("Confirm cancel") { Task { await cancelPendingCheckout() } }.foregroundStyle(.red)
     }
 
     private var orderHistory: some View {
@@ -721,7 +739,11 @@ struct CustomerHome: View {
     }
 
     private func orderConfirmation(_ id: String) -> some View {
-        VStack(spacing: 16) { Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green); Text("Order placed").font(.largeTitle.bold()).fontDesign(.default).foregroundStyle(CenaStyle.maroon); Text("Order \(id.prefix(8).uppercased())").font(.headline); Text("Your kitchen has received it. Pickup and payment details are available in Orders.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Back to kitchens") { orderNumber = nil; restaurant = nil; clearBag(); slots = []; slot = nil; tab = 0; Task { await load() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.97)))
+        ScrollView {
+            VStack(spacing: 16) { Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green); Text("Order placed").font(.largeTitle.bold()).fontDesign(.default).foregroundStyle(CenaStyle.maroon); Text("Order \(id.prefix(8).uppercased())").font(.headline); Text("Your kitchen has received it. Pickup and payment details are available in Orders.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Back to kitchens") { orderNumber = nil; restaurant = nil; clearBag(); slots = []; slot = nil; tab = 0; Task { await load() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.97)))
     }
     private func tabButton(_ title: String, icon: String, value: Int) -> some View {
         Button { tab = value; if value == 0 { restaurant = nil } } label: {

@@ -117,6 +117,7 @@ struct CenaPrepReviewView: View {
         }
         .disabled(loading || saving || publishing)
         .scrollContentBackground(.hidden)
+        .scrollIndicators(.hidden)
         .background(CenaStyle.cream)
         .tint(CenaStyle.maroon)
         .navigationTitle("Chef step review")

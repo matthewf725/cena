@@ -7,6 +7,7 @@ import UIKit
 
 struct RestaurantHome: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var api = CenaBackend.shared
     @State private var email = ""
@@ -45,8 +46,8 @@ struct RestaurantHome: View {
                 }
             }
             .background(CenaStyle.cream)
-            .overlay(alignment: .top) { if let notice { CenaNotice(message: notice) { self.notice = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
-            .animation(.easeInOut(duration: 0.2), value: notice)
+            .overlay(alignment: .top) { if let notice { CenaNotice(message: notice) { self.notice = nil }.padding(.horizontal, 14).padding(.top, 8).transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity)) } }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: notice)
             .task { if api.signedIn { await loadRestaurants() } }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active, api.signedIn else { return }
@@ -85,8 +86,12 @@ struct RestaurantHome: View {
             else if selectedTab == "Menu" { menuView }
             else if selectedTab == "Insights" { CenaInsightsView(restaurantID: restaurantID) }
             else { manageView(restaurant) }
-            HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Insights", icon: "chart.bar.xaxis"); tab("Manage", icon: "slider.horizontal.3") }.padding(.vertical, 10).background(CenaStyle.paper).overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
-        }.task { await loadWorkspace() }.refreshable { await loadWorkspace() }
+            ViewThatFits(in: .horizontal) {
+                HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Insights", icon: "chart.bar.xaxis"); tab("Manage", icon: "slider.horizontal.3") }
+                HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Insights", icon: "chart.bar.xaxis"); tab("Manage", icon: "slider.horizontal.3") }.labelStyle(.iconOnly)
+            }
+            .padding(.vertical, 10).background(CenaStyle.paper).overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
+        }.animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selectedTab).task { await loadWorkspace() }.refreshable { await loadWorkspace() }
     }
     private var ordersView: some View {
         List {
