@@ -9,6 +9,7 @@ import { DiscoveryFeed } from '../components/discovery-feed';
 import { HeaderButton, HeaderWordmark, HomeSearch, PageHeader, PickupAreaButton, headerContentGap, homeContentMaxWidth, searchGap } from '../components/home-chrome';
 import { Text, TextInput } from '../components/type';
 import { Account } from '../components/account';
+import { AuthScreen } from '../components/auth-screen';
 import { Bag, type BagLine } from '../components/bag';
 import { LocationPicker } from '../components/location-picker';
 import { MealPrice } from '../components/meal-price';
@@ -82,7 +83,7 @@ export default function Home() {
   const bagPulse=useRef(new Animated.Value(1)).current;
   const mealQuantity=useRef(1);
   const mealInitialSelections=useRef<MealSelections>({});
-  const [tab,setTab]=useState<Tab>('Home'), [active,setActive]=useState<Kitchen|null>(null), [backendOrders,setBackendOrders]=useState<any[]>([]), [completedItems,setCompletedItems]=useState<{meal:Meal;qty:number}[]>([]), [query,setQuery]=useState(''), [cart,setCart]=useState<Record<string,BagLine>>({}), [selected,setSelected]=useState<Meal|null>(null), [flow,setFlow]=useState<'menu'|'date'|'time'|'contact'|'done'>('menu'), [date,setDate]=useState(1), [slot,setSlot]=useState('5:30 PM'), [curb,setCurb]=useState(false), [email,setEmail]=useState(''), [phone,setPhone]=useState(''), [displayName,setDisplayName]=useState(''), [vehicleMake,setVehicleMake]=useState(''), [vehicleModel,setVehicleModel]=useState(''), [vehicleColor,setVehicleColor]=useState(''), [equipment,setEquipment]=useState<string[]>([]), [analyticsConsented,setAnalyticsConsented]=useState(false), [termsAccepted,setTermsAccepted]=useState(false), [hydrated,setHydrated]=useState(false), [authResolved,setAuthResolved]=useState(!supabase), [otpSent,setOtpSent]=useState(false), [otpCode,setOtpCode]=useState(''), [now,setNow]=useState(Date.now()), [notice,setNotice]=useState<{title:string;message:string}|null>(null);
+  const [tab,setTab]=useState<Tab>('Home'), [active,setActive]=useState<Kitchen|null>(null), [backendOrders,setBackendOrders]=useState<any[]>([]), [completedItems,setCompletedItems]=useState<{meal:Meal;qty:number}[]>([]), [query,setQuery]=useState(''), [cart,setCart]=useState<Record<string,BagLine>>({}), [selected,setSelected]=useState<Meal|null>(null), [flow,setFlow]=useState<'menu'|'date'|'time'|'contact'|'done'>('menu'), [date,setDate]=useState(1), [slot,setSlot]=useState('5:30 PM'), [curb,setCurb]=useState(false), [email,setEmail]=useState(''), [phone,setPhone]=useState(''), [displayName,setDisplayName]=useState(''), [vehicleMake,setVehicleMake]=useState(''), [vehicleModel,setVehicleModel]=useState(''), [vehicleColor,setVehicleColor]=useState(''), [equipment,setEquipment]=useState<string[]>([]), [analyticsConsented,setAnalyticsConsented]=useState(false), [hydrated,setHydrated]=useState(false), [authResolved,setAuthResolved]=useState(!supabase), [otpSent,setOtpSent]=useState(false), [otpCode,setOtpCode]=useState(''), [now,setNow]=useState(Date.now()), [notice,setNotice]=useState<{title:string;message:string}|null>(null);
   const [checkingBag,setCheckingBag]=useState(false);
   const [otpResendAt,setOtpResendAt]=useState(0);
   const [otpBusy,setOtpBusy]=useState(false);
@@ -178,6 +179,7 @@ export default function Home() {
       initialAuthEvent.current=false;
       setAuthenticated(Boolean(session));
       const nextUserId=session?.user.id??null;
+      const previousAuthUserId=currentAuthUserId.current;
       if(currentAuthUserId.current!==nextUserId){
          const area=accountPickupArea(session?.user.user_metadata);
          setOrigin({latitude:area.latitude,longitude:area.longitude});
@@ -198,10 +200,8 @@ export default function Home() {
          }
          if(previousUserId){
            setDisplayName('');setPhone('');setEquipment([]);setAnalyticsConsented(false);
-           setTermsAccepted(false);
          }else if(event==='SIGNED_OUT'){
            setDisplayName('');setPhone('');setEquipment([]);setAnalyticsConsented(false);
-           setTermsAccepted(false);
          }
         currentAuthUserId.current=nextUserId;
         if(!isInitialAuthEvent)bumpCartRevision();
@@ -215,7 +215,7 @@ export default function Home() {
       setAuthUserId(nextUserId);
        if(isInitialAuthEvent){setAuthResolved(true);setTab(nextUserId?'Home':'Account');setActive(null);setSelected(null);setShowLocation(false);}
       else if(event==='SIGNED_OUT'){setTab('Account');setActive(null);setSelected(null);setShowLocation(false);}
-      else if(event==='SIGNED_IN'&&flowRef.current!=='contact')setTab('Home');
+      else if(event==='SIGNED_IN'&&nextUserId!==previousAuthUserId&&flowRef.current!=='contact')setTab('Home');
       sessionEmail.current=session?.user.email??null;
       if(event==='SIGNED_OUT'){emailEdited.current=false;setEmail('');}
       else if(session?.user.email&&(event==='SIGNED_IN'||(storageHydrated.current&&!emailEdited.current))){emailEdited.current=false;setEmail(session.user.email);}
@@ -800,33 +800,48 @@ export default function Home() {
   const onAccount=tab==='Account';
   const compactLocation=tab!=='Home'||homeCompact;
   const topSpace=identityHeight+headerContentGap;
+  const requiresSignIn = Boolean(supabase) && !authenticated;
+  const checkingAccount = Boolean(supabase) && !authResolved;
+  if (authResolved && requiresSignIn) {
+    return <AuthScreen topInset={insets.top} bottomInset={insets.bottom}/>;
+  }
+  if (checkingAccount) {
+    return <View style={[s.screen, {paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
+      <PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>
+        <View style={[s.topbar,{height:identityHeight,paddingHorizontal:headerSide}]}>
+          <View style={s.brand}><LogoText style={s.wordmark}>cena</LogoText><View style={s.logodot}/></View>
+        </View>
+      </PageHeader>
+      <View style={{flex:1,alignItems:'center',justifyContent:'center',gap:9}}>
+        <ActivityIndicator color={maroon}/><Text style={{fontSize:14,color:muted}}>Checking your account…</Text>
+      </View>
+    </View>;
+  }
   const identityBar=<View pointerEvents="box-none" style={[s.topbar,{height:identityHeight,paddingHorizontal:headerSide,gap:safeWidth<390?8:14}]}>
     <HeaderWordmark>
       <View style={s.brand}><LogoText style={s.wordmark}>cena</LogoText><View style={s.logodot}/></View>
     </HeaderWordmark>
-    {(!supabase||authenticated)&&<>
-      <PickupAreaButton ref={pickupAreaButtonRef} label={locationLabel} compact={compactLocation} reduced={reduceMotion}
-        labelWidth={Math.max(0,Math.min(240,safeWidth-2*headerSide-174))} onPress={()=>setShowLocation(true)}/>
-      <HeaderButton label={onAccount?'Close profile':'Open account'} onPress={toggleProfile} reduced={reduceMotion}>
-        {onAccount?<X size={20} color={deepMaroon} aria-hidden/>:profileInitial?<Text numberOfLines={1} style={s.avatarInitial}>{profileInitial}</Text>:<UserRound size={19} color={deepMaroon} aria-hidden/>}
-      </HeaderButton>
-    </>}
+    <PickupAreaButton ref={pickupAreaButtonRef} label={locationLabel} compact={compactLocation} reduced={reduceMotion}
+      labelWidth={Math.max(0,Math.min(240,safeWidth-2*headerSide-174))} onPress={()=>setShowLocation(true)}/>
+    <HeaderButton label={onAccount?'Close profile':'Open account'} onPress={toggleProfile} reduced={reduceMotion}>
+      {onAccount?<X size={20} color={deepMaroon} aria-hidden/>:profileInitial?<Text numberOfLines={1} style={s.avatarInitial}>{profileInitial}</Text>:<UserRound size={19} color={deepMaroon} aria-hidden/>}
+    </HeaderButton>
   </View>;
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}><View style={{flex:1,width:'100%'}}>
     <View style={{flex:1}} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
       <PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
-      {!authResolved&&supabase?<View style={{flex:1,alignItems:'center',justifyContent:'center',gap:9}}><ActivityIndicator color={maroon}/><Text style={{fontSize:14,color:muted}}>Checking your account…</Text></View>:tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
+      {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll}
       open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<Account
           userId={authUserId} topSpace={topSpace} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
-          displayName={displayName} setDisplayName={setDisplayName} termsAccepted={termsAccepted} setTermsAccepted={setTermsAccepted} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
+          displayName={displayName} setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
       </Enter>
-      {tab==='Home'&&!active&&authResolved&&(!supabase||authenticated)&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight}/>}
+      {tab==='Home'&&!active&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight}/>}
     </View>
 
     {active&&<View style={[StyleSheet.absoluteFillObject,{zIndex:3,backgroundColor:ivory}]}><Enter key={active.id} reduced={reduceMotion} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}><View style={s.modalTop}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={s.modalBrand}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={maroon}/></Pressable></View>

@@ -8,14 +8,15 @@ function client() {
   return supabase;
 }
 
-export async function sendCustomerSignInCode(email: string) {
+export async function createCustomerAccount(email: string, password: string) {
   const normalized = email.trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) throw new Error('Enter a valid email address.');
-  const { error } = await client().auth.signInWithOtp({ email: normalized });
+  const { data, error } = await client().auth.signUp({ email: normalized, password });
   if (error) throw error;
+  return { needsVerification: !data.session };
 }
 
-export async function verifyCustomerSignInCode(email: string, token: string) {
+export async function verifyCustomerSignup(email: string, token: string) {
   const normalized = email.trim().toLowerCase();
   const code = token.trim().replace(/\s/g, '');
   if (!/^\d{6}$/.test(code)) throw new Error('Enter the 6-digit code from your email.');

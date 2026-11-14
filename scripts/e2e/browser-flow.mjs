@@ -219,25 +219,34 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await gotIt.waitFor({ state: 'hidden', timeout: 10000 });
   }
 
-  async function sendAndVerifyAccountOtp(page, email, codeInput, verifyButton) {
+  async function sendAndVerifyAccountOtp(page, email) {
+    await page.getByRole('button', { name: 'Sign up', exact: true }).click();
+    await page.getByRole('heading', { name: 'Sign up', exact: true }).waitFor();
+    await page.getByPlaceholder('Email', { exact: true }).fill(email);
+    const password = `Qa-${randomBytes(18).toString('base64url')}-9!`;
+    await page.getByPlaceholder('Password', { exact: true }).fill(password);
     const terms = page.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
-    if ((await terms.getAttribute('aria-checked')) !== 'true') await terms.click();
-    await page.getByPlaceholder('Add an email address').fill(email);
-    const sendResponsePromise = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/otp') && response.request().method() === 'POST', { timeout: 30000 });
-    await page.getByRole('button', { name: 'Email me a sign-in code', exact: true }).click();
-    const sendResponse = await sendResponsePromise;
-    mark(`account OTP send returned ${sendResponse.status()}`);
-    assert.ok(sendResponse.ok(), 'Local Supabase should accept the OTP request');
-    const code = await readOtp(email);
-    await page.getByPlaceholder(codeInput).fill(code);
-    const verifyResponsePromise = page.waitForResponse(response => {
-      const pathname = new URL(response.url()).pathname;
-      return (pathname.endsWith('/auth/v1/verify') || pathname.endsWith('/auth/v1/token')) && response.request().method() === 'POST';
-    }, { timeout: 30000 });
-    await page.getByRole('button', { name: verifyButton, exact: true }).click();
-    const verifyResponse = await verifyResponsePromise;
-    mark(`account OTP verify returned ${verifyResponse.status()}`);
-    assert.ok(verifyResponse.ok(), 'Local Supabase OTP verification should succeed');
+    if (await terms.count() && (await terms.getAttribute('aria-checked')) !== 'true') await terms.click();
+    const signupResponsePromise = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/signup') && response.request().method() === 'POST', { timeout: 30000 });
+    await page.getByRole('button', { name: 'Sign up', exact: true }).click();
+    const signupResponse = await signupResponsePromise;
+    mark(`account sign-up returned ${signupResponse.status()}`);
+    assert.ok(signupResponse.ok(), 'Local Supabase should accept account signup');
+    const signupResult = await signupResponse.json();
+    let authenticatedResult = signupResult;
+    if (!signupResult.session && !signupResult.access_token) {
+      const code = await readOtp(email);
+      await page.getByRole('textbox', { name: 'Verification code', exact: true }).fill(code);
+      const verifyResponsePromise = page.waitForResponse(response => {
+        const pathname = new URL(response.url()).pathname;
+        return pathname.endsWith('/auth/v1/verify') && response.request().method() === 'POST';
+      }, { timeout: 30000 });
+      await page.getByRole('button', { name: 'Verify code', exact: true }).click();
+      const verifyResponse = await verifyResponsePromise;
+      mark(`signup confirmation code verify returned ${verifyResponse.status()}`);
+      assert.ok(verifyResponse.ok(), 'Local Supabase signup confirmation code should verify');
+      authenticatedResult = await verifyResponse.json();
+    }
     await page.waitForFunction(() => {
       for (let index = 0; index < localStorage.length; index += 1) {
         try { if (JSON.parse(localStorage.getItem(localStorage.key(index)) || 'null')?.access_token) return true; }
@@ -245,8 +254,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       }
       return false;
     }, undefined, { timeout: 15000 });
-    mark('Supabase browser session persisted after OTP');
-    return await verifyResponse.json();
+    mark('Supabase browser session persisted after signup');
+    return authenticatedResult;
   }
 
   async function openAccountIfClosed(page) {
@@ -440,11 +449,11 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await createRoutes(customerPage);
     await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 180000 });
     mark('customer document DOM content loaded');
-    await customerPage.getByRole('heading', { name: 'Profile', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
+    await customerPage.getByRole('heading', { name: 'Cena', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
     assert.equal(await customerPage.getByRole('textbox', { name: 'Search restaurants' }).count(), 0,
       'Signed-out customer should be gated from restaurant discovery');
     const customerEmail = `cena-e2e-order-${runId}-${browserName}@cena.test`;
-    const accountSession = await sendAndVerifyAccountOtp(customerPage, customerEmail, '6-digit sign-in code', 'Verify and load profile');
+    const accountSession = await sendAndVerifyAccountOtp(customerPage, customerEmail);
     customerUserId = accountSession.user?.id ?? accountSession.session?.user?.id;
     assert.ok(customerUserId, 'Account OTP fixture should identify the signed-in customer');
     await customerPage.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ state: 'visible', timeout: 30000 });
@@ -927,7 +936,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('button', { name: 'Sign out', exact: true }).click();
     mark('checkout customer signed out before separate profile persistence scenario');
     const customerProfileEmail = `cena-e2e-profile-${runId}-${browserName}@cena.test`;
-    await sendAndVerifyAccountOtp(customerPage, customerProfileEmail, '6-digit code', 'Verify and load profile');
+    await sendAndVerifyAccountOtp(customerPage, customerProfileEmail);
     mark('profile OTP verified; checking profile editor visibility');
     await openAccountIfClosed(customerPage);
     mark('profile editor visible after OTP');
