@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { Animated, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Check, Minus, Plus, X } from 'lucide-react-native';
-import type { Meal, MealOptionGroup } from '../lib/data';
+import { normalizeMealSelections, type Meal, type MealOptionGroup, type MealSelections } from '../lib/data';
 import { Text } from './type';
 import { MealPrice } from './meal-price';
 
@@ -15,14 +15,23 @@ type Props = {
   topInset?: number;
   equipment?: string[];
   initialQuantity?: number;
+  initialSelections?: MealSelections;
 };
 
-export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomInset, topInset=0, equipment, initialQuantity=1 }: Props) {
+function validInitialSelections(groups: MealOptionGroup[], input: MealSelections = {}): MealSelections {
+  const normalized = normalizeMealSelections(input);
+  return Object.fromEntries(groups.flatMap(group => {
+    const selected = (normalized[group.id] ?? []).filter(id => group.choices.some(choice => choice.id === id)).slice(0, group.max);
+    return selected.length ? [[group.id, selected]] : [];
+  }));
+}
+
+export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomInset, topInset=0, equipment, initialQuantity=1, initialSelections={} }: Props) {
   const { width, height } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
   const groupOffsets = useRef<Record<string, number>>({});
-  const [quantity, setQuantity] = useState(initialQuantity);
-  const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const [quantity, setQuantity] = useState(Math.min(50, Math.max(1, initialQuantity)));
+  const [selections, setSelections] = useState<Record<string, string[]>>(() => validInitialSelections(groups, initialSelections));
   const [invalidGroupId, setInvalidGroupId] = useState<string|null>(null);
   const [limitMessage, setLimitMessage] = useState('');
   const [sheetHeight, setSheetHeight] = useState(0);

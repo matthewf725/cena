@@ -149,7 +149,7 @@ export async function fetchOrderHistory(userId: string) {
 export async function fetchRestaurantRecentOrders(userId: string, restaurantId: string) {
   if (!supabase) return null;
   const { data, error } = await supabase.from('orders')
-    .select('id,pickup_starts_at,order_items(item_id,name_snapshot,quantity)')
+    .select('id,pickup_starts_at,order_items(item_id,name_snapshot,quantity,options_snapshot)')
     .eq('user_id', userId).eq('restaurant_id', restaurantId)
     .in('payment_status', ['paid', 'pay_at_pickup']).in('status', ['placed', 'accepted', 'preparing', 'ready', 'completed'])
     .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(3);

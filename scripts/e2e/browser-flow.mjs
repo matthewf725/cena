@@ -220,6 +220,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   }
 
   async function sendAndVerifyAccountOtp(page, email, codeInput, verifyButton) {
+    const terms = page.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
+    if ((await terms.getAttribute('aria-checked')) !== 'true') await terms.click();
     await page.getByPlaceholder('Add an email address').fill(email);
     const sendResponsePromise = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/otp') && response.request().method() === 'POST', { timeout: 30000 });
     await page.getByRole('button', { name: 'Email me a sign-in code', exact: true }).click();
@@ -244,6 +246,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       return false;
     }, undefined, { timeout: 15000 });
     mark('Supabase browser session persisted after OTP');
+    return await verifyResponse.json();
   }
 
   async function openAccountIfClosed(page) {
@@ -437,6 +440,15 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await createRoutes(customerPage);
     await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 180000 });
     mark('customer document DOM content loaded');
+    await customerPage.getByRole('heading', { name: 'Profile', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
+    assert.equal(await customerPage.getByRole('textbox', { name: 'Search restaurants' }).count(), 0,
+      'Signed-out customer should be gated from restaurant discovery');
+    const customerEmail = `cena-e2e-order-${runId}-${browserName}@cena.test`;
+    const accountSession = await sendAndVerifyAccountOtp(customerPage, customerEmail, '6-digit sign-in code', 'Verify and load profile');
+    customerUserId = accountSession.user?.id ?? accountSession.session?.user?.id;
+    assert.ok(customerUserId, 'Account OTP fixture should identify the signed-in customer');
+    await customerPage.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ state: 'visible', timeout: 30000 });
+    mark('signed-out browse gate passed; customer Account OTP fixture is signed in');
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
     await customerPage.getByLabel('Search restaurants').fill(fixture.restaurant.name);
@@ -478,57 +490,14 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).click();
     await customerPage.getByRole('button', { name: `Increase ${mealName} quantity`, exact: true }).waitFor();
     await customerPage.getByText('$33.90', { exact: true }).first().waitFor();
-    mark('guest browse, bag badge, quantity, and reload persistence passed');
+    mark('authenticated browse, bag badge, quantity, and reload persistence passed');
 
     await startPickupFlow(customerPage);
-    const checkoutEmail = `cena-e2e-order-${runId}-${browserName}@cena.test`;
-    mark('pickup slot and checkout contact step opened');
-    await customerPage.getByPlaceholder('Email address', { exact: true }).fill(checkoutEmail);
-    const terms = customerPage.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
-    if (!(await terms.getAttribute('aria-checked')) || (await terms.getAttribute('aria-checked')) === 'false') await terms.click();
-    const checkoutOtpSendPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/otp') && response.request().method() === 'POST', { timeout: 30000 });
-    await customerPage.getByRole('button', { name: 'Email me a sign-in code', exact: true }).click();
-    const checkoutOtpSend = await checkoutOtpSendPromise;
-    mark(`checkout OTP send returned ${checkoutOtpSend.status()}`);
-    assert.ok(checkoutOtpSend.ok(), 'Local Supabase should accept the checkout OTP request');
-    await customerPage.getByText('Check your email for a six-digit sign-in code.', { exact: true }).waitFor({ timeout: 10000 });
-    const checkoutResend = customerPage.getByRole('button', { name: 'Send a new code', exact: true });
-    assert.equal(await checkoutResend.isDisabled(), true, 'Checkout resend must be rate limited immediately after sending');
-    const checkoutOtp = await readOtp(checkoutEmail);
-    mark('checkout OTP received from local Mailpit');
-    const wrongCheckoutOtp = checkoutOtp === '000000' ? '111111' : '000000';
-    await customerPage.getByPlaceholder('6-digit email sign-in code').fill(wrongCheckoutOtp);
-    const wrongCheckoutOtpVerifyPromise = customerPage.waitForResponse(response => {
-      const pathname = new URL(response.url()).pathname;
-      return (pathname.endsWith('/auth/v1/verify') || pathname.includes('/auth/v1/token')) && response.request().method() === 'POST';
-    }, { timeout: 30000 });
-    await customerPage.getByRole('button', { name: 'Verify code and continue', exact: true }).click();
-    const wrongCheckoutOtpVerify = await wrongCheckoutOtpVerifyPromise;
-    assert.ok(!wrongCheckoutOtpVerify.ok(), 'An incorrect checkout OTP must be rejected');
-    await customerPage.getByText('That code didn’t work. Check the digits or request a new code.', { exact: true }).waitFor({ timeout: 10000 });
-    assert.equal(await checkoutResend.isDisabled(), true, 'Resend must stay disabled during its cooldown after an incorrect code');
-    mark('wrong checkout OTP rejected with inline feedback while resend stayed disabled');
-
-    await customerPage.getByPlaceholder('6-digit email sign-in code').fill(checkoutOtp);
-    const checkoutOtpVerifyPromise = customerPage.waitForResponse(response => {
-      const pathname = new URL(response.url()).pathname;
-      return (pathname.endsWith('/auth/v1/verify') || pathname.includes('/auth/v1/token')) && response.request().method() === 'POST';
-    }, { timeout: 30000 }).catch(error => error);
+    const checkoutEmail = customerEmail;
+    assert.equal(await customerPage.getByRole('textbox', { name: 'Email address' }).inputValue(), checkoutEmail,
+      'The authenticated account email should carry into checkout');
+    mark('authenticated customer entered checkout without another OTP prompt');
     const noCodeQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 8000 }).catch(() => null);
-    mark('submitting checkout OTP code');
-    await customerPage.getByRole('button', { name: 'Verify code and continue', exact: true }).click();
-    mark(`checkout OTP submit click returned; page ${new URL(customerPage.url()).pathname}`);
-    const checkoutOtpVerify = await checkoutOtpVerifyPromise;
-    if (checkoutOtpVerify instanceof Error) {
-      const detailsVisible = await customerPage.getByText(/3\s+DETAILS/i).count().catch(() => 0);
-      await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-checkout-otp-submit.png`, fullPage: true }).catch(() => {});
-      throw new Error(`No checkout OTP verify response; URL ${customerPage.url()}; 3 DETAILS visible ${detailsVisible > 0}; API trace: ${apiTrace.slice(-20).join(' | ')}`);
-    }
-    mark(`checkout OTP verify returned ${checkoutOtpVerify.status()}`);
-    assert.ok(checkoutOtpVerify.ok(), 'Local Supabase checkout OTP verification should succeed');
-    const verifiedCheckoutSession = await checkoutOtpVerify.json();
-    customerUserId = verifiedCheckoutSession.user?.id ?? verifiedCheckoutSession.session?.user?.id;
-    assert.ok(customerUserId, 'Checkout OTP verification should identify the signed-in customer');
     let noCodeQuoteResponse = await noCodeQuotePromise;
     if (!noCodeQuoteResponse) {
       const reviewTotal = customerPage.getByRole('button', { name: 'Review total', exact: true });
@@ -543,7 +512,6 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.equal(noCodeQuote.subtotal_cents, 1695 * 2);
     assert.equal(noCodeQuote.discount_cents, 0);
     assert.equal(noCodeQuote.amount_cents, 1695 * 2);
-    mark('checkout customer email OTP passed');
     mark('no-code Go quote returned the undiscounted exact subtotal');
 
     await customerPage.getByLabel('Restaurant discount code').fill('INVALIDQA');
@@ -730,9 +698,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 30000 });
     await startPickupFlow(customerPage);
-    await customerPage.getByPlaceholder('Email address', { exact: true }).fill(checkoutEmail).catch(() => {});
-    const termsAfterRetry = customerPage.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
-    if ((await termsAfterRetry.getAttribute('aria-checked')) === 'false') await termsAfterRetry.click();
+    assert.equal(await customerPage.getByRole('textbox', { name: 'Email address' }).inputValue(), checkoutEmail);
     await customerPage.getByLabel('Restaurant discount code').fill(promoCode);
     const retryQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 30000 });
     await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).click();
@@ -888,8 +854,6 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.ok(secondNoCodeQuote.ok(), `Second-order no-code quote failed (${secondNoCodeQuote.status()})`);
     assert.equal((await secondNoCodeQuote.json()).amount_cents, expectedSubtotalCents);
     await customerPage.getByText('$33.90', { exact: true }).last().waitFor();
-    const secondTerms = customerPage.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
-    if ((await secondTerms.getAttribute('aria-checked')) === 'false') await secondTerms.click();
     const secondCheckout = await createCheckout({ amountCents: expectedSubtotalCents, expectedPromoCode: null });
     secondCompletedOrderId = secondCheckout.body.order_id;
     assert.notEqual(secondCompletedOrderId, paidOrderId);

@@ -40,7 +40,7 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced }: {
                 resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16) }]} />
               <View style={styles.caption}>
                 <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
-                <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
+                <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
               </View>
             </Pressable>
             {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { signInCustomerFixture } from './customer-auth.mjs';
 
 const origin = process.env.CENA_CUSTOMER_URL ?? 'http://127.0.0.1:8081';
 const base = new URL(origin);
@@ -107,6 +108,7 @@ async function activateWithKeyboard(locator, key = 'Enter') {
 try {
   const response = await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
   assert.ok(response?.ok(), `Preview HTTP ${response?.status() ?? 'no response'}`);
+  await signInCustomerFixture(page);
   await page.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ timeout: 30000 });
   await page.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches), true);

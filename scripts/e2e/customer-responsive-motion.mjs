@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { signInCustomerFixture } from './customer-auth.mjs';
 
 const origin = process.env.CENA_CUSTOMER_URL ?? 'http://127.0.0.1:8081';
 const base = new URL(origin);
@@ -82,6 +83,7 @@ try {
 
     const response = await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
     assert.ok(response?.ok(), `${viewport.name}: preview HTTP ${response?.status() ?? 'no response'}`);
+    await signInCustomerFixture(page);
     await page.getByRole('textbox', { name: 'Search restaurants' }).waitFor({ timeout: 30000 });
     await page.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
     await verifyNoOverflow(page, viewport, 'discovery');
@@ -128,9 +130,9 @@ try {
     const emailBox = await page.getByRole('textbox', { name: 'Email address' }).boundingBox();
     assert.ok(emailBox && emailBox.x >= 0 && emailBox.x + emailBox.width <= viewport.width + 1,
       `${viewport.name}: email input clipped: ${JSON.stringify(emailBox)}`);
-    const codeButton = page.getByRole('button', { name: 'Email me a sign-in code', exact: true });
-    await codeButton.scrollIntoViewIfNeeded();
-    const codeBounds = await codeButton.boundingBox();
+    const checkoutAction = page.getByRole('button', { name: /^(?:Review total|Continue to secure payment)/ }).first();
+    await checkoutAction.scrollIntoViewIfNeeded();
+    const codeBounds = await checkoutAction.boundingBox();
     assert.ok(codeBounds && codeBounds.x >= 0 && codeBounds.x + codeBounds.width <= viewport.width + 1
       && codeBounds.y >= 0 && codeBounds.y + codeBounds.height <= viewport.height + 1,
     `${viewport.name}: checkout action clipped: ${JSON.stringify(codeBounds)}`);
@@ -161,6 +163,7 @@ try {
     return route.continue();
   });
   await motionPage.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await signInCustomerFixture(motionPage);
   await motionPage.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
   await motionPage.getByRole('button', { name: /^View .+ menu$/ }).first().click();
   await motionPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
@@ -197,6 +200,7 @@ try {
     return route.continue();
   });
   await reducedPage.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await signInCustomerFixture(reducedPage);
   await reducedPage.getByText('Recents', { exact: true }).waitFor({ timeout: 30000 });
   await reducedPage.getByRole('button', { name: /^View .+ menu$/ }).first().click();
   await reducedPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
