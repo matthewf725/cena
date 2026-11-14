@@ -9,7 +9,59 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
  override fun onResume(){super.onResume();if(awaitingStripeReturn&&rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}}
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(isStripeReturn(intent.data)){awaitingStripeReturn=true;if(rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}else if(authSession.restore()!=null)loadRestaurants()}}
  private fun isStripeReturn(uri:Uri?):Boolean=uri?.scheme=="cena-restaurant"&&uri.host=="connect"&&uri.path=="/return"
- private fun base(){val sc=ScrollView(this);val outer=LinearLayout(this).apply{orientation=1;gravity=Gravity.CENTER_HORIZONTAL;setBackgroundColor(bg)};body=LinearLayout(this).apply{orientation=1;setPadding(22,22,22,24);setBackgroundColor(bg);layoutParams=LinearLayout.LayoutParams(-1,-2).apply{width=resources.displayMetrics.widthPixels.coerceAtMost((680*resources.displayMetrics.density).toInt())}};outer.addView(body);sc.addView(outer);setContentView(sc)};private fun title(s:String,z:Float=25f){body.addView(TextView(this).apply{text=s;textSize=z;setTextColor(wine);setPadding(12,9,12,9);typeface=android.graphics.Typeface.DEFAULT_BOLD;background=GradientDrawable().apply{setColor(paper);cornerRadius=13*resources.displayMetrics.density;setStroke((1*resources.displayMetrics.density).toInt(),coral)}})};private fun text(s:String){body.addView(TextView(this).apply{text=s;textSize=15f;setTextColor(clay);setPadding(0,5,0,10)})};private fun button(s:String,f:()->Unit):Button{val result=Button(this).apply{text=s;setTextColor(-1);background=GradientDrawable().apply{setColor(wine);cornerRadius=(16f+((390f-resources.displayMetrics.widthPixels/resources.displayMetrics.density)/110f*10f)).coerceIn(16f,26f)*resources.displayMetrics.density};setOnClickListener{f()}};body.addView(result);return result};private fun field(s:String):EditText{val e=EditText(this).apply{hint=s};body.addView(e);return e}
+ private fun base() {
+  val sc = ScrollView(this)
+  val outer = LinearLayout(this).apply { orientation = 1; gravity = Gravity.CENTER_HORIZONTAL; setBackgroundColor(bg) }
+  body = LinearLayout(this).apply {
+   orientation = 1
+   setPadding(22, 22, 22, 24)
+   setBackgroundColor(bg)
+   layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+    width = resources.displayMetrics.widthPixels.coerceAtMost((680 * resources.displayMetrics.density).toInt())
+   }
+  }
+  outer.addView(body)
+  sc.addView(outer)
+  setContentView(sc)
+ }
+ private fun title(s:String,z:Float=25f) = title(s,z,body)
+ private fun title(s:String,z:Float,target:LinearLayout) {
+  target.addView(TextView(this).apply {
+   text = s
+   textSize = z
+   setTextColor(wine)
+   setPadding(12, 9, 12, 9)
+   typeface = android.graphics.Typeface.DEFAULT_BOLD
+   background = GradientDrawable().apply {
+    setColor(paper)
+    cornerRadius = 13 * resources.displayMetrics.density
+    setStroke((1 * resources.displayMetrics.density).toInt(), coral)
+   }
+  })
+ }
+ private fun text(s:String) = text(s,body)
+ private fun text(s:String,target:LinearLayout) {
+  target.addView(TextView(this).apply { text = s; textSize = 15f; setTextColor(clay); setPadding(0, 5, 0, 10) })
+ }
+ private fun button(s:String,f:()->Unit):Button = button(s,body,f)
+ private fun button(s:String,target:LinearLayout,f:()->Unit):Button {
+  val result = Button(this).apply {
+   text = s
+   setTextColor(-1)
+   background = GradientDrawable().apply {
+    setColor(wine)
+    cornerRadius = (16f + ((390f - resources.displayMetrics.widthPixels / resources.displayMetrics.density) / 110f * 10f)).coerceIn(16f, 26f) * resources.displayMetrics.density
+   }
+   setOnClickListener { f() }
+  }
+  target.addView(result)
+  return result
+ }
+ private fun field(s:String):EditText {
+  val field = EditText(this).apply { hint = s }
+  body.addView(field)
+  return field
+ }
  private data class HttpResponse(val status:Int,val body:String)
  private fun go(task:()->String,done:(String)->Unit){go(task,done,null)}
  private fun go(task:()->String,done:(String)->Unit,onError:((Exception)->Unit)?){val expectedGeneration=authSession.generationSnapshot();val expectedRestaurantId=rid;val expectedRestaurantRevision=selectedRestaurantRevision;ex.execute{requestGeneration.set(expectedGeneration);try{if(selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@execute;authSession.assertCurrentGeneration(expectedGeneration);val result=task();authSession.assertCurrentGeneration(expectedGeneration);runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@runOnUiThread;if(authSession.generationSnapshot()==expectedGeneration)done(result)}}catch(error:Exception){if(error is CenaSessionExpiredException)showExpiredSignInIfNeeded()else runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId||authSession.generationSnapshot()!=expectedGeneration)return@runOnUiThread;if(onError!=null)onError(error)else Toast.makeText(this,error.message?:"Request failed",Toast.LENGTH_LONG).show()}}finally{requestGeneration.remove()}}}
@@ -486,12 +538,21 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
    val data = JSONObject(result)
    val active = data.getJSONArray("active")
    val history = data.getJSONArray("history")
+   val seenActiveOrderIds = hashSetOf<String>()
+   val activeContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+   body.addView(activeContainer)
    if (active.length() == 0 && history.length() == 0) text("No upcoming pickup orders. New reservations appear here.")
-   for (index in 0 until active.length()) renderOrderCard(active.getJSONObject(index))
+   for (index in 0 until active.length()) {
+    val order = active.getJSONObject(index)
+    val id = order.optString("id")
+    if (id.isBlank() || seenActiveOrderIds.add(id)) renderOrderCard(order, activeContainer)
+   }
    if (history.length() > 0) {
     title("Recent pickup history", 17f)
     text("Last $RECENT_PICKUP_DAYS days by pickup time. Refunds without a pickup time use order creation date. Showing up to $RECENT_HISTORY_LIMIT orders.")
-    for (index in 0 until history.length()) renderOrderCard(history.getJSONObject(index))
+    val historyContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    body.addView(historyContainer)
+    for (index in 0 until history.length()) renderOrderCard(history.getJSONObject(index), historyContainer)
    }
    if (data.optBoolean("history_unavailable")) {
     text("Recent pickup history is unavailable right now. Active pickup orders are still shown.")
@@ -500,7 +561,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
    if (active.length() == ACTIVE_ORDER_PAGE_SIZE) {
     var offset = active.length()
     lateinit var moreButton: Button
-    moreButton = button("Load more active orders") {
+    moreButton = button("Load more active orders", activeContainer) {
      if (!moreButton.isEnabled) return@button
      moreButton.isEnabled = false
      moreButton.text = "Loading active orders…"
@@ -511,7 +572,11 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
        if (page.length() == 0) {
         body.removeView(moreButton)
        } else {
-        for (index in 0 until page.length()) renderOrderCard(page.getJSONObject(index))
+        for (index in 0 until page.length()) {
+         val order = page.getJSONObject(index)
+         val id = order.optString("id")
+         if (id.isBlank() || seenActiveOrderIds.add(id)) renderOrderCard(order, activeContainer)
+        }
         offset += page.length()
         if (page.length() < ACTIVE_ORDER_PAGE_SIZE) body.removeView(moreButton)
         else {
@@ -531,14 +596,14 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   }
  }
 
- private fun renderOrderCard(order: JSONObject) {
+ private fun renderOrderCard(order: JSONObject,target:LinearLayout=body) {
     val orderId = order.optString("id")
     val orderStatus = order.optString("status")
     val paymentStatus = order.optString("payment_status")
     val refunded = paymentStatus == "refunded"
     val titleText = if (refunded) "Order · REFUNDED" else "Order · ${orderStatus.replace('_', ' ').uppercase(java.util.Locale.ROOT)}"
-    title(titleText, 17f)
-    if (refunded) text("Refund confirmed by Stripe")
+    title(titleText, 17f, target)
+    if (refunded) text("Refund confirmed by Stripe", target)
 
     val start = order.optString("pickup_starts_at")
     val end = order.optString("pickup_ends_at")
@@ -552,12 +617,12 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
     } else "Counter pickup"
     val pickupText = if (start.isNotBlank() && end.isNotBlank()) pickupRange(start, end, timezone) else "Pickup time unavailable"
     val amountText = String.format(java.util.Locale.ROOT, "$%.2f", amountCents / 100.0)
-    text("$pickupText\n${order.optString("pickup_mode")} · $amountText\n$vehicleLabel")
+    text("$pickupText\n${order.optString("pickup_mode")} · $amountText\n$vehicleLabel", target)
 
     val lines = order.optJSONArray("items") ?: JSONArray()
     for (lineIndex in 0 until lines.length()) {
      val line = lines.getJSONObject(lineIndex)
-     text("${line.optInt("quantity")} × ${line.optString("name_snapshot")}")
+     text("${line.optInt("quantity")} × ${line.optString("name_snapshot")}", target)
     }
 
     val nextStatus = when (orderStatus) {
@@ -569,7 +634,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
     }
     if (nextStatus.isNotEmpty()) {
      val actionLabel = if (nextStatus == "completed") "Mark picked up" else "Mark $nextStatus"
-     button(actionLabel) {
+     button(actionLabel, target) {
       go({
        req("/rest/v1/rpc/update_order_status", "POST", JSONObject()
         .put("p_order_id", orderId)
@@ -580,7 +645,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
     }
 
     if (orderStatus in listOf("placed", "accepted", "preparing", "ready")) {
-     button("Cancel and refund") {
+     button("Cancel and refund", target) {
       AlertDialog.Builder(this)
        .setTitle("Cancel and refund order?")
        .setMessage("Cena will request a refund from Stripe. The order will only be treated as refunded when the payment service confirms it.")
