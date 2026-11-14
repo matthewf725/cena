@@ -2,7 +2,9 @@ package com.cena.restaurant
 import android.app.*;import android.content.Intent;import android.net.Uri;import android.os.*;import android.graphics.Color;import android.graphics.drawable.GradientDrawable;import android.view.*;import android.widget.*;import org.json.*;import java.net.*;import java.util.concurrent.Executors
 import com.cena.auth.CenaAndroidAuthSession
 import com.cena.auth.CenaSessionExpiredException
-class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val paper=Color.rgb(255,253,250);private val peach=Color.rgb(255,240,232);private val rose=Color.rgb(233,207,196);private val coral=Color.rgb(197,119,96);private val clay=Color.rgb(133,87,74);private val ink=Color.rgb(39,29,25);private val wine=Color.rgb(93,16,10);private val ex=Executors.newSingleThreadExecutor();private val requestGeneration=ThreadLocal<Long>();private var selectedRestaurantRevision=0;private lateinit var body:LinearLayout;private val authSession by lazy{CenaAndroidAuthSession(applicationContext,BuildConfig.SUPABASE_URL,BuildConfig.SUPABASE_KEY,"merchant",legacyRefreshTokenKey="refresh",legacyAccessTokenKey="token")};private var signInNotice:String?=null;private var showingLogin=false;private var rid="";private var rname="";private var rtimezone="America/Los_Angeles";private var merchantRole="staff";private var curb=false;private var awaitingStripeReturn=false;private var insightsDays=30;private var insightsOrders:JSONArray?=null;private var insightsError:String?=null;private var insightsLoading=false;private var insightsTruncated=false;private var insightsRequestVersion=0;private var showingInsights=false;private var restoreInsightsId:String?=null;private var restoreInsightsDays=30
+import com.cena.auth.CenaSessionRefreshException
+import com.cena.auth.CenaSessionStorageException
+class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val paper=Color.rgb(255,253,250);private val peach=Color.rgb(255,240,232);private val rose=Color.rgb(233,207,196);private val coral=Color.rgb(197,119,96);private val clay=Color.rgb(133,87,74);private val ink=Color.rgb(39,29,25);private val wine=Color.rgb(93,16,10);private val ex=Executors.newSingleThreadExecutor();private val requestGeneration=ThreadLocal<Long>();private val requestRestaurantId=ThreadLocal<String>();private val requestRestaurantRevision=ThreadLocal<Int>();@Volatile private var selectedRestaurantRevision=0;private lateinit var body:LinearLayout;private val authSession by lazy{CenaAndroidAuthSession(applicationContext,BuildConfig.SUPABASE_URL,BuildConfig.SUPABASE_KEY,"merchant",legacyRefreshTokenKey="refresh",legacyAccessTokenKey="token")};private var signInNotice:String?=null;private var showingLogin=false;@Volatile private var rid="";private var rname="";private var rtimezone="America/Los_Angeles";private var merchantRole="staff";private var curb=false;private var awaitingStripeReturn=false;private var insightsDays=30;private var insightsOrders:JSONArray?=null;private var insightsError:String?=null;private var insightsLoading=false;private var insightsTruncated=false;private var insightsRequestVersion=0;private var showingInsights=false;private var restoreInsightsId:String?=null;private var restoreInsightsDays=30
  override fun onCreate(b:Bundle?){super.onCreate(b);window.statusBarColor=bg;window.navigationBarColor=bg;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;awaitingStripeReturn=isStripeReturn(intent.data);if(b?.getString(STATE_SCREEN)==STATE_INSIGHTS){restoreInsightsId=b.getString(STATE_RESTAURANT_ID);restoreInsightsDays=b.getInt(STATE_INSIGHTS_DAYS,30).takeIf{it==30||it==90}?:30};if(authSession.restore()!=null)loadRestaurants()else login()}
  override fun onSaveInstanceState(outState:Bundle){super.onSaveInstanceState(outState);val selectedId=if(showingInsights)rid else restoreInsightsId;if(!selectedId.isNullOrBlank()){outState.putString(STATE_SCREEN,STATE_INSIGHTS);outState.putString(STATE_RESTAURANT_ID,selectedId);outState.putInt(STATE_INSIGHTS_DAYS,if(showingInsights)insightsDays else restoreInsightsDays)}}
  companion object { private const val STATE_SCREEN="restaurant.screen";private const val STATE_RESTAURANT_ID="restaurant.insights.restaurant_id";private const val STATE_INSIGHTS_DAYS="restaurant.insights.days";private const val STATE_INSIGHTS="insights";private const val ACTIVE_ORDER_PAGE_SIZE=100;private const val RECENT_HISTORY_LIMIT=100;private const val RECENT_PICKUP_DAYS=30 }
@@ -63,12 +65,14 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   return field
  }
  private data class HttpResponse(val status:Int,val body:String)
+ private class StaleMerchantScopeException:Exception()
  private fun go(task:()->String,done:(String)->Unit){go(task,done,null)}
- private fun go(task:()->String,done:(String)->Unit,onError:((Exception)->Unit)?){val expectedGeneration=authSession.generationSnapshot();val expectedRestaurantId=rid;val expectedRestaurantRevision=selectedRestaurantRevision;ex.execute{requestGeneration.set(expectedGeneration);try{if(selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@execute;authSession.assertCurrentGeneration(expectedGeneration);val result=task();authSession.assertCurrentGeneration(expectedGeneration);runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@runOnUiThread;if(authSession.generationSnapshot()==expectedGeneration)done(result)}}catch(error:Exception){if(error is CenaSessionExpiredException)showExpiredSignInIfNeeded()else runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId||authSession.generationSnapshot()!=expectedGeneration)return@runOnUiThread;if(onError!=null)onError(error)else Toast.makeText(this,error.message?:"Request failed",Toast.LENGTH_LONG).show()}}finally{requestGeneration.remove()}}}
+ private fun go(task:()->String,done:(String)->Unit,onError:((Exception)->Unit)?){val expectedGeneration=authSession.generationSnapshot();val expectedRestaurantId=rid;val expectedRestaurantRevision=selectedRestaurantRevision;ex.execute{requestGeneration.set(expectedGeneration);requestRestaurantId.set(expectedRestaurantId);requestRestaurantRevision.set(expectedRestaurantRevision);try{if(selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@execute;authSession.assertCurrentGeneration(expectedGeneration);val result=task();authSession.assertCurrentGeneration(expectedGeneration);runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@runOnUiThread;if(authSession.generationSnapshot()==expectedGeneration)done(result)}}catch(error:Exception){if(error is CenaSessionExpiredException)showExpiredSignInIfNeeded()else if(error is StaleMerchantScopeException)Unit else runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId||authSession.generationSnapshot()!=expectedGeneration)return@runOnUiThread;if(onError!=null)onError(error)else Toast.makeText(this,error.message?:"Request failed",Toast.LENGTH_LONG).show()}}finally{requestGeneration.remove();requestRestaurantId.remove();requestRestaurantRevision.remove()}}}
  private fun rawRequest(baseUrl:String,path:String,method:String,data:JSONObject?,accessToken:String?,includeApiKey:Boolean):HttpResponse{val connection=URL(baseUrl.trimEnd('/')+path).openConnection() as HttpURLConnection;connection.requestMethod=method;connection.connectTimeout=9000;connection.readTimeout=12000;if(includeApiKey)connection.setRequestProperty("apikey",BuildConfig.SUPABASE_KEY);if(accessToken!=null)connection.setRequestProperty("Authorization","Bearer $accessToken");connection.setRequestProperty("Content-Type","application/json");if(data!=null){connection.doOutput=true;connection.outputStream.use{it.write(data.toString().toByteArray())}};val status=connection.responseCode;val stream=if(status<400)connection.inputStream else connection.errorStream;val body=stream?.bufferedReader()?.use{it.readText()}?:"";connection.disconnect();return HttpResponse(status,body)}
- private fun authenticatedRequest(baseUrl:String,path:String,method:String,data:JSONObject?,includeApiKey:Boolean):String{try{val session=authSession.restore()?:throw CenaSessionExpiredException();val generation=requestGeneration.get()?:session.generation;if(generation!=session.generation)throw CenaSessionExpiredException();var token=authSession.accessTokenForRequest(generation)?:throw CenaSessionExpiredException();var response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){token=authSession.refreshAfterUnauthorized(token,generation);authSession.assertCurrentGeneration(generation);response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){authSession.signOutIfCurrent(generation);throw CenaSessionExpiredException()}};authSession.assertCurrentGeneration(generation);if(response.status>=400)throw java.io.IOException(response.body.ifBlank{"Request failed (${response.status})."});return response.body}catch(error:CenaSessionExpiredException){showExpiredSignInIfNeeded();throw error}}
+ private fun authenticatedRequest(baseUrl:String,path:String,method:String,data:JSONObject?,includeApiKey:Boolean):String{try{assertRequestScope();val session=authSession.restore()?:throw CenaSessionExpiredException();val generation=requestGeneration.get()?:session.generation;if(generation!=session.generation)throw CenaSessionExpiredException();var token=authSession.accessTokenForRequest(generation)?:throw CenaSessionExpiredException();assertRequestScope();var response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){token=authSession.refreshAfterUnauthorized(token,generation);authSession.assertCurrentGeneration(generation);assertRequestScope();response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){authSession.signOutIfCurrent(generation);throw CenaSessionExpiredException()}};authSession.assertCurrentGeneration(generation);assertRequestScope();if(response.status>=400)throw java.io.IOException(response.body.ifBlank{"Request failed (${response.status})."});return response.body}catch(error:CenaSessionExpiredException){showExpiredSignInIfNeeded();throw error}}
  private fun req(path:String,method:String="GET",data:JSONObject?=null):String=authenticatedRequest(BuildConfig.SUPABASE_URL,path,method,data,true)
  private fun apiReq(path:String,method:String="GET",data:JSONObject?=null):String=authenticatedRequest(BuildConfig.CENA_API_URL,path,method,data,false)
+ private fun assertRequestScope(){val expectedRestaurantId=requestRestaurantId.get()?:return;val expectedRevision=requestRestaurantRevision.get()?:return;if(rid!=expectedRestaurantId||selectedRestaurantRevision!=expectedRevision)throw StaleMerchantScopeException()}
  private fun showExpiredSignInIfNeeded(){val expectedGeneration=authSession.generationSnapshot();if(runCatching{authSession.restore()}.getOrNull()!=null)return;runOnUiThread{if(isFinishing||isDestroyed||showingLogin||authSession.generationSnapshot()!=expectedGeneration||runCatching{authSession.restore()}.getOrNull()!=null)return@runOnUiThread;rid="";rname="";merchantRole="staff";rtimezone="America/Los_Angeles";curb=false;selectedRestaurantRevision++;restoreInsightsId=null;showingInsights=false;signInNotice="Your Cena sign-in expired. Sign in again to continue.";login()}}
  private fun trustedOnboardingUrl(url:String):Boolean{try{val uri=java.net.URI(url);return uri.scheme=="https"&&uri.host.equals("connect.stripe.com",true)&&uri.userInfo==null}catch(_:Exception){return false}}
  private fun paymentSetup(){go({apiReq("/v1/restaurants/$rid/payments")}){val info=JSONObject(it);val status=info.optString("status");base();title("Cena payments");when(status){"ready"->{text("Stripe is connected. New customer orders can be paid in Cena.");val fee=info.optInt("application_fee_cents",0);if(fee>0)text("Cena platform fee · $${"%.2f".format(fee/100.0)} per order.")};"pending"->{text("Stripe setup is in progress.");button("Refresh payment status"){paymentSetup()}};"not_connected"->{text("Connect your restaurant's Stripe account to accept in-app payments.");button("Set up Stripe securely"){go({apiReq("/v1/restaurants/$rid/stripe-onboarding","POST")}){val url=JSONObject(it).optString("url");if(!trustedOnboardingUrl(url)){Toast.makeText(this,"Stripe setup link could not be verified.",Toast.LENGTH_LONG).show()}else try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url)))}catch(_:Exception){Toast.makeText(this,"Could not open Stripe setup.",Toast.LENGTH_LONG).show()}}}};else->text("Payment status is unavailable. Try again shortly.")};button("Back to restaurant"){dashboard()}}}
@@ -146,6 +150,24 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   return (0 until values.length()).map(values::optString).joinToString("\n")
  }
 
+ private fun sameSteps(left: JSONArray?, right: JSONArray?): Boolean {
+  if (left == null || right == null || left.length() != right.length()) return false
+  return (0 until left.length()).all { index -> left.optString(index) == right.optString(index) }
+ }
+
+ private fun prepGenerationFailure(error: Exception): String {
+  if (error is CenaSessionExpiredException || error is CenaSessionRefreshException || error is CenaSessionStorageException) {
+   return error.message ?: "Sign in again to continue."
+  }
+  val code = runCatching { JSONObject(error.message.orEmpty()).optString("error") }.getOrDefault("")
+  return when (code) {
+   "invalid_recipe_steps" -> "Add 1–80 private chef notes, no longer than 2,000 characters each, before requesting suggestions."
+   "draft_not_found", "item_not_found" -> "Save the private chef notes and try again. You can also write pickup instructions manually."
+   "recipe_changed_retry" -> "The recipe changed during generation. Refresh this meal kit before trying again."
+   else -> "Private suggestions are unavailable right now. Your notes remain in this form; save them if needed, then continue editing pickup steps manually."
+  }
+ }
+
  private fun centsText(item: JSONObject?, key: String): String {
   if (item == null || item.isNull(key)) return ""
   return String.format(java.util.Locale.ROOT, "%.2f", item.optInt(key) / 100.0)
@@ -206,6 +228,8 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
    minLines = 3
    setText(stepText(reviewCandidate))
   }
+
+  var generatingSuggestions = false
 
   val available = CheckBox(this).apply {
    text = "Available after publishing"
@@ -275,6 +299,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   }
 
   button("Save private draft") {
+   if (generatingSuggestions) return@button
    val payload = itemPayload() ?: return@button
    val route = saveRoute(payload)
    go({ req(route, "POST", payload).let { "saved" } }) {
@@ -285,6 +310,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
 
   if (merchantRole == "owner" || merchantRole == "manager") {
    button("Publish reviewed instructions") {
+    if (generatingSuggestions) return@button
     val reviewedSteps = stepValues(reviewed.text.toString())
     if (!validStepSet(reviewedSteps, required = true)) {
      status.text = "Add 1–80 reviewed steps, each no longer than 2,000 characters."
@@ -304,6 +330,98 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
      Toast.makeText(this, "Meal kit published with reviewed pickup instructions.", Toast.LENGTH_LONG).show()
      catalogScreen()
     }
+   }
+  }
+
+  if (merchantRole == "owner" || merchantRole == "manager") {
+   text("AI suggestions use only your saved private chef notes. They stay private until reviewed and published.")
+   val generateButton = Button(this).apply {
+    text = "Generate private step suggestions"
+    setTextColor(Color.WHITE)
+    contentDescription = text
+    background = GradientDrawable().apply {
+     setColor(wine)
+     cornerRadius = (16f + ((390f - resources.displayMetrics.widthPixels / resources.displayMetrics.density) / 110f * 10f)).coerceIn(16f, 26f) * resources.displayMetrics.density
+    }
+   }
+   body.addView(generateButton, LinearLayout.LayoutParams(-1, -2))
+   val actionButtons = (0 until body.childCount).mapNotNull { body.getChildAt(it) as? Button }
+   val formFields = listOf(name, description, kitPrice, regularPrice, preparedTotal, equipment, allergens, source, reviewed)
+   fun setGenerating(isGenerating: Boolean) {
+    generatingSuggestions = isGenerating
+    formFields.forEach { it.isEnabled = !isGenerating }
+    actionButtons.forEach { it.isEnabled = !isGenerating }
+    generateButton.text = if (isGenerating) "Generating private suggestions…" else "Generate private step suggestions"
+    generateButton.contentDescription = generateButton.text
+   }
+
+   generateButton.setOnClickListener {
+    val sourceSnapshot = stepValues(source.text.toString())
+    val sourceCharacters = (0 until sourceSnapshot.length()).sumOf { sourceSnapshot.optString(it).length }
+    if (!validStepSet(sourceSnapshot, required = true) || sourceCharacters > 12_000) {
+     status.text = "Add 1–80 chef notes (up to 2,000 characters each and 12,000 total) before requesting suggestions. You can still write reviewed steps manually."
+     return@setOnClickListener
+    }
+    val payload = itemPayload() ?: return@setOnClickListener
+    val route = saveRoute(payload)
+    val targetRestaurantId = rid
+    val targetRestaurantRevision = selectedRestaurantRevision
+    val existingItemId = item?.optString("id").orEmpty()
+    status.setTextColor(clay)
+    status.text = "Saving private chef notes, then requesting suggestions…"
+    setGenerating(true)
+
+    go(task = {
+     assertRequestScope()
+     val savedRows = JSONArray(req(route, "POST", payload))
+     if (savedRows.length() != 1) throw java.io.IOException("Could not save the private recipe draft.")
+     val saved = savedRows.getJSONObject(0)
+     val savedItemId = saved.optString("catalog_item_id")
+     if (savedItemId.isBlank() || (existingItemId.isNotBlank() && existingItemId != savedItemId)) {
+      throw java.io.IOException("The meal kit changed while this form was open. Refresh and try again.")
+     }
+     if (rid != targetRestaurantId || selectedRestaurantRevision != targetRestaurantRevision) throw StaleMerchantScopeException()
+
+     // The Edge Function reads the authenticated user's saved draft; send the item id only.
+     val generated = JSONObject(req(
+      "/functions/v1/generate-prep",
+      "POST",
+      JSONObject().put("item_id", savedItemId)
+     ))
+     val returnedSteps = generated.optJSONArray("generated_steps")
+     val updatedAt = generated.optString("updated_at")
+     if (generated.optString("status") != "private_draft" || generated.optString("item_id") != savedItemId ||
+      updatedAt.isBlank() || !validStepSet(returnedSteps ?: JSONArray(), required = true) ||
+      returnedSteps?.length() != sourceSnapshot.length()) {
+      throw java.io.IOException("The private suggestion response could not be verified.")
+     }
+     if (rid != targetRestaurantId || selectedRestaurantRevision != targetRestaurantRevision) throw StaleMerchantScopeException()
+
+     val latestRows = JSONArray(req(
+      "/rest/v1/prep_drafts?select=id,restaurant_id,catalog_item_id,source_steps,generated_steps,updated_at" +
+       "&restaurant_id=eq.$targetRestaurantId&catalog_item_id=eq.$savedItemId&limit=1"
+     ))
+     val latest = latestRows.optJSONObject(0)
+     val latestSource = latest?.optJSONArray("source_steps")
+     val latestGenerated = latest?.optJSONArray("generated_steps")
+     if (latestRows.length() != 1 || latest == null || latest.optString("restaurant_id") != targetRestaurantId ||
+      latest.optString("catalog_item_id") != savedItemId || latest.optString("updated_at") != updatedAt ||
+      !sameSteps(latestSource, sourceSnapshot) || !sameSteps(latestGenerated, returnedSteps)) {
+      throw java.io.IOException("recipe_changed_retry")
+     }
+     JSONObject().put("generated_steps", returnedSteps).toString()
+    }, done = { response ->
+     setGenerating(false)
+     val result = JSONObject(response)
+     reviewed.setText(stepText(result.getJSONArray("generated_steps")))
+     reviewed.hint = "Generated private suggestions · review/edit before publishing"
+     status.setTextColor(clay)
+     status.text = "Private suggestions saved. Review every step and edit them before publishing."
+    }, onError = { error ->
+     setGenerating(false)
+     status.setTextColor(Color.rgb(160, 45, 35))
+     status.text = prepGenerationFailure(error)
+    })
    }
   }
 
