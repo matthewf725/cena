@@ -2,12 +2,17 @@ project_id = "cena"
 
 [api]
 enabled = true
+port = 54323
 schemas = ["public", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
 major_version = 15
+
+[local_smtp]
+enabled = true
+port = 54324
 
 [auth]
 enabled = true

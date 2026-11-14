@@ -1,0 +1,292 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const maxBody = 64 << 10
+
+type Config struct {
+	SupabaseURL, SupabaseAnonKey string
+	AllowedOrigins               []string
+	Client                       *http.Client
+}
+type Server struct {
+	cfg    Config
+	client *http.Client
+	mux    *http.ServeMux
+}
+
+func New(cfg Config) http.Handler {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(cfg.SupabaseURL), "/"))
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		panic("invalid Supabase URL")
+	}
+	cfg.SupabaseURL = strings.TrimRight(cfg.SupabaseURL, "/")
+	c := cfg.Client
+	if c == nil {
+		c = &http.Client{Timeout: 8 * time.Second}
+	}
+	s := &Server{cfg: cfg, client: c, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /healthz", s.health)
+	s.mux.HandleFunc("GET /v1/catalog", s.catalog)
+	s.mux.HandleFunc("POST /v1/orders", s.createOrder)
+	s.mux.HandleFunc("PATCH /v1/orders/{id}/status", s.updateOrderStatus)
+	s.mux.HandleFunc("POST /v1/analytics/events", s.trackEvent)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		origin := r.Header.Get("Origin")
+		allowed := origin != "" && s.originAllowed(origin)
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			if origin != "" && !allowed {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})
+				return
+			}
+			if allowed {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Max-Age", "600")
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) originAllowed(origin string) bool {
+	origins := s.cfg.AllowedOrigins
+	if len(origins) == 0 {
+		origins = []string{"http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:8081", "http://127.0.0.1:8082"}
+	}
+	for _, candidate := range origins {
+		if strings.TrimSpace(candidate) == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
+	// The query parameters are fixed server-side; caller filters cannot broaden table access.
+	paths := []string{
+		"restaurants?select=id,slug,name,cuisine,image_key,description,address,timezone,curbside_enabled&active=eq.true&order=name&limit=200",
+		"catalog_items?select=id,restaurant_id,name,description,price_cents,regular_price_cents,equipment,allergens,published_steps,image_key,category,prep_minutes&active=eq.true&published_at=not.is.null&order=name&limit=1000",
+		"pickup_slots?select=id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count&active=eq.true&starts_at=gt." + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&cutoff_at=gt." + url.QueryEscape(time.Now().UTC().Format(time.RFC3339Nano)) + "&order=starts_at&limit=1000",
+		"slot_item_inventory?select=slot_id,item_id,available_qty,reserved_qty&limit=5000",
+	}
+	result := make([]json.RawMessage, len(paths))
+	for i, p := range paths {
+		b, status, err := s.supabase(r, http.MethodGet, "/rest/v1/"+p, nil)
+		if err != nil {
+			upstreamError(w, status, err)
+			return
+		}
+		if !json.Valid(b) {
+			writeJSON(w, 502, map[string]string{"error": "invalid response from data service"})
+			return
+		}
+		result[i] = b
+	}
+	writeJSON(w, 200, map[string]json.RawMessage{"restaurants": result[0], "items": result[1], "slots": result[2], "inventory": result[3]})
+}
+
+type orderRequest struct {
+	RestaurantID   string          `json:"p_restaurant_id"`
+	SlotID         string          `json:"p_slot_id"`
+	IdempotencyKey string          `json:"p_idempotency_key"`
+	PickupMode     string          `json:"p_pickup_mode"`
+	Vehicle        json.RawMessage `json:"p_vehicle"`
+	Items          json.RawMessage `json:"p_items"`
+}
+
+func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
+	var in orderRequest
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if in.RestaurantID == "" || in.SlotID == "" || in.IdempotencyKey == "" || in.PickupMode == "" || !json.Valid(in.Items) || len(in.Items) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "invalid order request"})
+		return
+	}
+	if len(in.Vehicle) == 0 {
+		in.Vehicle = json.RawMessage(`{}`)
+	}
+	if !json.Valid(in.Vehicle) {
+		writeJSON(w, 400, map[string]string{"error": "invalid vehicle"})
+		return
+	}
+	body := map[string]json.RawMessage{}
+	body["p_restaurant_id"], _ = json.Marshal(in.RestaurantID)
+	body["p_slot_id"], _ = json.Marshal(in.SlotID)
+	body["p_idempotency_key"], _ = json.Marshal(in.IdempotencyKey)
+	body["p_pickup_mode"], _ = json.Marshal(in.PickupMode)
+	body["p_vehicle"] = in.Vehicle
+	body["p_items"] = in.Items
+	s.rpc(w, r, "create_order", body)
+}
+func (s *Server) updateOrderStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" || len(id) > 64 {
+		writeJSON(w, 400, map[string]string{"error": "invalid order id"})
+		return
+	}
+	var in struct {
+		Status string `json:"status"`
+	}
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if in.Status == "" {
+		writeJSON(w, 400, map[string]string{"error": "status is required"})
+		return
+	}
+	body := map[string]string{"p_order_id": id, "p_status": in.Status}
+	s.rpc(w, r, "update_order_status", body)
+}
+func (s *Server) trackEvent(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		EventType    string          `json:"event_type"`
+		RestaurantID *string         `json:"restaurant_id"`
+		Payload      json.RawMessage `json:"payload"`
+	}
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if in.EventType == "" {
+		writeJSON(w, 400, map[string]string{"error": "event_type is required"})
+		return
+	}
+	if len(in.Payload) == 0 {
+		in.Payload = json.RawMessage(`{}`)
+	}
+	if !json.Valid(in.Payload) {
+		writeJSON(w, 400, map[string]string{"error": "payload must be JSON"})
+		return
+	}
+	var rid any
+	if in.RestaurantID != nil {
+		rid = *in.RestaurantID
+	}
+	body := map[string]any{"p_event_type": in.EventType, "p_restaurant_id": rid, "p_payload": in.Payload}
+	s.rpc(w, r, "track_event", body)
+}
+func (s *Server) rpc(w http.ResponseWriter, r *http.Request, name string, body any) {
+	if _, ok := bearerToken(r); !ok {
+		writeJSON(w, 401, map[string]string{"error": "authentication required"})
+		return
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid request"})
+		return
+	}
+	out, status, err := s.supabase(r, http.MethodPost, "/rest/v1/rpc/"+name, b)
+	if err != nil {
+		upstreamError(w, status, err)
+		return
+	}
+	if !json.Valid(out) {
+		writeJSON(w, 502, map[string]string{"error": "invalid response from data service"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+	_, _ = w.Write(out)
+}
+func (s *Server) supabase(in *http.Request, method, path string, body []byte) ([]byte, int, error) {
+	ctx, cancel := context.WithTimeout(in.Context(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, s.cfg.SupabaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, 502, err
+	}
+	req.Header.Set("apikey", s.cfg.SupabaseAnonKey)
+	req.Header.Set("Accept", "application/json")
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	// Forward only a syntactically valid Bearer token; never substitute privileged credentials.
+	if token, ok := bearerToken(in); ok {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if strings.TrimSpace(in.Header.Get("Authorization")) != "" {
+		return nil, 401, errors.New("invalid authorization header")
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, 502, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, 502, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return b, resp.StatusCode, errors.New("upstream request failed")
+	}
+	return b, resp.StatusCode, nil
+}
+func bearerToken(r *http.Request) (string, bool) {
+	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+	returnToken := ""
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && len(parts[1]) <= 8192 {
+		returnToken = parts[1]
+	}
+	return returnToken, returnToken != ""
+}
+func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid JSON body"})
+		return false
+	}
+	var extra any
+	if dec.Decode(&extra) != io.EOF {
+		writeJSON(w, 400, map[string]string{"error": "request must contain one JSON object"})
+		return false
+	}
+	return true
+}
+func upstreamError(w http.ResponseWriter, status int, err error) {
+	if status == 401 {
+		writeJSON(w, 401, map[string]string{"error": "authentication required or invalid"})
+		return
+	}
+	if status == 403 {
+		writeJSON(w, 403, map[string]string{"error": "not authorized"})
+		return
+	}
+	if status == 502 {
+		writeJSON(w, 502, map[string]string{"error": "data service unavailable"})
+		return
+	}
+	if status >= 400 && status < 500 {
+		writeJSON(w, 422, map[string]string{"error": "request rejected by data service"})
+		return
+	}
+	writeJSON(w, 502, map[string]string{"error": "data service unavailable"})
+}
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
