@@ -623,7 +623,7 @@ export default function Home() {
   };
   return <View style={[s.screen,{paddingTop:insets.top}]}><View style={{flex:1,width:'100%',maxWidth:560,alignSelf:'center'}}>
     <View style={{flex:1}} pointerEvents={active?'none':'auto'} aria-hidden={Boolean(active)}
-      accessibilityElementsHidden={Boolean(active)} importantForAccessibility={active?'no-hide-descendants':'auto'}>
+      {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:Boolean(active),importantForAccessibility:active?'no-hide-descendants':'auto'})}>
       <View style={[s.topbar,{paddingHorizontal:width<390?14:22,gap:width<390?8:14}]}><View style={s.brand}><Text style={s.wordmark}>cena</Text><View style={s.logodot}/></View><Pressable accessibilityRole="button" accessibilityLabel={`Change pickup area, ${locationLabel}`}
         onPress={()=>setShowLocation(true)} style={[s.location,{flexShrink:1,minWidth:0}]}>
           <MapPin size={15} color={maroon}/><Text numberOfLines={1} style={[s.locText,{flexShrink:1}]}>{locating?'Finding location…':locationLabel}</Text>

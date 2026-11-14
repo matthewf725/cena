@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Clock3 } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 
@@ -25,7 +25,8 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
 
   return (
     <View style={styles.outline}>
-      <Clock3 size={16} color={green} accessibilityElementsHidden importantForAccessibility="no" />
+      <Clock3 size={16} color={green} aria-hidden={Platform.OS==='web'?true:undefined}
+        {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:true,importantForAccessibility:'no'})} />
       <Text style={styles.label}>Order cutoff for pickup today</Text>
       <Text style={styles.counter} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
         {clock}

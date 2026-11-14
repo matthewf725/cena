@@ -44,7 +44,8 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating }
   }
 
   return <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-    <Pressable style={styles.scrim} onPress={close} disabled={busy} accessibilityElementsHidden importantForAccessibility="no" />
+    <Pressable style={styles.scrim} onPress={close} disabled={busy} aria-hidden={Platform.OS==='web'?true:undefined}
+      {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:true,importantForAccessibility:'no'})} />
     <View style={styles.card} accessibilityViewIsModal>
       <View style={styles.heading}>
         <Text accessibilityRole="header" style={styles.title}>Pickup area</Text>
