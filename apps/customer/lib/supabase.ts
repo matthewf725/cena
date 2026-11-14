@@ -253,10 +253,11 @@ export async function cancelCheckout(orderId: string): Promise<'cancelled'|'paid
   throw new Error('Checkout cancellation could not be confirmed.');
 }
 
-export async function saveAnalyticsConsent(consented: boolean) {
-  if (!supabase) return { error: null };
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: new Error('Sign in first') };
+export async function saveAnalyticsConsent(consented: boolean, expectedUserId: string) {
+  if (!supabase) return { error: new Error('Privacy settings are unavailable. Try again.') };
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error) return { error };
+  if (!user || user.id !== expectedUserId) return { error: new Error('Your account changed. Open Privacy again.') };
   return supabase.from('consent_records').insert({ user_id: user.id, consent_type: 'analytics', policy_version: '2026-11-13', consent_action: consented ? 'granted' : 'revoked' });
 }
 export async function upsertCustomerProfile(displayName: string, phone: string, equipment: string[]) {

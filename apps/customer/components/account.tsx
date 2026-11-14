@@ -1,133 +1,173 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Check } from 'lucide-react-native';
+import { demoKitchenEquipment } from '../lib/demo-profile';
+import { loadCustomerAccount, saveCustomerAccount, signOutCustomer, type CustomerProfile } from '../lib/profile';
 import { Text, TextInput } from './type';
-import { Check, ChevronRight, Mail, Phone, Soup, UserRound } from 'lucide-react-native';
-import { supabase } from '../lib/supabase';
-import { loadCustomerAccount, saveCustomerAccount, signOutCustomer } from '../lib/profile';
 
 type Props = {
   userId: string | null;
   topSpace: number;
+  bottomSpace?: number;
+  settingsMode?: boolean;
   equipment: string[]; setEquipment: (value: string[]) => void;
-  analyticsConsented: boolean; setAnalyticsConsented: (value: boolean) => void;
   email: string; setEmail: (value: string) => void;
   phone: string; setPhone: (value: string) => void;
   displayName: string; setDisplayName: (value: string) => void;
   onProfileSaved: () => void;
 };
 
-const options = ['Oven', 'Stovetop', 'Microwave', 'Air fryer', 'Toaster', 'Panini press'];
 export function Account(props: Props) {
-  const [signedIn, setSignedIn] = useState(false);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const [loading, setLoading] = useState(Boolean(props.userId));
   const [busy, setBusy] = useState(false);
-  const [hydrating, setHydrating] = useState(Boolean(supabase));
+  const [draft, setDraft] = useState<CustomerProfile | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [expandedPolicy, setExpandedPolicy] = useState<'terms.html'|'privacy.html'|null>(null);
-  const activeUserId = React.useRef(props.userId);
+  const [retry, setRetry] = useState(0);
+  const activeUserId = useRef(props.userId);
   activeUserId.current = props.userId;
 
   useEffect(() => {
-    let alive = true;
-    setSignedIn(false); setError('');
-    if (!supabase || !props.userId) { setHydrating(false); return; }
-    setHydrating(true);
-    async function hydrate() {
-      try {
-        const account = await loadCustomerAccount();
-        if (!alive) return;
-        const { data: { user: sessionUser } } = await supabase!.auth.getUser();
-        if (!alive || !sessionUser || sessionUser.id !== props.userId || activeUserId.current !== sessionUser.id) return;
-        if (account && account.userId === sessionUser.id) {
-          props.setEmail(account.email);
-          // Preserve fields typed immediately before OTP when the new account has no saved profile yet.
-          if (account.profile.displayName) props.setDisplayName(account.profile.displayName);
-          if (account.profile.phone) props.setPhone(account.profile.phone);
-          if (account.profile.equipment.length) props.setEquipment(account.profile.equipment);
-          props.setAnalyticsConsented(account.analyticsConsented);
-          setSignedIn(true);
-        } else {
-          setSignedIn(false);
-          if (props.userId) {
-            props.setEmail(''); props.setDisplayName(''); props.setPhone(''); props.setEquipment([]);
-            props.setAnalyticsConsented(false);
-          }
-        }
-      } catch (e) { if (alive) setError(e instanceof Error ? e.message : 'Could not load your saved profile.'); }
-      finally { if (alive) setHydrating(false); }
-    }
-    void hydrate();
-    return () => { alive = false; };
-  }, [props.userId]);
+    const userId = props.userId;
+    let current = true;
+    setLoaded(null);
+    setDraft(null);
+    setMessage('');
+    setError('');
+    if (!userId) { setLoading(false); return; }
+    setLoading(true);
+    void loadCustomerAccount().then(account => {
+      if (!current) return;
+      if (account?.userId !== userId || activeUserId.current !== userId) throw new Error('Couldn’t load your profile.');
+      props.setEmail(account.email);
+      props.setDisplayName(account.profile.displayName);
+      props.setPhone(account.profile.phone);
+      props.setEquipment(account.profile.equipment);
+      setLoaded(userId);
+    }).catch(() => {
+      if (current) setError('Couldn’t load your profile. Try again.');
+    }).finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [props.userId, retry]);
 
-  const reportError = (e: unknown) => setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+  function edit() {
+    setMessage('');
+    setError('');
+    setDraft({ displayName: props.displayName, phone: props.phone, equipment: props.equipment });
+  }
+
   async function save() {
-    if (!supabase || !signedIn) { setMessage(supabase ? 'Sign in with the email above to save your profile across visits.' : 'Profile details stay available for this session.'); return; }
-    setBusy(true); setError(''); setMessage('');
+    const userId = props.userId;
+    if (!userId || loaded !== userId || busy || !draft) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
     try {
-      if (!props.userId || activeUserId.current !== props.userId) throw new Error('Your account changed. Reload the profile and try again.');
-      await saveCustomerAccount({ displayName: props.displayName, phone: props.phone, equipment: props.equipment }, props.analyticsConsented, props.userId);
-      props.onProfileSaved();
-      setMessage('Your profile and privacy choice are saved.');
+      await saveCustomerAccount(draft, userId);
+      if (activeUserId.current === userId) {
+        props.setDisplayName(draft.displayName.trim());
+        props.setPhone(draft.phone.trim());
+        props.setEquipment(draft.equipment);
+        props.onProfileSaved();
+        setDraft(null);
+        setMessage('Profile saved.');
+      }
+    } catch {
+      setError('Couldn’t save your profile. Try again.');
+    } finally {
+      setBusy(false);
     }
-    catch (e) { reportError(e); }
-    finally { setBusy(false); }
   }
+
   async function signOut() {
-    setBusy(true); setError(''); setMessage('');
-    try {
-      await signOutCustomer();
-      setSignedIn(false); props.setEmail(''); props.setDisplayName(''); props.setPhone(''); props.setEquipment([]);
-      props.setAnalyticsConsented(false);
-      setMessage('You are signed out. Account details were cleared from this device.');
-    }
-    catch (e) { reportError(e); }
+    if (!props.userId || busy) return;
+    setBusy(true);
+    setMessage('');
+    setError('');
+    try { await signOutCustomer(); }
+    catch { setError('Couldn’t sign out. Try again.'); }
     finally { setBusy(false); }
   }
-  async function openPolicy(path: 'terms.html'|'privacy.html') {
-    setExpandedPolicy(null);
-    const base = process.env.EXPO_PUBLIC_CENA_SITE_URL;
-    if (base) {
-      try { await Linking.openURL(`${base.replace(/\/$/, '')}/${path}`); return; }
-      catch { /* show the in-app policy summary below */ }
-    }
-    setExpandedPolicy(current => current === path ? null : path);
-  }
 
-  function changeAnalyticsConsent(value: boolean) {
-    props.setAnalyticsConsented(value);
-  }
-
-  const locked = hydrating || busy;
-
-  return <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={[s.content, { paddingTop: props.topSpace + 20 }]}>
-    <Text accessibilityRole="header" style={s.title}>Profile</Text>
-    <View style={s.hero}><View style={s.avatar}><Text style={s.initial}>{props.displayName.trim().charAt(0).toUpperCase() || 'C'}</Text></View><View style={{flex:1}}><Text style={s.name}>{signedIn ? (props.displayName.trim() || 'Welcome back') : 'Welcome to Cena'}</Text><Text style={s.hint}>{signedIn ? props.email : 'Keep pickup details handy. Sign in to sync across devices.'}</Text></View><ChevronRight size={18} color={muted}/></View>
-    {hydrating && <View style={s.loading}><ActivityIndicator color={maroon}/><Text style={s.hint}>Loading your saved profile…</Text></View>}
-    <Text style={s.section}>YOUR DETAILS</Text>
-    <Field icon={<UserRound size={17} color={maroon}/>} label="Name"><TextInput style={s.input} value={props.displayName} onChangeText={props.setDisplayName} autoCapitalize="words" maxLength={80} placeholder="Add your name" placeholderTextColor={muted} editable={!locked}/></Field>
-    <Field icon={<Mail size={17} color={maroon}/>} label="Email"><TextInput style={s.input} value={props.email} onChangeText={props.setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="Add an email address" placeholderTextColor={muted} editable={!signedIn&&!locked}/></Field>
-    <Field icon={<Phone size={17} color={maroon}/>} label="Mobile number"><TextInput style={s.input} value={props.phone} onChangeText={props.setPhone} keyboardType="phone-pad" placeholder="Add a phone number" placeholderTextColor={muted} editable={!locked}/></Field>
-    <View style={s.equipment}><View style={s.rowTitle}><Soup size={17} color={green}/><Text accessibilityRole="header" style={s.equipmentTitle}>Kitchen equipment you have</Text></View><View style={s.chips}>{options.map(x=><Pressable key={x} disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.equipment.includes(x)}} onPress={()=>props.setEquipment(props.equipment.includes(x)?props.equipment.filter(y=>y!==x):[...props.equipment,x])} style={[s.chip,props.equipment.includes(x)&&s.chipOn,locked&&s.disabled]}><Text style={[s.chipText,props.equipment.includes(x)&&{color:maroon}]}>{props.equipment.includes(x)?'✓  ':''}{x}</Text></Pressable>)}</View></View>
-    <Text style={s.section}>PRIVACY</Text><Pressable disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.analyticsConsented}} onPress={()=>changeAnalyticsConsent(!props.analyticsConsented)} style={[s.consent,locked&&s.disabled]}><View style={[s.checkbox,props.analyticsConsented&&s.checkboxOn]}>{props.analyticsConsented&&<Check size={14} color="#FFF"/>}</View><View style={{flex:1}}><Text style={s.label}>Share anonymous usage data</Text><Text style={s.desc}>Optional browsing events; change this choice any time.</Text></View></Pressable>
-    <Pressable accessibilityRole="button" disabled={locked} onPress={()=>void save()} style={[s.primary,s.save,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>{signedIn?'Save profile and privacy choice':supabase?'Sign in to save your profile':'Keep these details for this session'}</Text>}</Pressable>
-    {!!props.userId&&<Pressable accessibilityRole="button" disabled={busy} onPress={()=>void signOut()} style={s.secondary}><Text style={s.secondaryText}>Sign out</Text></Pressable>}
-    {!!message&&<Text accessibilityLiveRegion="polite" style={s.message}>{message}</Text>}{!!error&&<Text accessibilityLiveRegion="polite" style={s.error}>{error}</Text>}
-    <View style={s.legal}><Pressable onPress={()=>void openPolicy('terms.html')}><Text style={s.link}>Consumer Terms</Text></Pressable><Text style={s.hint}> · </Text><Pressable onPress={()=>void openPolicy('privacy.html')}><Text style={s.link}>Privacy Policy</Text></Pressable></View>
-    {!!expandedPolicy&&<View style={s.policy}><Text style={s.label}>{expandedPolicy === 'terms.html' ? 'Consumer terms' : 'Privacy policy'}</Text><Text style={s.desc}>{expandedPolicy === 'terms.html'
-      ? 'Orders are confirmed after secure payment. Restaurants are responsible for menu and allergen details.'
-      : 'Your email and optional phone link and manage pickup orders. Anonymous browsing analytics are optional and off until you choose to share them.'}</Text><Pressable onPress={()=>setExpandedPolicy(null)}><Text style={s.link}>Close</Text></Pressable></View>}
-    <Text style={s.footer}>Made for good food and the people around your table.</Text>
+  const signedIn = !!props.userId && loaded === props.userId;
+  const locked = busy || !signedIn;
+  return <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
+    contentContainerStyle={[styles.content, { paddingTop: props.topSpace + 20, paddingBottom: props.bottomSpace ?? 24 }]}>
+    {!props.settingsMode && <Text accessibilityRole="header" style={styles.title}>Profile</Text>}
+    {loading ? <ActivityIndicator color={maroon} accessibilityLabel="Loading profile"/> : signedIn ? <>
+      <View style={styles.field}>
+        <Text style={styles.label}>Name</Text>
+        {draft ? <TextInput accessibilityLabel="Your name" style={styles.input} value={draft.displayName}
+          onChangeText={displayName => setDraft({ ...draft, displayName })} autoCapitalize="words" maxLength={80} editable={!locked}/>
+          : <Text style={styles.staticValue}>{props.displayName || 'No name added'}</Text>}
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.label}>Email</Text>
+        <Text selectable style={styles.staticValue}>{props.email}</Text>
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.label}>Mobile number</Text>
+        {draft ? <TextInput accessibilityLabel="Mobile number" style={styles.input} value={draft.phone}
+          onChangeText={phone => setDraft({ ...draft, phone })} keyboardType="phone-pad" autoComplete="tel"
+          maxLength={32} placeholder="Optional" placeholderTextColor={muted} editable={!locked}/>
+          : <Text style={styles.staticValue}>{props.phone || 'No mobile number added'}</Text>}
+      </View>
+      <View style={styles.field}>
+        <Text accessibilityRole="header" style={styles.label}>Kitchen equipment you have</Text>
+        {draft ? <View style={styles.chips}>{demoKitchenEquipment.map(item => {
+          const checked = draft.equipment.includes(item);
+          return <Pressable key={item} disabled={locked} accessibilityRole="checkbox" accessibilityLabel={item}
+            accessibilityState={{ checked, disabled: locked }} onPress={() => setDraft({ ...draft, equipment:
+              checked ? draft.equipment.filter(value => value !== item) : [...draft.equipment, item],
+            })} style={[styles.chip, checked && styles.chipOn]}>
+            {checked && <Check size={15} color={maroon} aria-hidden/>}
+            <Text style={[styles.chipText, checked && styles.selected]}>{item}</Text>
+          </Pressable>;
+        })}</View> : <Text style={styles.staticValue}>{props.equipment.length ? props.equipment.join(', ') : 'No equipment selected'}</Text>}
+      </View>
+      {draft ? <>
+        <Pressable accessibilityRole="button" disabled={locked} onPress={() => void save()} style={[styles.primary, locked && styles.disabled]}>
+          <Text style={styles.primaryText}>{busy ? 'Saving…' : 'Save profile'}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" disabled={locked} onPress={() => { setDraft(null); setError(''); }} style={styles.secondary}>
+          <Text style={styles.secondaryText}>Cancel</Text>
+        </Pressable>
+      </> : <Pressable accessibilityRole="button" onPress={edit} style={styles.primary}>
+        <Text style={styles.primaryText}>Edit profile</Text>
+      </Pressable>}
+    </> : !!props.userId && <Pressable accessibilityRole="button" onPress={() => setRetry(current => current + 1)} style={styles.primary}>
+      <Text style={styles.primaryText}>Try loading again</Text>
+    </Pressable>}
+    {!!props.userId && !draft && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void signOut()} style={styles.secondary}>
+      <Text style={styles.secondaryText}>Sign out</Text>
+    </Pressable>}
+    {!!message && <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>}
+    {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
   </ScrollView>;
 }
 
-function Field({icon,label,children}:{icon:React.ReactNode;label:string;children:React.ReactNode}) { return <View style={s.field}><View style={s.fieldIcon}>{icon}</View><View style={{flex:1}}><Text style={s.label}>{label}</Text>{children}</View></View>; }
-const maroon='#46110E', ink='#271D19', muted='#77645B', line='#E8DCD5', green='#245C40';
-const s=StyleSheet.create({
-  content:{paddingHorizontal:22,paddingTop:20,paddingBottom:120},title:{ fontWeight: '500', fontSize:30,color:'#46110E',letterSpacing:-.6,marginTop:5,marginBottom:20},
-  hero:{flexDirection:'row',alignItems:'center',gap:12,padding:14,backgroundColor:'#FFFDFA',borderRadius:12,borderWidth:1,borderColor:line,marginBottom:17},avatar:{width:46,height:46,borderRadius:23,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},initial:{fontSize:19,color:maroon,fontWeight:'500'},name:{fontSize:17,color:ink,fontWeight:'500'},hint:{fontSize:13,color:muted,marginTop:3},
-  loading:{flexDirection:'row',alignItems:'center',gap:8,marginBottom:8},section:{fontSize:13,fontWeight:'500',letterSpacing:1.1,color:muted,marginTop:12,marginBottom:7},field:{minHeight:61,flexDirection:'row',alignItems:'center',gap:10,borderBottomWidth:1,borderBottomColor:line},fieldIcon:{width:34,height:34,borderRadius:9,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},label:{fontSize:12,fontWeight:'500',color:ink},input:{fontSize:13,color:ink,marginTop:3,paddingVertical:3},
-  primary:{minHeight:48,backgroundColor:maroon,borderRadius:10,alignItems:'center',justifyContent:'center',paddingHorizontal:14},primaryText:{fontSize:12,color:'#FFF',fontWeight:'500'},disabled:{opacity:.55},link:{fontSize:13,color:maroon,fontWeight:'500',paddingVertical:7},
-  equipment:{paddingVertical:14},equipmentTitle:{fontSize:16,fontWeight:'500',color:maroon},rowTitle:{flexDirection:'row',alignItems:'center',gap:7},desc:{fontSize:13,color:muted,marginTop:4,lineHeight:18},chips:{flexDirection:'row',flexWrap:'wrap',gap:6,marginTop:10},chip:{paddingHorizontal:9,paddingVertical:8,borderWidth:1,borderColor:line,borderRadius:20,backgroundColor:'#FFFDFA'},chipOn:{borderColor:'#B77A6E',backgroundColor:'#F7EDE7'},chipText:{fontSize:13,color:ink},setting:{paddingVertical:12,borderBottomWidth:1,borderBottomColor:line},consent:{minHeight:72,flexDirection:'row',alignItems:'center',gap:10,borderBottomWidth:1,borderBottomColor:line},checkbox:{width:20,height:20,borderWidth:1,borderColor:'#C6BAB4',borderRadius:5,alignItems:'center',justifyContent:'center'},checkboxOn:{backgroundColor:maroon,borderColor:maroon},
-  save:{marginTop:17},secondary:{height:43,borderWidth:1,borderColor:'#E2D1CB',borderRadius:9,alignItems:'center',justifyContent:'center',marginTop:8},secondaryText:{fontSize:13,color:maroon,fontWeight:'500'},message:{fontSize:13,color:green,textAlign:'center',marginTop:10},error:{fontSize:13,color:'#A23B30',textAlign:'center',marginTop:10},policy:{marginTop:12,padding:13,borderWidth:1,borderColor:line,borderRadius:9,backgroundColor:'#FFFDFA'},legal:{flexDirection:'row',justifyContent:'center',alignItems:'center',marginTop:18},footer:{fontStyle:'italic',textAlign:'center',color:'#9A8981',fontSize:13,marginTop:22},
+const maroon = '#5D100A';
+const ink = '#271D19';
+const muted = '#77645B';
+const line = '#E8DCD5';
+const styles = StyleSheet.create({
+  content: { paddingHorizontal: 22, gap: 18 },
+  title: { color: ink, fontSize: 27, fontWeight: '600' },
+  field: { gap: 8 },
+  label: { color: ink, fontSize: 16, fontWeight: '600' },
+  input: { minHeight: 48, borderWidth: 1, borderColor: line, borderRadius: 12, backgroundColor: '#FFFDFB', paddingHorizontal: 13, color: ink, fontSize: 16 },
+  staticValue: { color: muted, fontSize: 16 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  chip: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, borderRadius: 22, borderWidth: 1, borderColor: line, backgroundColor: '#FFFDFB' },
+  chipOn: { borderColor: '#B77A6E', backgroundColor: '#F7EDE7' },
+  chipText: { color: ink, fontSize: 14 },
+  selected: { color: maroon },
+  primary: { minHeight: 48, borderRadius: 12, backgroundColor: maroon, alignItems: 'center', justifyContent: 'center' },
+  primaryText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
+  secondary: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: line, alignItems: 'center', justifyContent: 'center' },
+  secondaryText: { color: maroon, fontSize: 16, fontWeight: '500' },
+  disabled: { opacity: 0.55 },
+  message: { color: '#245C40', fontSize: 14, textAlign: 'center' },
+  error: { color: '#A23B30', fontSize: 14, textAlign: 'center' },
 });

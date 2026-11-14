@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, FunctionsHttpError, SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -166,7 +166,12 @@ export async function saveCatalogPrepMinutes(itemId:string,restaurantId:string,p
 }
 export async function generatePrep(itemId:string) {
   if(!supabase)throw new Error('Configure Supabase before generating chef steps.');
-  const {data,error}=await supabase.functions.invoke('generate-prep',{body:{item_id:itemId}});if(error)throw error;return data as {generated_steps:string[];updated_at:string};
+  const {data,error}=await supabase.functions.invoke<{generated_steps:string[];updated_at:string}>('generate-prep',{body:{item_id:itemId}});
+  if(error instanceof FunctionsHttpError&&error.context?.status===503){
+    throw new Error('AI drafting is unavailable. You can still review and publish the chef’s steps.');
+  }
+  if(error)throw error;
+  return data;
 }
 export async function publishCatalogItem(draftId:string,expectedUpdatedAt:string,reviewedSteps:string[]) {
   if(!supabase)return;

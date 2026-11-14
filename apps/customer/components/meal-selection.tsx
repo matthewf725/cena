@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { BackHandler, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { Animated, BackHandler, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native';
 import { Check, ChevronDown, Clock3, Minus, Plus, X } from 'lucide-react-native';
 import { normalizeMealSelections, type Meal, type MealOptionGroup, type MealSelections } from '../lib/data';
 import { Text } from './type';
 import { MealPrice } from './meal-price';
 import { traceMeal } from '../lib/ios-trace';
+import { useSlideUp } from './slide-up';
 
 type Props = {
   meal: Meal;
   groups: MealOptionGroup[];
-  onAdd: (quantity: number, selections: Record<string, string[]>) => void;
+  onAdd: (quantity: number, selections: Record<string, string[]>) => boolean;
   onClose: () => void;
   reduced: boolean;
   bottomInset: number;
@@ -28,7 +29,8 @@ function validInitialSelections(groups: MealOptionGroup[], input: MealSelections
 }
 
 export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomInset, equipment, initialQuantity=1, initialSelections={}, returnFocusTo }: Props) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const slide = useSlideUp(height, reduced, true);
   const scrollRef = useRef<ScrollView>(null);
   const groupOffsets = useRef<Record<string, number>>({});
   const [quantity, setQuantity] = useState(Math.min(50, Math.max(1, initialQuantity)));
@@ -38,7 +40,8 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const sheetRef = useRef<ComponentRef<typeof View>>(null);
   const closeButton = useRef<ComponentRef<typeof Pressable>>(null);
-  const touchStart = useRef<number | null>(null);
+  const scrollOffset = useRef(0);
+  const startedAtTop = useRef(false);
   const layoutReported = useRef(false);
   const closing = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -47,30 +50,46 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   const needsEquipment = !!meal.equipment && equipment !== undefined
     && !equipment.some(item => item.trim().toLowerCase() === meal.equipment!.trim().toLowerCase());
 
-  const close = () => {
+  const close = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
     void traceMeal('detail-close');
-    onCloseRef.current();
-  };
-  const closeGesture = useRef(close);
+    slide.dismiss(() => onCloseRef.current());
+  }, [slide]);
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => {
+      startedAtTop.current = scrollOffset.current <= 1;
+      return false;
+    },
+    onMoveShouldSetPanResponderCapture: (_, gesture) => !closing.current && startedAtTop.current
+      && gesture.numberActiveTouches === 1 && gesture.dy > 7 && gesture.dy > Math.abs(gesture.dx),
+    onPanResponderGrant: () => slide.stop(),
+    onPanResponderMove: (_, gesture) => slide.drag(gesture.dy),
+    onPanResponderRelease: (_, gesture) => {
+      if (gesture.dy >= 100 || (gesture.dy > 30 && gesture.vy > 0.65)) close();
+      else slide.settle();
+    },
+    onPanResponderTerminate: () => { if (!closing.current) slide.settle(); },
+    onPanResponderTerminationRequest: () => false,
+  }), [close, slide]);
 
   useEffect(() => {
+    slide.settle();
     void traceMeal('detail-rendered');
     const frame = requestAnimationFrame(() => { void traceMeal('detail-frame'); });
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [slide]);
 
   useEffect(() => {
     if (Platform.OS === 'android') {
-      const back = BackHandler.addEventListener('hardwareBackPress', () => { closeGesture.current(); return true; });
+      const back = BackHandler.addEventListener('hardwareBackPress', () => { close(); return true; });
       return () => back.remove();
     }
     if (Platform.OS !== 'web') return;
     const previous = returnFocusTo;
     const focus = requestAnimationFrame(() => closeButton.current?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); closeGesture.current(); return; }
+      if (event.key === 'Escape') { event.preventDefault(); close(); return; }
       if (event.key !== 'Tab') return;
       const sheet = sheetRef.current as unknown as HTMLElement | null;
       const controls = sheet?.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"]):not([aria-disabled="true"])');
@@ -92,7 +111,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
           .find(element => element.getAttribute('aria-label') === label)?.focus();
       });
     };
-  }, [returnFocusTo]);
+  }, [close, returnFocusTo]);
 
   function toggleChoice(group: MealOptionGroup, choiceId: string) {
     const current = selections[group.id] ?? [];
@@ -119,6 +138,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   }
 
   function addToBag() {
+    if (closing.current) return;
     const missing = groups.find(group => (selections[group.id]?.length ?? 0) < Math.max(0, group.min));
     if (missing) {
       setInvalidGroupId(missing.id);
@@ -131,25 +151,19 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       .filter(([, choiceIds]) => choiceIds.length > 0)
       .map(([groupId, choiceIds]) => [groupId, [...choiceIds]]));
     void traceMeal('detail-add');
-    onAdd(quantity, normalized);
+    if (onAdd(quantity, normalized)) close();
   }
 
-  return <View style={styles.scene}>
-    <View ref={sheetRef} onLayout={() => {
+  return <View {...pan.panHandlers} style={styles.scene}>
+    <Animated.View style={[styles.movingSheet, { transform: [{ translateY: slide.value }] }]}>
+    <View ref={sheetRef} onAccessibilityEscape={close} onLayout={() => {
       if (layoutReported.current) return;
       layoutReported.current = true;
       void traceMeal('detail-layout');
     }} {...(Platform.OS === 'web' ? { role: 'dialog', 'aria-modal': true, 'aria-label': meal.name } as const : { accessibilityViewIsModal: true })}
       style={[styles.sheet, { borderTopLeftRadius: radius, borderTopRightRadius: radius }]}>
-      <View>
-        <View style={styles.dragRegion}
-          onTouchStart={event => { touchStart.current = event.nativeEvent.pageY; }}
-          onTouchCancel={() => { touchStart.current = null; }}
-          onTouchEnd={event => {
-            const start = touchStart.current;
-            touchStart.current = null;
-            if (start !== null && event.nativeEvent.pageY - start > 65) close();
-          }}><View style={styles.dragHandle}/></View>
+      <View style={styles.dragHeader} onTouchStart={() => { startedAtTop.current = true; }}>
+        <View style={styles.dragRegion}><View style={styles.dragHandle}/></View>
         <View style={styles.header}>
           <Pressable ref={closeButton} accessibilityRole="button" accessibilityLabel="Close meal options" onPress={close} style={styles.close} hitSlop={8}>
             <X size={21} color={maroon}/>
@@ -163,6 +177,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       </View>
 
       <ScrollView ref={scrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}
+        bounces={false} overScrollMode="never" scrollEventThrottle={16} onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}
         keyboardShouldPersistTaps="handled">
         {meal.tag && <View style={styles.tag}><Text style={styles.tagText}>{meal.tag}</Text></View>}
         {needsEquipment && <View style={styles.warning}>
@@ -213,7 +228,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
               {meal.publishedSteps?.length ? meal.publishedSteps.map((step, index) => <View key={`${index}-${step}`} style={styles.preparationStep}>
                 <Text style={styles.preparationStepNumber}>{index + 1}</Text>
                 <Text style={styles.preparationStepText}>{step}</Text>
-              </View>) : <Text style={styles.preparationEmpty}>Preparation instructions will be available soon.</Text>}
+              </View>) : <Text style={styles.preparationEmpty}>Check your kit label or ask the restaurant for preparation directions.</Text>}
           </View>}
         </View>
 
@@ -239,6 +254,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
         </Pressable>
       </View>
     </View>
+    </Animated.View>
   </View>;
 }
 
@@ -248,9 +264,11 @@ const muted = '#77645B';
 const line = '#E8DCD5';
 
 const styles = StyleSheet.create({
-  scene: { flex: 1, alignItems: 'center', paddingTop: 9, backgroundColor: '#F1E3DC' },
-  sheet: { flex: 1, minHeight: 0, width: '100%', maxWidth: 720, backgroundColor: '#FAF6F3', overflow: 'hidden' },
-  dragRegion: { minHeight: 26, justifyContent:'center', ...(Platform.OS==='web'?{touchAction:'none'}:{}) },
+  scene: { flex: 1, alignItems: 'center', paddingTop: 9, backgroundColor: '#F1E3DC', overflow: 'hidden' },
+  movingSheet: { flex: 1, minHeight: 0, width: '100%', maxWidth: 720 },
+  sheet: { flex: 1, minHeight: 0, backgroundColor: '#FAF6F3', overflow: 'hidden' },
+  dragHeader: { ...(Platform.OS === 'web' ? { touchAction: 'none' } : {}) } as ViewStyle,
+  dragRegion: { minHeight: 26, justifyContent: 'center' },
   dragHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: '#CFC0B8', marginBottom: 5 },
   header: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 12, paddingTop: 4, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: line, gap: 8 },
   headerText: { flex: 1, minWidth: 0 },

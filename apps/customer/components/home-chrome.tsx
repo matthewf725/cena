@@ -82,6 +82,7 @@ export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onP
 }) {
   const progress = useRef(new Animated.Value(compact ? 0 : 1)).current;
   const [measuredLabelWidth, setMeasuredLabelWidth] = useState(0);
+  const [pressed, setPressed] = useState(false);
   const width = Math.min(labelWidth, measuredLabelWidth + 7);
   useEffect(() => {
     const toValue = compact ? 0 : 1;
@@ -92,11 +93,16 @@ export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onP
   }, [compact, progress, reduced]);
 
   const shift = progress.interpolate({ inputRange: [0, 1], outputRange: [width, 0] });
+  const backgroundColor = pressed ? '#F4E8E2' : '#FFFFFF';
   return <View pointerEvents="box-none" style={[s.pickupTarget, { width: controlSize + width }]}>
-    <View pointerEvents="none" style={s.pickupEndCap} />
+    <View pointerEvents="none" style={[s.pickupEndCap, { backgroundColor }]} />
+    {/* The moving fill ends at the fixed cap's center, so its edge stays round as the pin slides. */}
+    <View pointerEvents="none" style={s.pickupFillClip}>
+      <Animated.View style={[s.pickupFill, { width: controlSize + width, backgroundColor, transform: [{ translateX: shift }] }]} />
+    </View>
     <Animated.View pointerEvents="box-none" style={[s.pickupPill, { width: controlSize + width, transform: [{ translateX: shift }] }]}>
       <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={`Change pickup area, ${label}`}
-        onPress={onPress} style={({ pressed }) => [s.pickupSurface, pressed && s.pickupPressed]}>
+        onPress={onPress} onPressIn={() => setPressed(true)} onPressOut={() => setPressed(false)} style={s.pickupSurface}>
         <View pointerEvents="none" style={s.pickupIcon}><MapPin size={19} color={maroon} aria-hidden /></View>
         <Animated.View pointerEvents="none" aria-hidden style={[s.pickupLabelClip, { width, opacity: progress }]}>
           <Text numberOfLines={1} style={s.pickupLabel}>{label}</Text>
@@ -211,10 +217,11 @@ const s = StyleSheet.create({
   pressTarget: { flexShrink: 0 },
   control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
   pickupTarget: { height: controlSize, flexShrink: 0, position: 'relative', overflow: 'hidden' },
-  pickupEndCap: { position: 'absolute', right: 0, width: controlSize, height: controlSize, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF' },
+  pickupEndCap: { position: 'absolute', right: 0, width: controlSize, height: controlSize, borderRadius: controlSize / 2 },
+  pickupFillClip: { position: 'absolute', left: 0, right: controlSize / 2, top: 0, height: controlSize, overflow: 'hidden' },
+  pickupFill: { height: controlSize, borderTopLeftRadius: controlSize / 2, borderBottomLeftRadius: controlSize / 2 },
   pickupPill: { position: 'absolute', right: 0, top: 0, height: controlSize },
-  pickupSurface: { flex: 1, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF', overflow: 'hidden' },
-  pickupPressed: { backgroundColor: '#F4E8E2' },
+  pickupSurface: { flex: 1 },
   pickupIcon: { position: 'absolute', left: 12, top: 12.5 },
   pickupLabelClip: { position: 'absolute', left: 31, top: 12, overflow: 'hidden' },
   pickupLabel: { color: maroon, fontSize: 14, marginLeft: 7, lineHeight: 20 },

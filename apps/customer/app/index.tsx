@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ActivityIndicator, Animated, AppState, BackHandler, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, AppState, BackHandler, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Location from 'expo-location';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
@@ -11,8 +11,10 @@ import { DiscoveryFeed } from '../components/discovery-feed';
 import { HeaderButton, HeaderWordmark, HomeSearch, PageHeader, PickupAreaButton, headerContentGap, homeContentMaxWidth, searchGap } from '../components/home-chrome';
 import { Text, TextInput } from '../components/type';
 import { Account } from '../components/account';
+import { CustomerSettings } from '../components/customer-settings';
 import { DemoProfile } from '../components/demo-profile';
 import { loadDemoPreviewProfile, type DemoPreviewProfile } from '../lib/demo-profile';
+import { useOrderBadgePreference } from '../lib/order-badge-preference';
 import { iosTraceEnabled, traceMeal, type MealTraceEvent } from '../lib/ios-trace';
 import { AuthScreen } from '../components/auth-screen';
 import { Bag, type BagLine } from '../components/bag';
@@ -20,6 +22,7 @@ import { LocationPicker } from '../components/location-picker';
 import { MealPrice } from '../components/meal-price';
 import { MealSelection } from '../components/meal-selection';
 import { MenuQuantity, useMenuTabOffset } from '../components/menu-quantity';
+import { useSlideUp } from '../components/slide-up';
 import { PickupCountdown } from '../components/pickup-countdown';
 import { RestaurantMenuBoundary } from '../components/restaurant-menu-boundary';
 import { mealSelectionSummary, normalizeMealSelections, type Kitchen, type Meal, type MealSelections } from '../lib/data';
@@ -28,7 +31,7 @@ import { foodPhoto } from '../lib/food-photos';
 import { dateLabel, dayOffset } from '../lib/pickup-days';
 import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, fetchRestaurantRecentOrders, getCachedKitchenMenu, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutItem, type CheckoutQuote } from '../lib/supabase';
 import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
-import { loadCustomerDisplayName } from '../lib/profile';
+import { loadCustomerAnalyticsConsent, loadCustomerDisplayName } from '../lib/profile';
 import { calPolyDemo, calPolyPickupArea, loadCalPolyDemo, type CalPolyDemo, type DemoOrder } from '../lib/cal-poly-demo';
 import { restaurantPhoto, restaurantRating, restaurantRatingSource } from '../lib/restaurant-presentation';
 
@@ -38,16 +41,19 @@ const maroon='#5D100A', ivory='#FAF6F3', ink='#271D19', muted='#77645B', line='#
 const deepMaroon='#46110E';
 const fillScreen={position:'absolute',top:0,right:0,bottom:0,left:0} as const;
 type PickupAddress = PickupOrigin & { label: string };
+const defaultPickupArea: PickupAddress = { ...sanFrancisco, label: 'From San Francisco' };
 
-function accountPickupArea(metadata: unknown): PickupAddress {
-  const defaultArea = { ...sanFrancisco, label: 'From San Francisco' };
-  if (!metadata || typeof metadata !== 'object' || !('pickup_area' in metadata)) return defaultArea;
-  const area = metadata.pickup_area;
+function parsePickupAddress(area: unknown): PickupAddress | null {
   if (!area || typeof area !== 'object' || !('label' in area) || typeof area.label !== 'string'
     || !('latitude' in area) || typeof area.latitude !== 'number' || !Number.isFinite(area.latitude)
     || !('longitude' in area) || typeof area.longitude !== 'number' || !Number.isFinite(area.longitude)
-    || Math.abs(area.latitude) > 90 || Math.abs(area.longitude) > 180 || !area.label.trim()) return defaultArea;
+    || Math.abs(area.latitude) > 90 || Math.abs(area.longitude) > 180 || !area.label.trim()) return null;
   return { latitude: area.latitude, longitude: area.longitude, label: area.label.trim().slice(0, 160) };
+}
+
+function accountPickupArea(metadata: unknown): PickupAddress {
+  return metadata && typeof metadata === 'object' && 'pickup_area' in metadata
+    ? parsePickupAddress(metadata.pickup_area) ?? defaultPickupArea : defaultPickupArea;
 }
 const checkoutLeadMs=33*60*1000;
 const lineKey=(mealId:string,selections:MealSelections)=>Object.keys(selections).length?`${mealId}:${JSON.stringify(selections)}`:mealId;
@@ -95,7 +101,8 @@ export default function Home() {
   const mealTrigger=useRef<HTMLElement|null>(null);
   const mealRequest=useRef(0);
   const menuScrollOffset=useRef(0);
-  const animateNextMenu=useRef(false);
+  const restaurantSlide=useSlideUp(height,reduceMotion);
+  const restaurantClosing=useRef(false);
   const [tab,setTab]=useState<Tab>('Home'), [active,setActive]=useState<Kitchen|null>(null), [backendOrders,setBackendOrders]=useState<any[]>([]), [completedItems,setCompletedItems]=useState<{meal:Meal;qty:number}[]>([]), [query,setQuery]=useState(''), [cart,setCart]=useState<Record<string,BagLine>>({}), [selected,setSelected]=useState<Meal|null>(null), [flow,setFlow]=useState<'menu'|'date'|'time'|'contact'|'done'>('menu'), [date,setDate]=useState(1), [slot,setSlot]=useState('5:30 PM'), [curb,setCurb]=useState(false), [email,setEmail]=useState(''), [phone,setPhone]=useState(''), [displayName,setDisplayName]=useState(''), [vehicleMake,setVehicleMake]=useState(''), [vehicleModel,setVehicleModel]=useState(''), [vehicleColor,setVehicleColor]=useState(''), [equipment,setEquipment]=useState<string[]>([]), [analyticsConsented,setAnalyticsConsented]=useState(false), [hydrated,setHydrated]=useState(false), [authResolved,setAuthResolved]=useState(!supabase), [otpSent,setOtpSent]=useState(false), [otpCode,setOtpCode]=useState(''), [now,setNow]=useState(Date.now()), [notice,setNotice]=useState<{title:string;message:string}|null>(null);
   const [checkingBag,setCheckingBag]=useState(false);
   const [otpResendAt,setOtpResendAt]=useState(0);
@@ -115,12 +122,17 @@ export default function Home() {
   const locationRequest=useRef(0);
   const [locationError,setLocationError]=useState('');
   const [recentAddresses,setRecentAddresses]=useState<PickupAddress[]>([]);
+  const locationDefault=useRef(calPolyDemo?calPolyPickupArea:defaultPickupArea);
+  const pickupEdit=useRef(0);
+  const pickupSave=useRef<Promise<void>>(Promise.resolve());
   const accountReturnTab=useRef<Exclude<Tab,'Account'>>('Home');
   const [locating,setLocating]=useState(false);
   const [menuLoading,setMenuLoading]=useState(false);
   const [menuLoadFailed,setMenuLoadFailed]=useState(false);
   const [authenticated,setAuthenticated]=useState(false);
   const [authUserId,setAuthUserId]=useState<string|null>(null);
+  const savedPickupKey=authResolved?`cena.pickup-addresses.v1.${authUserId??'guest'}`:null;
+  const orderBadge=useOrderBadgePreference(authUserId);
   const [savedName,setSavedName]=useState<{userId:string;name:string}|null>(null);
   const [demo,setDemo]=useState<CalPolyDemo>();
   const [demoLoading,setDemoLoading]=useState(calPolyDemo);
@@ -161,13 +173,30 @@ export default function Home() {
   const menuRequest=useRef(0);
   const bagRequest=useRef(0);
   const idempotency=useRef({ fingerprint:'', key:'' });
-  const navShown=!active&&!showLocation&&(!supabase||authenticated||calPolyDemo);
+  const navShown=!active&&!showLocation&&tab!=='Account'&&(!supabase||authenticated||calPolyDemo);
   const navOffset=useMenuTabOffset(navShown,reduceMotion||Platform.OS==='ios',navHeight);
   const submitting=useRef(false);
   const effectiveDemoProfile=demoProfile??demo?.profile;
   const profileName=authUserId?(savedName?.userId===authUserId?savedName.name:''):(effectiveDemoProfile?.display_name??'');
   const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
   const activeEquipment=authUserId?equipment:(effectiveDemoProfile?.equipment??equipment);
+  useEffect(()=>{
+    if(!savedPickupKey)return;
+    let mounted=true;
+    const revision=pickupEdit.current;
+    void pickupSave.current.then(()=>AsyncStorage.getItem(savedPickupKey)).then(raw=>{
+      if(!mounted||pickupEdit.current!==revision||!raw)return;
+      const entries: unknown=JSON.parse(raw);
+      if(!Array.isArray(entries))return;
+      const addresses=entries.slice(0,5).map(parsePickupAddress).filter(address=>address!==null);
+      setRecentAddresses(addresses);
+      if(addresses[0]){
+        setOrigin(addresses[0]);
+        setLocationLabel(addresses[0].label);
+      }
+    }).catch(()=>{});
+    return()=>{mounted=false;};
+  },[savedPickupKey]);
   useEffect(()=>{void traceMeal('boot');},[]);
   useEffect(()=>{
     if(!calPolyDemo||authUserId)return;
@@ -196,6 +225,14 @@ export default function Home() {
     return ()=>{active=false;};
   },[authUserId,profileRevision]);
   useEffect(()=>{
+    if(!authUserId)return;
+    let active=true;
+    void loadCustomerAnalyticsConsent(authUserId).then(value=>{
+      if(active&&currentAuthUserId.current===authUserId)setAnalyticsConsented(value);
+    }).catch(()=>{});
+    return()=>{active=false;};
+  },[authUserId]);
+  useEffect(()=>{
     if(!active||flow==='menu'||flow==='done')return;
     setNow(Date.now());
     const timer=setInterval(()=>setNow(Date.now()),1000);
@@ -212,7 +249,9 @@ export default function Home() {
       setDemo(next);
       const area=next.pickup_area;
       if(area){
-        setOrigin(previous=>previous===calPolyPickupArea?area:previous);
+        const previousDefault=locationDefault.current;
+        locationDefault.current=area;
+        setOrigin(previous=>previous===previousDefault?area:previous);
         setLocationLabel(previous=>previous===calPolyPickupArea.label?area.label:previous);
       }
     }).catch(()=>{}).finally(()=>{clearTimeout(timeout);if(current)setDemoLoading(false);});
@@ -231,10 +270,12 @@ export default function Home() {
       const nextUserId=session?.user.id??null;
       const previousAuthUserId=currentAuthUserId.current;
       if(currentAuthUserId.current!==nextUserId){
-         const area=accountPickupArea(session?.user.user_metadata);
-         setOrigin({latitude:area.latitude,longitude:area.longitude});
+         const area=!nextUserId&&calPolyDemo?calPolyPickupArea:accountPickupArea(session?.user.user_metadata);
+         locationDefault.current=area;
+         pickupEdit.current++;
+         setOrigin(area);
          setLocationLabel(area.label);
-         if(currentAuthUserId.current)setRecentAddresses([]);
+         setRecentAddresses([]);
          setSavedName(null);
          const previousUserId=currentAuthUserId.current;
          const previousStorageOwner=storageOwnerRef.current;
@@ -506,6 +547,7 @@ export default function Home() {
         new Promise<never>((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Location took too long')),10_000);}),
       ]);
       if(request!==locationRequest.current)return;
+      pickupEdit.current++;
       setOrigin({
         latitude:Math.round(position.coords.latitude*100)/100,
         longitude:Math.round(position.coords.longitude*100)/100,
@@ -567,7 +609,8 @@ export default function Home() {
   const openKitchen=useCallback(async (kitchen:Kitchen,forceRefresh=false)=>{
     const request=++menuRequest.current;
     menuScrollOffset.current=0;
-    animateNextMenu.current=!forceRefresh;
+    restaurantClosing.current=false;
+    if(!forceRefresh)restaurantSlide.present();
     const cached=forceRefresh?null:getCachedKitchenMenu(kitchen);
     setActive(cached??kitchen);
     setFlow('menu');
@@ -585,18 +628,27 @@ export default function Home() {
     }finally{
       if(request===menuRequest.current)setMenuLoading(false);
     }
-  },[analyticsConsented]);
-  const closeKitchen=()=>{
-    menuRequest.current++;
-    setMenuLoading(false);
-    setMenuLoadFailed(false);
-    setActive(null);
-    setSelected(null);
-  };
+  },[analyticsConsented,restaurantSlide]);
+  const closeKitchen=useCallback((animate=false)=>{
+    if(animate&&restaurantClosing.current)return;
+    restaurantClosing.current=animate;
+    const request=++menuRequest.current;
+    mealRequest.current++;
+    const finish=()=>{
+      if(menuRequest.current!==request)return;
+      restaurantClosing.current=false;
+      setMenuLoading(false);
+      setMenuLoadFailed(false);
+      setActive(null);
+      setSelected(null);
+    };
+    if(animate)restaurantSlide.dismiss(finish);
+    else{restaurantSlide.reset();finish();}
+  },[restaurantSlide]);
   const navigate=(destination:Tab)=>{
     bagRequest.current++;
     setCheckingBag(false);
-    if(active)closeKitchen();
+    if(active)closeKitchen(flow==='menu');
     setTab(destination);
   };
   function toggleProfile() {
@@ -656,15 +708,16 @@ export default function Home() {
     }
   }
   const openMeal=(meal:Meal,quantity=1,selections:MealSelections={},source:MealTraceEvent='meal-tap')=>{
+    if(restaurantClosing.current)return;
     const request=++mealRequest.current;
     const restaurant=menuRequest.current;
     mealTrigger.current=Platform.OS==='web'&&document.activeElement instanceof HTMLElement?document.activeElement:null;
     const show=()=>{
       if(mealRequest.current!==request||menuRequest.current!==restaurant)return;
       void traceMeal('detail-requested');
-      animateNextMenu.current=false;
       mealQuantity.current=Math.min(50,Math.max(1,quantity));
       mealInitialSelections.current=normalizeMealSelections(selections);
+      restaurantSlide.reset();
       setSelected(meal);
       if(supabase&&analyticsConsented&&active?.backendId)void trackEvent('item_view',active.backendId,meal.backendItemId?{item_id:meal.backendItemId}:{});
     };
@@ -697,13 +750,39 @@ export default function Home() {
     const back=BackHandler.addEventListener('hardwareBackPress',()=>{closeLocationPicker();return true;});
     return()=>back.remove();
   },[closeLocationPicker,showLocation]);
-  const usePickupAddress=(address:PickupAddress)=>{
-    setOrigin({latitude:address.latitude,longitude:address.longitude});
-    setLocationLabel(address.label);
-    setRecentAddresses(current=>[address,...current.filter(item=>item.label!==address.label)].slice(0,5));
-    closeLocationPicker();
+  const savePickupAddresses=(addresses:PickupAddress[])=>{
+    pickupEdit.current++;
+    setRecentAddresses(addresses);
+    if(savedPickupKey)pickupSave.current=pickupSave.current.then(()=>
+      AsyncStorage.setItem(savedPickupKey,JSON.stringify(addresses))).catch(()=>{
+        setNotice({title:'Couldn’t save addresses',message:'The address change is available until you close Cena.'});
+      });
   };
-  const closeFlow=()=>{if(flow==='time')setFlow('date');else closeKitchen();};
+  const usePickupAddress=(address:PickupAddress)=>{
+    setOrigin(address);
+    setLocationLabel(address.label);
+    savePickupAddresses([address,...recentAddresses.filter(item=>item.label!==address.label)].slice(0,5));
+    if(showLocation)closeLocationPicker();
+  };
+  const removePickupAddress=(label:string)=>{
+    const addresses=recentAddresses.filter(item=>item.label!==label);
+    if(locationLabel===label){
+      const next=addresses[0]??locationDefault.current;
+      setOrigin(next);
+      setLocationLabel(next.label);
+    }
+    savePickupAddresses(addresses);
+  };
+  const closeFlow=useCallback(()=>{
+    if(flow==='time')setFlow('date');
+    else closeKitchen(flow==='menu');
+  },[closeKitchen,flow]);
+  const useRestaurantBack=Boolean(active)&&!selected&&!showLocation;
+  useEffect(()=>{
+    if(Platform.OS!=='android'||!useRestaurantBack)return;
+    const back=BackHandler.addEventListener('hardwareBackPress',()=>{closeFlow();return true;});
+    return()=>back.remove();
+  },[closeFlow,useRestaurantBack]);
   const sendCheckoutCode=async()=>{
     const requestedEmail=checkoutEmailRef.current.trim().toLowerCase();
     if(Date.now()<otpResendAt)return;
@@ -892,6 +971,7 @@ export default function Home() {
   const menuIsOpen=Boolean(active)&&flow==='menu';
   const compactLocation=tab!=='Home'||homeCompact;
   const topSpace=identityHeight+headerContentGap;
+  const settingsBottom=Math.max(20,insets.bottom+20);
   const requiresSignIn = !calPolyDemo && Boolean(supabase) && !authenticated;
   const checkingAccount = !calPolyDemo && Boolean(supabase) && !authResolved;
   if (authResolved&&requiresSignIn) {
@@ -916,7 +996,7 @@ export default function Home() {
       <MealSelection meal={selected} groups={selected.optionGroups??[]} equipment={activeEquipment}
         initialQuantity={mealQuantity.current} initialSelections={mealInitialSelections.current} reduced={reduceMotion}
         bottomInset={insets.bottom} returnFocusTo={mealTrigger.current} onClose={()=>setSelected(null)}
-        onAdd={(quantity,selections)=>{if(add(selected,quantity,selections))setSelected(null);}}/>
+        onAdd={(quantity,selections)=>add(selected,quantity,selections)}/>
     </RestaurantMenuBoundary>
     {notice&&<CustomerNotice notice={notice} dismiss={()=>setNotice(null)}/>}
   </View>;
@@ -926,8 +1006,8 @@ export default function Home() {
     </HeaderWordmark>
     <PickupAreaButton ref={pickupAreaButtonRef} label={locationLabel} compact={compactLocation} reduced={reduceMotion}
       labelWidth={Math.max(0,Math.min(240,safeWidth-2*headerSide-180))} onPress={()=>setShowLocation(true)}/>
-    <HeaderButton label={onAccount?'Close profile':'Open account'} onPress={toggleProfile} reduced={reduceMotion}>
-      {onAccount?<X size={20} color={deepMaroon} aria-hidden/>:profileInitial?<Text numberOfLines={1} style={s.avatarInitial}>{profileInitial}</Text>:<UserRound size={19} color={deepMaroon} aria-hidden/>}
+    <HeaderButton label="Open account" onPress={toggleProfile} reduced={reduceMotion}>
+      {profileInitial?<Text numberOfLines={1} style={s.avatarInitial}>{profileInitial}</Text>:<UserRound size={19} color={deepMaroon} aria-hidden/>}
     </HeaderButton>
   </View>;
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
@@ -937,24 +1017,31 @@ export default function Home() {
     <View style={tabStyles.mainTab}>
     <View style={active||showLocation?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
-      <PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>
+      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>}
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll} suspended={Boolean(active)||showLocation}
           clearQuery={()=>setQuery('')}
-      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace} orderNow={orderClock}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo&&!authUserId?
-        <DemoProfile profile={effectiveDemoProfile} topSpace={topSpace} bottomSpace={navHeight+18} loading={demoLoading}
-          retry={()=>setDemoAttempt(attempt=>attempt+1)} onProfileSaved={setDemoProfile}/>:<Account
-          userId={authUserId} topSpace={topSpace} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
-          setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
-          displayName={displayName} setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
+      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace} orderNow={orderClock}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<CustomerSettings
+        topInset={insets.top} bottomSpace={settingsBottom} reduced={reduceMotion} userId={authUserId}
+        locationLabel={locationLabel} recentAddresses={recentAddresses} addressPickerOpen={showLocation}
+        onClose={toggleProfile} onOpenAddress={()=>setShowLocation(true)} onSelectAddress={usePickupAddress} onRemoveAddress={removePickupAddress}
+        onOpenOrders={()=>navigate('Orders')} onOpenBag={()=>navigate('Bag')} analyticsConsented={analyticsConsented}
+        setAnalyticsConsented={setAnalyticsConsented} orderBadge={orderBadge}
+        manageAccount={()=>calPolyDemo&&!authUserId?<DemoProfile settingsMode profile={effectiveDemoProfile}
+          topSpace={0} bottomSpace={settingsBottom} loading={demoLoading}
+          retry={()=>setDemoAttempt(attempt=>attempt+1)} onProfileSaved={setDemoProfile}/>:<Account settingsMode
+          userId={authUserId} topSpace={0} bottomSpace={settingsBottom} equipment={equipment} setEquipment={setEquipment}
+          email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone} displayName={displayName}
+          setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}/>}
       </Enter>
       {tab==='Home'&&!active&&!showLocation&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight} reduced={reduceMotion}/>}
     </View>
 
-    {active&&<RestaurantArrival key={active.id} animate={menuIsOpen&&animateNextMenu.current&&!reduceMotion} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}>
+    {active&&<Animated.View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'},
+      menuIsOpen&&{transform:[{translateY:restaurantSlide.value}]}]}>
       <View style={[s.modalTop,menuIsOpen&&tabStyles.menuGradientRegion]}>{menuIsOpen&&<RestaurantGradient/>}<Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={[s.modalBrand,menuIsOpen&&tabStyles.menuWordmark]}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={menuIsOpen?'#FFF':maroon}/></Pressable></View>
       {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active,true)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}
         contentOffset={{x:0,y:menuScrollOffset.current}} scrollEventThrottle={16}
@@ -990,16 +1077,16 @@ export default function Home() {
       </>}{!authenticated&&!!otpFeedback&&<Text accessibilityLiveRegion="polite" style={[s.checkoutInfoText,{marginBottom:10}]}>{otpFeedback}</Text>}{curb&&<><Text style={s.settingsSection}>YOUR VEHICLE FOR CURBSIDE</Text><View style={s.inputWrap}><TextInput style={s.contactInput} value={vehicleMake} onChangeText={setVehicleMake} placeholder="Make" placeholderTextColor="#A69A94"/><TextInput style={s.contactInput} value={vehicleModel} onChangeText={setVehicleModel} placeholder="Model" placeholderTextColor="#A69A94"/></View><View style={s.inputWrap}><TextInput style={s.contactInput} value={vehicleColor} onChangeText={setVehicleColor} placeholder="Color" placeholderTextColor="#A69A94"/></View></>}<View style={s.checkoutInfo}><PackageCheck size={19} color={green}/><Text style={s.checkoutInfoText}>{supabase?'Secure payment is required to place this pickup order. You will return here to confirm it.':'Secure checkout is unavailable in this preview; browsing is still available.'}</Text></View>{checkout&&<View style={s.checkoutInfo}><PackageCheck size={19} color={green}/><Text style={s.checkoutInfoText}>Payment {paymentStatus==='pending'?'is still processing. Complete payment in secure checkout, then return here.':paymentStatus==='paid'?'confirmed.':`status: ${paymentStatus??'pending'}.`}</Text><Pressable onPress={()=>void refreshPaymentStatus(checkout)}><Text style={s.summaryEdit}>Check</Text></Pressable></View>}{!checkout&&paymentStatus&&<View style={s.checkoutInfo}><Text style={s.checkoutInfoText}>{paymentStatus==='refunded'?'This order was refunded. View the refund in Orders.':paymentStatus==='expired'?'That payment session expired. Your bag is saved; start a new secure checkout.':'Payment did not complete. Your bag is saved; try secure checkout again.'}</Text></View>}<View style={{flex:1}}/><View style={s.pickupSummary}><View style={{flex:1}}><Text style={s.pickupSummaryTitle}>Bag subtotal</Text><Text style={s.pickupSummarySub}>{dollars(subtotal)}</Text></View></View>{!supabase&&<View style={s.totalRow}><Text style={s.totalLabel}>Meal kit total · preview</Text><Text style={s.totalPrice}>{dollars(subtotal)}</Text></View>}<Pressable accessibilityRole="button" onPress={paymentStatus==='refunded'?()=>{closeKitchen();setTab('Orders');}:place} disabled={!checkout&&paymentStatus!=='refunded'&&(otpBusy||quoteLoading||!email.includes('@')||(supabase&&!authenticated&&(otpSent?otpCode.length!==6:now<otpResendAt)))} style={[s.primaryBtn,(!checkout&&paymentStatus!=='refunded'&&(otpBusy||quoteLoading||!email.includes('@')||(supabase&&!authenticated&&(otpSent?otpCode.length!==6:now<otpResendAt))))&&{opacity:.5}]}><Text style={s.primaryBtnText}>{paymentStatus==='refunded'?'View order history':checkout?'Open secure checkout':supabase&&!authenticated&&!otpSent?'Email me a sign-in code':supabase&&!authenticated?'Verify code and continue':!quoteMatches?(promoCode.trim()?'Apply code & review total':'Review total'):'Continue to secure payment · '+dollars(quote!.data.amount_cents/100)}</Text><ChevronRight size={19} color="#FFF"/></Pressable><Text style={s.finePrint}>You will only see order confirmation after payment is verified.</Text></ScrollView></KeyboardAvoidingView>}
       {flow==='done'&&<View style={s.doneView}><View style={s.doneIcon}><Check size={32} color="#FFF"/></View><Text style={s.doneEyebrow}>YOU’RE ALL SET</Text><Text style={s.doneTitle}>Dinner is{ '\n' }in motion.</Text><Text style={s.doneSub}>Your order is linked to {email}. Follow pickup progress from Orders.</Text><View style={s.doneCard}><View style={s.doneCardRow}><CreditCard size={17} color={green}/><Text style={s.doneCardText}>Paid · {dollars(completedTotal)}</Text></View><View style={s.doneCardRow}><CalendarDays size={17} color={maroon}/><Text style={s.doneCardText}>{dateLabel(date,active.timezone)} · {slot}</Text></View><View style={s.doneCardRow}><MapPin size={17} color={maroon}/><Text style={s.doneCardText}>{active.name} · {active.address||"Oakland, CA"}</Text></View><View style={s.prepTimeline}><TimelineItem icon={<CircleCheck size={16} color={green}/>} title="Order received" done/><TimelineItem icon={<ChefHat size={16} color={maroon}/>} title="Published prep steps are saved below"/><TimelineItem icon={<Bell size={16} color={muted}/>} title="Check pickup progress in the Orders tab"/></View></View><Pressable accessibilityRole="button" onPress={()=>{setFlow('menu');closeKitchen();setTab('Orders')}} style={s.primaryBtn}><Text style={s.primaryBtnText}>View order progress</Text><ChevronRight size={19} color="#FFF"/></Pressable><Pressable accessibilityRole="button" onPress={()=>navigate('Home')} style={s.doneLink}><Text style={s.doneLinkText}>Back to browsing</Text></Pressable></View>}
       {flow==='menu'&&!menuLoading&&cartCount>0&&Object.values(cart).every(x=>x.restaurantId===active.id)&&<Animated.View style={{position:'absolute',left:0,right:0,bottom:0,transform:[{scale:bagPulse}]}}><Pressable style={s.cartBar} accessibilityRole="button" accessibilityLabel="View bag" onPress={()=>navigate('Bag')}><View style={s.cartBubble}><Text style={s.cartBubbleText}>{cartCount}</Text></View><Text style={s.cartBarLabel}>View bag</Text><Text style={s.cartBarPrice}>{dollars(subtotal)}</Text><ChevronRight size={18} color="#FFF"/></Pressable></Animated.View>}
-    </RestaurantArrival>}
+    </Animated.View>}
     {(navShown||Platform.OS!=='ios')&&<Animated.View pointerEvents={navShown?'auto':'none'} aria-hidden={!navShown} accessibilityElementsHidden={!navShown}
       importantForAccessibility={navShown?'auto':'no-hide-descendants'} style={[s.bottomNav,{height:navHeight,paddingBottom:navPadding,transform:[{translateY:navOffset}]}]}>{footerTabs.map(({name,Icon})=><Pressable
       key={name} accessibilityRole="tab" accessibilityState={{selected:tab===name}} aria-selected={tab===name}
       accessibilityLabel={name==='Bag'&&cartCount?`Bag, ${cartCount} ${cartCount===1?'item':'items'}`:
-        name==='Orders'&&upcomingCount?`Orders, ${upcomingCount} upcoming ${upcomingCount===1?'order':'orders'}`:name}
+        name==='Orders'&&orderBadge.enabled&&upcomingCount?`Orders, ${upcomingCount} upcoming ${upcomingCount===1?'order':'orders'}`:name}
       onPress={()=>navigate(name)} style={[s.navItem,{flex:1,minHeight:44}]}>
       <View style={s.navIconWrap}><Icon size={21} color={tab===name?maroon:muted}/>
         {name==='Bag'&&cartCount>0&&<View style={s.navBadge}><Text style={s.navBadgeTxt}>{cartCount>99?'99+':cartCount}</Text></View>}
-        {name==='Orders'&&upcomingCount>0&&<View aria-hidden testID="orders-upcoming-badge" style={s.navBadge}><Text style={s.navBadgeTxt}>{upcomingCount>99?'99+':upcomingCount}</Text></View>}
+        {name==='Orders'&&orderBadge.enabled&&upcomingCount>0&&<View aria-hidden testID="orders-upcoming-badge" style={s.navBadge}><Text style={s.navBadgeTxt}>{upcomingCount>99?'99+':upcomingCount}</Text></View>}
       </View>
       <Text style={[s.navText,tab===name&&s.navTextActive]}>{name}</Text>
     </Pressable>)}</Animated.View>}
@@ -1025,17 +1112,6 @@ function RestaurantGradient(){
       <Rect width="100%" height="100%" fill={`url(#${id})`}/>
     </Svg>
   </View>;
-}
-
-function RestaurantArrival({animate,style,children}:{animate:boolean;style:StyleProp<ViewStyle>;children:ReactNode}){
-  const translate=useRef(new Animated.Value(animate?22:0)).current;
-  useEffect(()=>{
-    if(!animate){translate.setValue(0);return;}
-    const movement=Animated.timing(translate,{toValue:0,duration:190,useNativeDriver:Platform.OS!=='web'});
-    movement.start();
-    return()=>movement.stop();
-  },[animate,translate]);
-  return <Animated.View style={[style,{transform:[{translateY:translate}]}]}>{children}</Animated.View>;
 }
 
 const tabStyles=StyleSheet.create({

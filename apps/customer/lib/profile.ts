@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 
 export type CustomerProfile = { displayName: string; phone: string; equipment: string[] };
-export type CustomerAccount = { userId: string; email: string; profile: CustomerProfile; analyticsConsented: boolean };
+export type CustomerAccount = { userId: string; email: string; profile: CustomerProfile };
 
 function client() {
   if (!supabase) throw new Error('Supabase is not configured. You can still use Cena as a guest.');
@@ -55,18 +55,22 @@ export async function loadCustomerDisplayName(expectedUserId: string): Promise<s
   return typeof data?.display_name === 'string' ? data.display_name.trim() : '';
 }
 
+export async function loadCustomerAnalyticsConsent(expectedUserId: string): Promise<boolean> {
+  const api = client();
+  const { data, error } = await api.from('consent_records').select('consent_action')
+    .eq('user_id', expectedUserId).eq('consent_type', 'analytics').order('created_at', { ascending: false })
+    .order('id', { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data?.consent_action === 'granted';
+}
+
 export async function loadCustomerAccount(): Promise<CustomerAccount | null> {
   const api = client();
   const { data: { session }, error: sessionError } = await api.auth.getSession();
   if (sessionError) throw sessionError;
   if (!session) return null;
-  const [profileResult, consentResult] = await Promise.all([
-    api.from('profiles').select('display_name,phone,equipment').eq('id', session.user.id).maybeSingle(),
-    api.from('consent_records').select('consent_action').eq('user_id', session.user.id).eq('consent_type', 'analytics')
-      .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle(),
-  ]);
+  const profileResult = await api.from('profiles').select('display_name,phone,equipment').eq('id', session.user.id).maybeSingle();
   if (profileResult.error) throw profileResult.error;
-  if (consentResult.error) throw consentResult.error;
   return {
     userId: session.user.id,
     email: session.user.email ?? '',
@@ -75,11 +79,10 @@ export async function loadCustomerAccount(): Promise<CustomerAccount | null> {
       phone: profileResult.data?.phone ?? '',
       equipment: profileResult.data?.equipment ?? [],
     },
-    analyticsConsented: consentResult.data?.consent_action === 'granted',
   };
 }
 
-export async function saveCustomerAccount(profile: CustomerProfile, analyticsConsented: boolean, expectedUserId: string) {
+export async function saveCustomerAccount(profile: CustomerProfile, expectedUserId: string) {
   const api = client();
   const { data: { user }, error: userError } = await api.auth.getUser();
   if (userError) throw userError;
@@ -91,15 +94,6 @@ export async function saveCustomerAccount(profile: CustomerProfile, analyticsCon
     equipment: profile.equipment,
   }, { onConflict: 'id' });
   if (profileError) throw profileError;
-  const { data: consent, error: consentReadError } = await api.from('consent_records').select('consent_action')
-    .eq('user_id', user.id).eq('consent_type', 'analytics').order('created_at', { ascending: false })
-    .order('id', { ascending: false }).limit(1).maybeSingle();
-  if (consentReadError) throw consentReadError;
-  const latest = consent?.consent_action === 'granted';
-  if (!consent || latest !== analyticsConsented) {
-    const { error } = await api.from('consent_records').insert({ user_id: user.id, consent_type: 'analytics', policy_version: '2026-11-13', consent_action: analyticsConsented ? 'granted' : 'revoked' });
-    if (error) throw error;
-  }
 }
 
 export async function signOutCustomer() {

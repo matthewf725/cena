@@ -1,4 +1,5 @@
 -- Run in the cloud SQL editor after creating the five Cal Poly demo Auth users.
+-- Run cal-poly-demo-preparation.sql next to fill the menus and order snapshots.
 -- Public menu sources: lunaredslo.com, mamasmeatball.com/menu,
 -- piadinaslo.com/menus/lunch-dinner/, giuseppesrestaurant.com/giuseppes-cucina-rustica/.
 -- This seed models sample kits, pickup windows, and order history for a walkthrough.
@@ -165,35 +166,6 @@ select o.id,i.id,i.name,i.price_cents,1,i.published_steps,
 from inserted o join public.restaurants r on r.id=o.restaurant_id
 join cal_poly_demo_menu m on m.slug=r.slug and m.sample_order_day is not null
 join public.catalog_items i on i.restaurant_id=r.id and i.name=m.name;
-
--- Sample prep snapshots for the demo walkthrough.
-update public.order_items oi
-set prep_steps_snapshot = case r.cuisine
-  when 'Pizza' then array[
-    'Follow the kit label for oven settings and heating time.',
-    'Arrange the pizza on the recommended tray and heat as directed.',
-    'Finish with any toppings packed separately, then slice.'
-  ]
-  when 'Latin' then array[
-    'Check the kit label for the reheating directions for each container.',
-    'Warm the paella as directed on the kit and stir gently before serving.',
-    'Add the finishing ingredients packed with the kit.'
-  ]
-  else array[
-    'Check the kit label for the reheating directions for each container.',
-    'Warm the pasta and sauce as directed, then toss just before serving.',
-    'Finish with the garnish packed separately.'
-  ]
-end
-from public.orders o
-join public.restaurants r on r.id=o.restaurant_id
-join auth.users u on u.id=o.user_id
-where oi.order_id=o.id
-  and u.email='demo-calpoly-customer@cena.test' and u.raw_user_meta_data->>'cena_demo'='cal-poly'
-  and o.request_hash='cal-poly-demo' and o.payment_method='pay_at_pickup'
-  and r.slug in ('cal-poly-luna-red','cal-poly-mamas-meatball','cal-poly-piadina','cal-poly-giuseppes')
-  and cardinality(oi.prep_steps_snapshot)=0;
--- End sample prep snapshots for the demo walkthrough.
 
 -- Retire the previous San Francisco fixtures while preserving any history that refers to them.
 update public.restaurants set active=false
