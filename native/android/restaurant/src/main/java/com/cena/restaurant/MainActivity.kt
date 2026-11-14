@@ -230,6 +230,9 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   }
 
   var generatingSuggestions = false
+  // A new form becomes an existing draft as soon as its first private save succeeds.
+  // Retain that identity for retries, later saves, and explicit publication.
+  var currentCatalogItemId = item?.optString("id")?.takeIf { it.isNotBlank() && it != "null" }
 
   val available = CheckBox(this).apply {
    text = "Available after publishing"
@@ -292,8 +295,8 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   }
 
   fun saveRoute(payload: JSONObject): String {
-   val route = if (item == null) "/rest/v1/rpc/create_catalog_item_draft" else "/rest/v1/rpc/save_catalog_item_draft"
-   if (item != null) payload.put("p_catalog_item_id", item.optString("id"))
+   val route = if (currentCatalogItemId == null) "/rest/v1/rpc/create_catalog_item_draft" else "/rest/v1/rpc/save_catalog_item_draft"
+   currentCatalogItemId?.let { payload.put("p_catalog_item_id", it) }
    payload.put("p_restaurant_id", rid)
    return route
   }
@@ -366,7 +369,7 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
     val route = saveRoute(payload)
     val targetRestaurantId = rid
     val targetRestaurantRevision = selectedRestaurantRevision
-    val existingItemId = item?.optString("id").orEmpty()
+    val existingItemId = currentCatalogItemId.orEmpty()
     status.setTextColor(clay)
     status.text = "Saving private chef notes, then requesting suggestions…"
     setGenerating(true)
@@ -381,7 +384,13 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
       throw java.io.IOException("The meal kit changed while this form was open. Refresh and try again.")
      }
      if (rid != targetRestaurantId || selectedRestaurantRevision != targetRestaurantRevision) throw StaleMerchantScopeException()
-
+     savedItemId
+    }, done = { savedItemId ->
+     currentCatalogItemId = savedItemId
+     // Generation is a separate request so a failed AI call still leaves this form
+     // attached to the already-saved private item instead of creating a duplicate.
+     go(task = {
+      assertRequestScope()
      // The Edge Function reads the authenticated user's saved draft; send the item id only.
      val generated = JSONObject(req(
       "/functions/v1/generate-prep",
@@ -409,18 +418,23 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
       !sameSteps(latestSource, sourceSnapshot) || !sameSteps(latestGenerated, returnedSteps)) {
       throw java.io.IOException("recipe_changed_retry")
      }
-     JSONObject().put("generated_steps", returnedSteps).toString()
-    }, done = { response ->
-     setGenerating(false)
-     val result = JSONObject(response)
-     reviewed.setText(stepText(result.getJSONArray("generated_steps")))
+      JSONObject().put("generated_steps", returnedSteps).toString()
+     }, done = { response ->
+      setGenerating(false)
+      val result = JSONObject(response)
+      reviewed.setText(stepText(result.getJSONArray("generated_steps")))
      reviewed.hint = "Generated private suggestions · review/edit before publishing"
      status.setTextColor(clay)
      status.text = "Private suggestions saved. Review every step and edit them before publishing."
+     }, onError = { error ->
+      setGenerating(false)
+      status.setTextColor(Color.rgb(160, 45, 35))
+      status.text = prepGenerationFailure(error)
+     })
     }, onError = { error ->
      setGenerating(false)
      status.setTextColor(Color.rgb(160, 45, 35))
-     status.text = prepGenerationFailure(error)
+     status.text = error.message ?: "Could not save the private recipe draft."
     })
    }
   }
