@@ -78,6 +78,11 @@ struct CustomerHome: View {
     @State private var profileSaving = false
     @State private var profileEditRevision = 0
     @State private var profileNotice: String?
+    @State private var analyticsConsented = false
+    @State private var analyticsConsentLoading = false
+    @State private var analyticsConsentSaving = false
+    @State private var analyticsConsentNotice: String?
+    @State private var analyticsConsentRequestID = UUID()
     private var subtotal: Int { cart.reduce(0) { sum, entry in sum + entry.value * (cartItemDetails[entry.key].map { int($0["price_cents"]) } ?? 0) } }
     private var cartCount: Int { cart.values.reduce(0, +) }
     private var cartFingerprint: String { "\(str(checkoutRestaurant?["id"]))|\(str(checkoutSlot?["id"]))|" + cart.keys.sorted().map { "\($0):\(cart[$0, default: 0])" }.joined(separator: ",") }
@@ -583,6 +588,17 @@ struct CustomerHome: View {
                         }))
                     }
                 }
+                Section("Optional analytics") {
+                    Toggle("Share usage analytics", isOn: Binding(get: { analyticsConsented }, set: { value in
+                        Task { await setAnalyticsConsent(value) }
+                    }))
+                    .disabled(analyticsConsentLoading || analyticsConsentSaving)
+                    Text("Off by default. If enabled, Cena may use minimized app activity to improve the customer experience. Your choice does not affect ordering.")
+                        .font(.caption).foregroundStyle(CenaStyle.clay)
+                    if analyticsConsentLoading { ProgressView("Loading preference…") }
+                    if analyticsConsentSaving { ProgressView("Saving preference…") }
+                    if let analyticsConsentNotice { Text(analyticsConsentNotice).font(.caption).foregroundStyle(analyticsConsentNotice.hasPrefix("Couldn’t") ? .red : .green) }
+                }
                 Section {
                     if profileLoading { ProgressView("Loading profile…") }
                     if let profileNotice { Text(profileNotice).font(.caption).foregroundStyle(profileNotice.hasPrefix("Couldn’t") ? .red : .green) }
@@ -594,9 +610,14 @@ struct CustomerHome: View {
                     persistBag(); api.signOut(); cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag(); restoreIdempotencyKey()
                     recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; codeSent = false
                     profileName = ""; profilePhone = ""; profileEquipment = []; profileNotice = nil; profileEditRevision += 1
+                    analyticsConsentRequestID = UUID(); analyticsConsented = false; analyticsConsentLoading = false; analyticsConsentSaving = false; analyticsConsentNotice = nil
                 } }
             }
-        }.scrollContentBackground(.hidden).scrollIndicators(.hidden).navigationTitle("Profile").task(id: api.signedIn) { if api.signedIn { await loadProfile() } }
+        }.scrollContentBackground(.hidden).scrollIndicators(.hidden).navigationTitle("Profile")
+            .task(id: api.signedIn) { if api.signedIn { await loadProfile() } }
+            .task(id: profileUserID) {
+                if let userID = profileUserID { await loadAnalyticsConsent(for: userID) }
+            }
     }
 
     private func signInFromProfile() async {
@@ -634,7 +655,7 @@ struct CustomerHome: View {
         let revision = profileEditRevision
         do {
             let rows = try await api.rows("profiles", query: "select=id,display_name,phone,equipment&id=eq.\(userID)&limit=1", authenticated: true)
-            guard revision == profileEditRevision else { return }
+            guard revision == profileEditRevision, userID == profileUserID, api.signedIn else { return }
             if let profile = rows.first {
                 profileName = str(profile["display_name"])
                 profilePhone = str(profile["phone"])
@@ -642,6 +663,54 @@ struct CustomerHome: View {
             }
             profileNotice = nil
         } catch { profileNotice = "Couldn’t load profile: \(error.localizedDescription)" }
+    }
+
+    private func loadAnalyticsConsent(for userID: String) async {
+        guard api.signedIn, userID == profileUserID else { return }
+        let requestID = UUID()
+        analyticsConsentRequestID = requestID
+        analyticsConsentLoading = true
+        defer {
+            if analyticsConsentRequestID == requestID { analyticsConsentLoading = false }
+        }
+        do {
+            let rows = try await api.rows("consent_records", query: "select=user_id,consent_action&user_id=eq.\(userID)&consent_type=eq.analytics&order=created_at.desc,id.desc&limit=1", authenticated: true)
+            guard analyticsConsentRequestID == requestID, userID == profileUserID, api.signedIn else { return }
+            analyticsConsented = rows.first?["consent_action"] as? String == "granted"
+            analyticsConsentNotice = nil
+        } catch {
+            guard analyticsConsentRequestID == requestID, userID == profileUserID, api.signedIn else { return }
+            analyticsConsented = false
+            analyticsConsentNotice = "Couldn’t load your saved preference. Try opening Profile again."
+        }
+    }
+
+    private func setAnalyticsConsent(_ requested: Bool) async {
+        guard !analyticsConsentLoading, !analyticsConsentSaving,
+              api.signedIn, let userID = profileUserID else { return }
+        let previous = analyticsConsented
+        let requestID = UUID()
+        analyticsConsentRequestID = requestID
+        analyticsConsentSaving = true
+        analyticsConsented = requested
+        analyticsConsentNotice = nil
+        defer {
+            if analyticsConsentRequestID == requestID { analyticsConsentSaving = false }
+        }
+        do {
+            _ = try await api.insert("consent_records", body: [
+                "user_id": userID,
+                "consent_type": "analytics",
+                "policy_version": "2026-11-13",
+                "consent_action": requested ? "granted" : "revoked"
+            ])
+            guard analyticsConsentRequestID == requestID, userID == profileUserID, api.signedIn else { return }
+            analyticsConsentNotice = requested ? "Analytics preference saved." : "Analytics turned off."
+        } catch {
+            guard analyticsConsentRequestID == requestID, userID == profileUserID, api.signedIn else { return }
+            analyticsConsented = previous
+            analyticsConsentNotice = "Couldn’t save your preference. Please try again."
+        }
     }
 
     private func saveProfile() async {
