@@ -27,6 +27,7 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
         initialNumToRender={3}
         windowSize={3}
         showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         decelerationRate={reduced ? 'normal' : 'fast'}
         snapToInterval={reduced ? undefined : stride}
         snapToAlignment="start"
