@@ -29,6 +29,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cena.customer
         INFOPLIST_KEY_CFBundleDisplayName: Cena
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Generated/Customer-Info.plist
+      properties:
+        SUPABASE_URL: "$(SUPABASE_URL)"
+        SUPABASE_ANON_KEY: "$(SUPABASE_ANON_KEY)"
+        CENA_API_URL: "$(CENA_API_URL)"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cena.customer
+            CFBundleURLSchemes:
+              - cena
   CenaRestaurant:
     type: application
     platform: iOS
@@ -40,3 +50,54 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cena.restaurant
         INFOPLIST_KEY_CFBundleDisplayName: Cena for Restaurants
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Generated/Restaurant-Info.plist
+      properties:
+        SUPABASE_URL: "$(SUPABASE_URL)"
+        SUPABASE_ANON_KEY: "$(SUPABASE_ANON_KEY)"
+        CENA_API_URL: "$(CENA_API_URL)"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cena.restaurant
+            CFBundleURLSchemes:
+              - cena-restaurant
+  CenaCustomerUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: CustomerUITests
+    dependencies:
+      - target: CenaCustomer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cena.customer.uitests
+        GENERATE_INFOPLIST_FILE: YES
+  CenaRestaurantUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: RestaurantUITests
+    dependencies:
+      - target: CenaRestaurant
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cena.restaurant.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  CenaCustomerSmoke:
+    build:
+      targets:
+        CenaCustomer: all
+        CenaCustomerUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - CenaCustomerUITests
+  CenaRestaurantSmoke:
+    build:
+      targets:
+        CenaRestaurant: all
+        CenaRestaurantUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - CenaRestaurantUITests

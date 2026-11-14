@@ -45,7 +45,16 @@ struct RestaurantHome: View {
             .overlay(alignment: .top) { if let notice { CenaNotice(message: notice) { self.notice = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
             .animation(.easeInOut(duration: 0.2), value: notice)
             .task { if api.signedIn { await loadRestaurants() } }
-            .onChange(of: scenePhase) { _, phase in if phase == .active, !restaurantID.isEmpty { Task { await loadPaymentStatus() } } }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, api.signedIn else { return }
+                Task {
+                    do {
+                        try await api.refreshSessionIfNeeded()
+                        if !restaurantID.isEmpty { await loadPaymentStatus() }
+                    } catch { notice = error.localizedDescription }
+                }
+            }
+            .onOpenURL { url in handleConnectReturnURL(url) }
         }
     }
 
@@ -80,8 +89,8 @@ struct RestaurantHome: View {
             Section {
                 HStack { Label("\(activeOrders.count) active", systemImage: "clock"); Spacer(); Text("Refresh for latest").font(.caption).foregroundStyle(.secondary) }
             }
-            Section("Today's orders") {
-                if orders.isEmpty { Text("No orders for this location today.").foregroundStyle(.secondary) }
+            Section("Pickup orders") {
+                if orders.isEmpty { Text("No recent or upcoming pickup orders.").foregroundStyle(.secondary) }
                 ForEach(Array(orders.enumerated()), id: \.offset) { _, order in orderCard(order) }
             }
         }.scrollContentBackground(.hidden)
@@ -98,8 +107,8 @@ struct RestaurantHome: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack { Text("#\((order["id"] as? String ?? "").prefix(8).uppercased())").font(.headline); Spacer(); Text(status.capitalized).font(.caption.weight(.bold)).padding(.horizontal, 9).padding(.vertical, 5).background(CenaStyle.cream).clipShape(Capsule()) }
             Text(items.map { "\($0["quantity"] as? Int ?? 1) × \($0["name_snapshot"] as? String ?? "Item")" }.joined(separator: " · ")).font(.subheadline)
-            HStack { Text((order["pickup_mode"] as? String ?? "counter").capitalized + " pickup"); Spacer(); Text("$\(money(order["subtotal_cents"] as? Int ?? 0))") }.font(.subheadline).foregroundStyle(.secondary)
-            if let starts = order["pickup_starts_at"] as? String { Text(starts).font(.caption).foregroundStyle(.secondary) }
+            HStack { Text((order["pickup_mode"] as? String ?? "counter").capitalized + " pickup"); Spacer(); Text("$\(money(order["total_cents"] as? Int ?? order["subtotal_cents"] as? Int ?? 0))") }.font(.subheadline).foregroundStyle(.secondary)
+            if let pickup = pickupLabel(order) { Text(pickup).font(.caption).foregroundStyle(.secondary) }
             HStack {
                 if status == "placed" { action("Accept", id: order["id"] as? String, next: "accepted") }
                 else if status == "accepted" { action("Start preparing", id: order["id"] as? String, next: "preparing") }
@@ -158,6 +167,11 @@ struct RestaurantHome: View {
                 }
                 if applicationFeeCents > 0 { Text("Application fee: $\(money(applicationFeeCents)) per order").font(.caption).foregroundStyle(.secondary) }
             }
+            if let role = r["membership_role"] as? String, ["owner", "manager"].contains(role), !restaurantID.isEmpty {
+                Section("Promotions") {
+                    NavigationLink("Promo codes") { CenaPromotionsView(restaurantID: restaurantID) }
+                }
+            }
             Section("Location selection") { Button("Switch location") { selectedRestaurant = nil } }
         }.scrollContentBackground(.hidden)
     }
@@ -169,8 +183,12 @@ struct RestaurantHome: View {
     private func loadRestaurants() async {
         guard api.configured, api.signedIn else { return }
         do {
-            let rows = try await api.rows("merchant_memberships", query: "select=restaurant:restaurants(id,name,address,curbside_enabled)&order=created_at.asc", authenticated: true)
-            restaurants = rows.compactMap { $0["restaurant"] as? [String: Any] }
+            let rows = try await api.rows("merchant_memberships", query: "select=role,restaurant:restaurants(id,name,address,curbside_enabled)&order=created_at.asc", authenticated: true)
+            restaurants = rows.compactMap { row in
+                guard var restaurant = row["restaurant"] as? [String: Any] else { return nil }
+                restaurant["membership_role"] = row["role"]
+                return restaurant
+            }
             if selectedRestaurant == nil { selectedRestaurant = restaurants.first }
             if selectedRestaurant != nil { await loadWorkspace() }
         } catch { notice = error.localizedDescription }
@@ -178,7 +196,7 @@ struct RestaurantHome: View {
     private func loadWorkspace() async {
         guard !restaurantID.isEmpty else { return }
         do {
-            async let o = api.rows("orders", query: "select=id,status,payment_method,payment_status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.\(restaurantID)&created_at=gte.\(today)&order=created_at.desc", authenticated: true)
+            async let o = api.rows("orders", query: "select=id,status,payment_method,payment_status,pickup_mode,subtotal_cents,total_cents,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.\(restaurantID)&or=(status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.\(recentPickupThreshold))&order=pickup_starts_at.asc", authenticated: true)
             async let c = api.rows("catalog_items", query: "select=id,name,description,price_cents,category,active,published_at&restaurant_id=eq.\(restaurantID)&order=category.asc,name.asc", authenticated: true)
             orders = try await o; catalog = try await c
             if let selectedRestaurant, let ix = restaurants.firstIndex(where: { ($0["id"] as? String) == (selectedRestaurant["id"] as? String) }) { restaurants[ix] = selectedRestaurant }
@@ -238,7 +256,28 @@ struct RestaurantHome: View {
             if !opened { notice = "Couldn’t open Stripe onboarding. Try again." }
         } catch { notice = error.localizedDescription }
     }
-    private var today: String { let f = ISO8601DateFormatter(); return f.string(from: Calendar.current.startOfDay(for: Date())) }
+    private func handleConnectReturnURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "cena-restaurant", url.host?.lowercased() == "connect", url.path == "/return",
+              !restaurantID.isEmpty, api.signedIn else { return }
+        Task { await loadPaymentStatus() }
+    }
+    private var recentPickupThreshold: String {
+        ISO8601DateFormatter().string(from: Date().addingTimeInterval(-30 * 86_400))
+    }
+
+    private func pickupLabel(_ order: [String: Any]) -> String? {
+        guard let raw = order["pickup_starts_at"] as? String else { return nil }
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fractional = parser.date(from: raw)
+        parser.formatOptions = [.withInternetDateTime]
+        guard let starts = fractional ?? parser.date(from: raw) else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeZone = (order["restaurant_timezone"] as? String).flatMap(TimeZone.init(identifier:)) ?? .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: starts)
+    }
 }
 
 private func money(_ cents: Int) -> String { String(format: "%.2f", Double(cents) / 100) }
