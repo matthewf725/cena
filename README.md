@@ -39,12 +39,12 @@ Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`.
 
 The public signup page is at [cena-xi.vercel.app](https://cena-xi.vercel.app). Signups are stored in `public.waitlist_entries` in the hosted Cena Supabase project. The optional note is stored in `clarification`. Review rows in Supabase Table Editor. Visitors can submit the form through `join_waitlist` and cannot read the list.
 
-The hosted project initially received the waitlist and privacy-request schema. The checked-in migrations can add the app schema to that project without recreating the waitlist or deleting entries. Keep demo data in the sandbox.
+The hosted project contains the waitlist, privacy-request, account, and ordering tables. The initial schema was applied through the dashboard, with existing waitlist rows preserved. Reconcile migration history before using the CLI to apply future migrations. Keep demo data in the sandbox.
 
 ## Before launching the apps
 
 - Fill in the operator identity, contacts, retention periods, and app terms in `docs/legal` and the matching pages in `apps/site/dist`.
-- Configure the app schema in hosted Supabase, email delivery, restaurant membership, and monitoring.
+- Configure hosted email delivery, restaurant memberships, and monitoring. Point the production app builds to the hosted project.
 - Test each app on real iOS and Android devices and verify an order from customer reservation through restaurant pickup. Shipping requires the platform signing and store accounts.
 
 ## Photography
@@ -53,4 +53,5 @@ The hosted project initially received the waitlist and privacy-request schema. T
 - Tacos by Viridiana Rivera. [Pexels](https://www.pexels.com/photo/close-up-of-tacos-and-a-lime-on-the-plate-25391589/)
 - Salmon bowl by Cup of Couple. [Pexels](https://www.pexels.com/photo/person-holding-a-rice-bowl-with-toppings-7660475/)
 - Hummus by Kübra Doğu. [Pexels](https://www.pexels.com/photo/a-dipping-sauce-in-a-bowl-9304931/)
-- Kitchen photo. [Pexels](https://www.pexels.com/photo/chef-seen-by-the-glass-26575078/)
+- Restaurant kitchen. [Pexels](https://www.pexels.com/photo/man-cooking-food-375468/)
+- Landing page steps. [Rigatoni](https://www.pexels.com/photo/a-plate-of-pasta-with-sauce-and-spaghetti-14930761/), [takeout kit](https://www.pexels.com/photo/gourmet-asian-style-noodles-in-takeout-box-38644446/), and [tacos](https://www.pexels.com/photo/scrumptious-tacos-on-a-plate-5848700/)
