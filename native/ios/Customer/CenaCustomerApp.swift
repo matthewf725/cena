@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main struct CenaCustomerApp: App {
     var body: some Scene { WindowGroup { CustomerHome().tint(CenaStyle.maroon) } }
@@ -6,6 +7,7 @@ import SwiftUI
 
 struct CustomerHome: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var api = CenaBackend.shared
     @State private var restaurants: [[String: Any]] = []
     @State private var items: [[String: Any]] = []
@@ -31,11 +33,15 @@ struct CustomerHome: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let orderNumber { orderConfirmation(orderNumber) }
-                else if tab == 1 { orderHistory }
-                else if let restaurant { menuScreen(restaurant) }
-                else { homeScreen }
+                if let orderNumber { orderConfirmation(orderNumber).transition(smoothTransition) }
+                else if tab == 1 { orderHistory.transition(smoothTransition) }
+                else if let restaurant { menuScreen(restaurant).transition(smoothTransition) }
+                else { homeScreen.transition(smoothTransition) }
             }
+            .fontDesign(.default)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: restaurant?["id"] as? String)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: tab)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: orderNumber)
             .frame(maxWidth: horizontalSizeClass == .regular ? 760 : .infinity)
             .frame(maxWidth: .infinity, alignment: .top)
             .navigationTitle(restaurant == nil ? "cena" : (str(restaurant?["name"]).isEmpty ? "Menu" : str(restaurant?["name"])))
@@ -47,31 +53,68 @@ struct CustomerHome: View {
                 }
             }
             .background(CenaStyle.cream)
+            .overlay(alignment: .top) { if let message { CenaNotice(message: message) { self.message = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
+            .animation(.easeInOut(duration: 0.2), value: message)
             .task { await load() }
-            .alert("Cena", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) { Button("OK") { message = nil } } message: { Text(message ?? "") }
         }
     }
 
     private var homeScreen: some View {
         List {
             Section { VStack(alignment: .leading, spacing: 8) {
-                Text("Dinner, made\na little easier.").font(.system(size: 30, weight: .bold, design: .serif)).foregroundStyle(CenaStyle.maroon)
+                Text("Dinner, made\na little easier.").font(.largeTitle.weight(.bold)).fontDesign(.default).foregroundStyle(CenaStyle.maroon)
                 Text(api.configured ? "Local kitchens. Prepared kits. Pickup when it works for you." : "Connect Supabase to see live kitchens and pickup availability.").foregroundStyle(.secondary)
                 if !api.configured { Text("Backend not configured").font(.caption.weight(.semibold)).foregroundStyle(.orange) }
             }.padding(.vertical, 8).listRowBackground(CenaStyle.cream) }
-            Section("Available kitchens") {
+            Section("Kitchens near you") {
                 if restaurants.isEmpty { Text(api.configured ? "No active kitchens are available right now." : "No live menu loaded.").foregroundStyle(.secondary) }
-                ForEach(Array(restaurants.enumerated()), id: \.offset) { _, r in
-                    Button { Task { await open(r) } } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(str(r["name"])).font(.headline).foregroundStyle(.primary)
-                            Text(str(r["cuisine"])).font(.subheadline).foregroundStyle(.secondary)
-                            Text(str(r["address"])).font(.caption).foregroundStyle(.secondary)
-                        }.padding(.vertical, 5)
-                    }
-                }
+                else { kitchenCarousel }
             }
         }.scrollContentBackground(.hidden).refreshable { await load() }
+    }
+
+    private var kitchenCarousel: some View {
+        GeometryReader { geometry in
+            let cardWidth = min(300, max(224, geometry.size.width * 0.76))
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 14) {
+                    ForEach(Array(restaurants.enumerated()), id: \.offset) { _, kitchen in
+                        let card = kitchenCard(kitchen, width: cardWidth)
+                        if reduceMotion { card }
+                        else { card.scrollTransition(.animated(.spring(duration: 0.34)), axis: .horizontal) { content, phase in
+                            content.scaleEffect(phase.isIdentity ? 1 : 0.95).opacity(phase.isIdentity ? 1 : 0.82)
+                        } }
+                    }
+                }.scrollTargetLayout().padding(.horizontal, 10).padding(.vertical, 6)
+            }.scrollIndicators(.hidden).scrollTargetBehavior(.viewAligned)
+        }
+        .frame(height: 266)
+        .accessibilityLabel("Available kitchens. Swipe horizontally to browse.")
+    }
+
+    private func kitchenCard(_ kitchen: [String: Any], width: CGFloat) -> some View {
+        Button { Task { await open(kitchen) } } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                foodPhoto(imageKey(for: kitchen))
+                    .frame(height: 158).frame(maxWidth: .infinity).clipped()
+                    .overlay(alignment: .bottomLeading) {
+                        Text(str(kitchen["cuisine"]))
+                            .font(.caption.weight(.semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(.black.opacity(0.48), in: Capsule()).padding(10)
+                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(str(kitchen["name"])).font(.headline.weight(.bold)).foregroundStyle(.primary).lineLimit(1)
+                    Text(str(kitchen["address"])).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    let available = items.filter { str($0["restaurant_id"]) == str(kitchen["id"]) }.count
+                    Text("\(available) published dishes").font(.caption).foregroundStyle(CenaStyle.maroon).lineLimit(1)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(width: width).cenaCardBackground(.white, outline: .black.opacity(0.05))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(str(kitchen["name"])), \(str(kitchen["cuisine"])), view menu")
     }
 
     private func menuScreen(_ r: [String: Any]) -> some View {
@@ -86,7 +129,10 @@ struct CustomerHome: View {
                 if let selected = slot, let cutoff = timestamp(selected["cutoff_at"]), Calendar.current.isDateInToday(cutoff) {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         let remaining = max(0, Int(cutoff.timeIntervalSince(context.date)))
-                        Label(remaining == 0 ? "Ordering closed for this window" : "Order cutoff in \(remaining / 60):\(String(format: "%02d", remaining % 60))", systemImage: "timer").font(.caption.weight(.semibold)).foregroundStyle(remaining == 0 ? .red : CenaStyle.maroon)
+                        Label(remaining == 0 ? "Ordering closed for this window" : "Order cutoff in \(remaining / 60):\(String(format: "%02d", remaining % 60))", systemImage: "timer")
+                            .font(.caption.weight(.semibold)).foregroundStyle(remaining == 0 ? .red : .green)
+                            .padding(.horizontal, 11).padding(.vertical, 7)
+                            .overlay { Capsule().stroke(remaining == 0 ? Color.red.opacity(0.65) : Color.green.opacity(0.75), lineWidth: 1) }
                     }
                 }
             }
@@ -95,6 +141,7 @@ struct CustomerHome: View {
                 ForEach(Array(restaurantItems.enumerated()), id: \.offset) { _, item in
                     let id = str(item["id"]), count = cart[id, default: 0]
                     HStack(alignment: .top, spacing: 12) {
+                        foodPhoto(imageKey(for: item)).frame(width: 88, height: 96).clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                         VStack(alignment: .leading, spacing: 5) {
                             Text(str(item["name"])).font(.headline)
                             Text(str(item["description"])).font(.subheadline).foregroundStyle(.secondary)
@@ -105,7 +152,7 @@ struct CustomerHome: View {
                         Button { if count == 0 { cart[id] = 1 } else { cart.removeValue(forKey: id) }; idempotencyKey = UUID().uuidString } label: {
                             Text(count == 0 ? "Add" : "Added").font(.subheadline.weight(.bold)).padding(.horizontal, 13).padding(.vertical, 8).background(count == 0 ? CenaStyle.maroon : .gray.opacity(0.15)).foregroundStyle(count == 0 ? .white : .primary).clipShape(Capsule())
                         }
-                    }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous)).padding(.vertical, 4)
+                    }.padding(14).cenaCardBackground(.white).padding(.vertical, 4)
                 }
             }
             if !cart.isEmpty {
@@ -153,7 +200,15 @@ struct CustomerHome: View {
             if api.signedIn {
                 ForEach(0..<history.count, id: \.self) { i in
                     let o = history[i]
-                    VStack(alignment: .leading, spacing: 5) { Text(str(o["status"]).capitalized).font(.headline); Text("$\(money(int(o["subtotal_cents"]))) · \(str(o["pickup_mode"]).capitalized) pickup").font(.subheadline); Text(str(o["pickup_starts_at"])).font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(str(o["status"]).capitalized).font(.headline)
+                        Text("$\(money(int(o["subtotal_cents"]))) · \(str(o["pickup_mode"]).capitalized) pickup").font(.subheadline)
+                        Text(str(o["pickup_starts_at"])).font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(((o["order_items"] as? [[String: Any]]) ?? []).enumerated()), id: \.offset) { _, item in
+                            Text("\(int(item["quantity"])) × \(str(item["name_snapshot"]))").font(.caption.weight(.medium))
+                            if let steps = item["prep_steps_snapshot"] as? [String], !steps.isEmpty { Text(steps.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
+                        }
+                    }.padding(12).cenaCardBackground(.white)
                 }
             }
             if api.signedIn && history.isEmpty { Text("No orders yet.").foregroundStyle(.secondary) }
@@ -161,7 +216,7 @@ struct CustomerHome: View {
     }
     @State private var history: [[String: Any]] = []
     private func orderConfirmation(_ id: String) -> some View {
-        VStack(spacing: 16) { Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green); Text("Order placed").font(.largeTitle.bold()).foregroundStyle(CenaStyle.maroon); Text("Order \(id.prefix(8).uppercased())").font(.headline); Text("Your kitchen has received it. Pickup and payment details are available in Orders.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Back to kitchens") { orderNumber = nil; restaurant = nil; cart.removeAll(); slots = []; slot = nil; tab = 0 }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28)
+        VStack(spacing: 16) { Image(systemName: "checkmark.circle.fill").font(.system(size: 58)).foregroundStyle(.green); Text("Order placed").font(.largeTitle.bold()).fontDesign(.default).foregroundStyle(CenaStyle.maroon); Text("Order \(id.prefix(8).uppercased())").font(.headline); Text("Your kitchen has received it. Pickup and payment details are available in Orders.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Back to kitchens") { orderNumber = nil; restaurant = nil; cart.removeAll(); slots = []; slot = nil; tab = 0 }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.97)))
     }
     private func tabButton(_ title: String, icon: String, value: Int) -> some View { Button { tab = value; restaurant = nil } label: { Label(title, systemImage: icon).frame(maxWidth: .infinity).foregroundStyle(tab == value ? CenaStyle.maroon : .secondary) } }
     private func load() async {
@@ -195,8 +250,23 @@ struct CustomerHome: View {
     }
     private func loadHistory() async {
         guard api.signedIn else { return }
-        do { history = try await api.rows("orders", query: "select=id,status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode&order=created_at.desc&limit=20", authenticated: true) }
+        do { history = try await api.rows("orders", query: "select=id,status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,order_items(name_snapshot,quantity,prep_steps_snapshot)&order=created_at.desc&limit=20", authenticated: true) }
         catch { message = error.localizedDescription }
+    }
+    private func imageKey(for value: [String: Any]) -> String {
+        let hint = (str(value["image_key"]) + " " + str(value["cuisine"]) + " " + str(value["name"]) + " " + str(value["category"])).lowercased()
+        if hint.contains("taco") || hint.contains("mex") { return "tacos" }
+        if hint.contains("pasta") || hint.contains("ital") || hint.contains("rigatoni") { return "rigatoni" }
+        if hint.contains("salmon") || hint.contains("fish") { return "salmon" }
+        return "mediterranean"
+    }
+    private var smoothTransition: AnyTransition { reduceMotion ? .identity : .move(edge: .trailing).combined(with: .opacity) }
+    @ViewBuilder private func foodPhoto(_ key: String) -> some View {
+        if let url = Bundle.main.url(forResource: key, withExtension: "webp"), let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+            Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
+        } else {
+            ZStack { CenaStyle.cream; Image(systemName: "fork.knife").font(.largeTitle).foregroundStyle(CenaStyle.maroon.opacity(0.55)) }.accessibilityLabel("Food photo unavailable")
+        }
     }
 }
 

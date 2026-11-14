@@ -98,3 +98,31 @@ enum CenaStyle {
     static let maroon = Color(red: 0x5D/255, green: 0x10/255, blue: 0x0A/255)
     static let cream = Color(red: 0xFA/255, green: 0xF6/255, blue: 0xF3/255)
 }
+
+extension View {
+    /// Corners become progressively rounder below the 390pt iPhone baseline.
+    func cenaCardBackground(_ color: Color, outline: Color? = nil) -> some View {
+        background {
+            GeometryReader { geometry in
+                let radius = min(26, max(18, 18 + (390 - geometry.size.width) * 0.06))
+                RoundedRectangle(cornerRadius: radius, style: .continuous).fill(color)
+                    .overlay { if let outline { RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(outline, lineWidth: 1) } }
+            }
+        }
+    }
+}
+
+struct CenaNotice: View {
+    let message: String
+    let dismiss: () -> Void
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill").foregroundStyle(CenaStyle.maroon)
+            Text(message).font(.subheadline).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(.secondary) }
+        }
+        .padding(14).cenaCardBackground(.white)
+        .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(CenaStyle.maroon.opacity(0.18), lineWidth: 1) }
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
+    }
+}

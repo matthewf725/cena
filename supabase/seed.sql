@@ -26,6 +26,8 @@ and scheduled.start_at-interval '15 minutes' > now()
 on conflict(restaurant_id,starts_at) do update set ends_at=excluded.ends_at,cutoff_at=excluded.cutoff_at,capacity=excluded.capacity,active=true;
 
 insert into public.slot_item_inventory(slot_id,item_id,available_qty)
-select s.id,i.id,12 from public.pickup_slots s join public.catalog_items i on i.restaurant_id=s.restaurant_id and i.active
+select s.id,i.id,12 from public.pickup_slots s
+join public.restaurants r on r.id=s.restaurant_id and r.slug in ('sunrise-cafe','little-fig')
+join public.catalog_items i on i.restaurant_id=r.id and i.active
 where s.active and s.cutoff_at>now()
 on conflict(slot_id,item_id) do update set available_qty=greatest(public.slot_item_inventory.available_qty,excluded.available_qty);

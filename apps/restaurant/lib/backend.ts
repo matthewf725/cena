@@ -24,8 +24,8 @@ export async function updateCurbside(restaurantId:string,enabled:boolean) {
 }
 export async function fetchOrders(restaurantId:string) {
   if(!supabase) return null;
-  const from=new Date();from.setHours(0,0,0,0);
-  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).gte('created_at',from.toISOString()).order('created_at',{ascending:false});
+  const from=new Date(Date.now()-30*24*60*60_000).toISOString();
+  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
   if(error) throw error; return data;
 }
 export async function setOrderStatus(id:string,status:string) {

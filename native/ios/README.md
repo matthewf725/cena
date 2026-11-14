@@ -20,7 +20,7 @@ xcodebuild -project Cena.xcodeproj -scheme CenaRestaurant -destination 'generic/
 
 `CENA_API_URL` is optional; when set, order creation and merchant status transitions go through the Go API routes in `backend/go`. Otherwise both operations call the same protected Supabase RPCs directly. For a physical device, point it at a reachable HTTPS Go API host rather than `127.0.0.1`. Only the public Supabase anon key belongs in the app. Never put a service role key in either target. Set Supabase Auth email OTP and staff password providers in the project dashboard. Apply the repository migrations and seed data before connecting the apps.
 
-The generated targets support iPhone and iPad (iOS 17+). Main content is capped at 760 points in regular-width layouts and uses rounded item/order cards for compact widths.
+The generated targets support iPhone and iPad (iOS 17+). Main content is capped at 760 points in regular-width layouts. Card corners use a `GeometryReader` width measurement and progressively increase below the 390pt baseline.
 
 ## Current native scope
 

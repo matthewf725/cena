@@ -35,8 +35,9 @@ struct RestaurantHome: View {
                 }
             }
             .background(CenaStyle.cream)
+            .overlay(alignment: .top) { if let notice { CenaNotice(message: notice) { self.notice = nil }.padding(.horizontal, 14).padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity)) } }
+            .animation(.easeInOut(duration: 0.2), value: notice)
             .task { if api.signedIn { await loadRestaurants() } }
-            .alert("Cena", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) { Button("OK") { notice = nil } } message: { Text(notice ?? "") }
         }
     }
 
@@ -92,7 +93,7 @@ struct RestaurantHome: View {
                 else if status == "ready" { action("Complete pickup", id: order["id"] as? String, next: "completed") }
                 if status == "placed" { action("Cancel", id: order["id"] as? String, next: "cancelled", outline: true) }
             }
-        }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous)).padding(.vertical, 5)
+        }.padding(14).cenaCardBackground(.white).padding(.vertical, 5)
     }
     @ViewBuilder private func action(_ title: String, id: String?, next: String, outline: Bool = false) -> some View {
         if outline {
