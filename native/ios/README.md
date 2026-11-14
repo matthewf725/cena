@@ -35,7 +35,7 @@ Hosted return pages can open `cena://checkout/return` or `cena-restaurant://conn
 
 ## Current native scope
 
-The customer app shows upcoming windows, saves a pending checkout across launches, and confirms payment through the Cena API. Supabase stores customer profile name, phone, and kitchen equipment. The restaurant app provides order operations, Stripe onboarding, location curbside settings, promo management, menu visibility, pickup window creation, and stock editing. Use the Expo restaurant app for catalog drafts, prep-step generation and publication, and merchant insights. Both apps refresh sessions while the refresh token is valid. Card entry takes place on Stripe-hosted Checkout.
+The customer app shows upcoming windows, saves a pending checkout across launches, and confirms payment through the Cena API. Supabase stores customer profile name, phone, and kitchen equipment. The restaurant app provides order operations, Stripe onboarding, location curbside settings, promo management, menu visibility, pickup window creation, stock editing, and order-creation-cohort insights. Owners and managers can review and publish chef steps from Menu; a first private source draft can be entered manually when none exists. Full catalog metadata editing and AI step generation remain in the Expo restaurant app. Both apps refresh sessions while the refresh token is valid. Card entry takes place on Stripe-hosted Checkout.
 
 ## Native verification
 

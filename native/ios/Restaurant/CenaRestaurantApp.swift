@@ -26,6 +26,7 @@ struct RestaurantHome: View {
     @State private var updatingOrderID: String?
     private var restaurantID: String { selectedRestaurant?["id"] as? String ?? "" }
     private var activeOrders: [[String: Any]] { orders.filter { !["completed", "cancelled"].contains(($0["status"] as? String ?? "").lowercased()) } }
+    private var canManageMenu: Bool { ["owner", "manager"].contains((selectedRestaurant?["membership_role"] as? String ?? "").lowercased()) }
 
     var body: some View {
         NavigationStack {
@@ -82,8 +83,9 @@ struct RestaurantHome: View {
         VStack(spacing: 0) {
             if selectedTab == "Orders" { ordersView }
             else if selectedTab == "Menu" { menuView }
+            else if selectedTab == "Insights" { CenaInsightsView(restaurantID: restaurantID) }
             else { manageView(restaurant) }
-            HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Manage", icon: "slider.horizontal.3") }.padding(.vertical, 10).background(CenaStyle.paper).overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
+            HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Insights", icon: "chart.bar.xaxis"); tab("Manage", icon: "slider.horizontal.3") }.padding(.vertical, 10).background(CenaStyle.paper).overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
         }.task { await loadWorkspace() }.refreshable { await loadWorkspace() }
     }
     private var ordersView: some View {
@@ -147,16 +149,30 @@ struct RestaurantHome: View {
             Section("Published and draft items") {
                 if catalog.isEmpty { Text("No menu items found for this restaurant.").foregroundStyle(.secondary) }
                 ForEach(Array(catalog.enumerated()), id: \.offset) { _, item in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text(item["name"] as? String ?? "Menu item").font(.headline); Spacer(); Text(item["active"] as? Bool == true ? "Active" : "Paused").font(.caption.weight(.semibold)).foregroundStyle(item["active"] as? Bool == true ? .green : .secondary) }
-                        Text("$\(money(item["price_cents"] as? Int ?? 0)) · \(item["category"] as? String ?? "Menu")").font(.subheadline).foregroundStyle(.secondary)
-                        Text(item["published_at"] == nil || item["published_at"] is NSNull ? "Draft · not visible to customers" : "Published").font(.caption).foregroundStyle(CenaStyle.maroon)
-                        if let description = item["description"] as? String, !description.isEmpty { Text(description).font(.caption).foregroundStyle(.secondary) }
-                    }.padding(.vertical, 5)
+                    menuItemRow(item)
                 }
             }
-            Section { Text("Menu editing and chef-step publishing are managed in the web/Expo restaurant console in this build.").font(.caption).foregroundStyle(.secondary) }
+            Section { Text("Owners and managers can review and publish recipe steps here. Full catalog editing and AI step generation remain in the Expo restaurant app.").font(.caption).foregroundStyle(CenaStyle.clay) }
         }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
+    }
+    @ViewBuilder private func menuItemRow(_ item: [String: Any]) -> some View {
+        if canManageMenu {
+            NavigationLink {
+                CenaPrepReviewView(restaurantID: restaurantID, item: item) { await loadWorkspace() }
+            } label: {
+                menuItemSummary(item)
+            }.buttonStyle(.plain)
+        } else {
+            menuItemSummary(item)
+        }
+    }
+    private func menuItemSummary(_ item: [String: Any]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack { Text(item["name"] as? String ?? "Menu item").font(.headline).foregroundStyle(CenaStyle.ink); Spacer(); Text(item["active"] as? Bool == true ? "Active" : "Paused").font(.caption.weight(.semibold)).foregroundStyle(item["active"] as? Bool == true ? .green : CenaStyle.clay) }
+            Text("$\(money(item["price_cents"] as? Int ?? 0)) · \(item["category"] as? String ?? "Menu")").font(.subheadline).foregroundStyle(CenaStyle.clay)
+            Text(item["published_at"] == nil || item["published_at"] is NSNull ? "Draft · not visible to customers" : "Published").font(.caption).foregroundStyle(CenaStyle.maroon)
+            if let description = item["description"] as? String, !description.isEmpty { Text(description).font(.caption).foregroundStyle(CenaStyle.clay) }
+        }.padding(.vertical, 5)
     }
     private func manageView(_ r: [String: Any]) -> some View {
         Form {
@@ -211,7 +227,7 @@ struct RestaurantHome: View {
         guard !restaurantID.isEmpty else { return }
         do {
             async let o = api.rows("orders", query: "select=id,status,payment_method,payment_status,pickup_mode,subtotal_cents,total_cents,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.\(restaurantID)&or=(status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.\(recentPickupThreshold))&order=pickup_starts_at.asc", authenticated: true)
-            async let c = api.rows("catalog_items", query: "select=id,name,description,price_cents,category,active,published_at&restaurant_id=eq.\(restaurantID)&order=category.asc,name.asc", authenticated: true)
+            async let c = api.rows("catalog_items", query: "select=id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,category,active,published_at&restaurant_id=eq.\(restaurantID)&order=category.asc,name.asc", authenticated: true)
             orders = try await o; catalog = try await c
             if let selectedRestaurant, let ix = restaurants.firstIndex(where: { ($0["id"] as? String) == (selectedRestaurant["id"] as? String) }) { restaurants[ix] = selectedRestaurant }
             await loadPaymentStatus()
