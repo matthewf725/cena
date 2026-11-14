@@ -5,13 +5,14 @@ import com.cena.auth.CenaSessionExpiredException
 class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val paper=Color.rgb(255,253,250);private val peach=Color.rgb(255,240,232);private val rose=Color.rgb(233,207,196);private val coral=Color.rgb(197,119,96);private val clay=Color.rgb(133,87,74);private val ink=Color.rgb(39,29,25);private val wine=Color.rgb(93,16,10);private val ex=Executors.newSingleThreadExecutor();private val requestGeneration=ThreadLocal<Long>();private var selectedRestaurantRevision=0;private lateinit var body:LinearLayout;private val authSession by lazy{CenaAndroidAuthSession(applicationContext,BuildConfig.SUPABASE_URL,BuildConfig.SUPABASE_KEY,"merchant",legacyRefreshTokenKey="refresh",legacyAccessTokenKey="token")};private var signInNotice:String?=null;private var showingLogin=false;private var rid="";private var rname="";private var rtimezone="America/Los_Angeles";private var merchantRole="staff";private var curb=false;private var awaitingStripeReturn=false;private var insightsDays=30;private var insightsOrders:JSONArray?=null;private var insightsError:String?=null;private var insightsLoading=false;private var insightsTruncated=false;private var insightsRequestVersion=0;private var showingInsights=false;private var restoreInsightsId:String?=null;private var restoreInsightsDays=30
  override fun onCreate(b:Bundle?){super.onCreate(b);window.statusBarColor=bg;window.navigationBarColor=bg;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;awaitingStripeReturn=isStripeReturn(intent.data);if(b?.getString(STATE_SCREEN)==STATE_INSIGHTS){restoreInsightsId=b.getString(STATE_RESTAURANT_ID);restoreInsightsDays=b.getInt(STATE_INSIGHTS_DAYS,30).takeIf{it==30||it==90}?:30};if(authSession.restore()!=null)loadRestaurants()else login()}
  override fun onSaveInstanceState(outState:Bundle){super.onSaveInstanceState(outState);val selectedId=if(showingInsights)rid else restoreInsightsId;if(!selectedId.isNullOrBlank()){outState.putString(STATE_SCREEN,STATE_INSIGHTS);outState.putString(STATE_RESTAURANT_ID,selectedId);outState.putInt(STATE_INSIGHTS_DAYS,if(showingInsights)insightsDays else restoreInsightsDays)}}
- companion object { private const val STATE_SCREEN="restaurant.screen";private const val STATE_RESTAURANT_ID="restaurant.insights.restaurant_id";private const val STATE_INSIGHTS_DAYS="restaurant.insights.days";private const val STATE_INSIGHTS="insights" }
+ companion object { private const val STATE_SCREEN="restaurant.screen";private const val STATE_RESTAURANT_ID="restaurant.insights.restaurant_id";private const val STATE_INSIGHTS_DAYS="restaurant.insights.days";private const val STATE_INSIGHTS="insights";private const val ACTIVE_ORDER_PAGE_SIZE=100;private const val RECENT_HISTORY_LIMIT=100;private const val RECENT_PICKUP_DAYS=30 }
  override fun onResume(){super.onResume();if(awaitingStripeReturn&&rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}}
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(isStripeReturn(intent.data)){awaitingStripeReturn=true;if(rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}else if(authSession.restore()!=null)loadRestaurants()}}
  private fun isStripeReturn(uri:Uri?):Boolean=uri?.scheme=="cena-restaurant"&&uri.host=="connect"&&uri.path=="/return"
- private fun base(){val sc=ScrollView(this);val outer=LinearLayout(this).apply{orientation=1;gravity=Gravity.CENTER_HORIZONTAL;setBackgroundColor(bg)};body=LinearLayout(this).apply{orientation=1;setPadding(22,22,22,24);setBackgroundColor(bg);layoutParams=LinearLayout.LayoutParams(-1,-2).apply{width=resources.displayMetrics.widthPixels.coerceAtMost((680*resources.displayMetrics.density).toInt())}};outer.addView(body);sc.addView(outer);setContentView(sc)};private fun title(s:String,z:Float=25f){body.addView(TextView(this).apply{text=s;textSize=z;setTextColor(wine);setPadding(12,9,12,9);typeface=android.graphics.Typeface.DEFAULT_BOLD;background=GradientDrawable().apply{setColor(paper);cornerRadius=13*resources.displayMetrics.density;setStroke((1*resources.displayMetrics.density).toInt(),coral)}})};private fun text(s:String){body.addView(TextView(this).apply{text=s;textSize=15f;setTextColor(clay);setPadding(0,5,0,10)})};private fun button(s:String,f:()->Unit){body.addView(Button(this).apply{text=s;setTextColor(-1);background=GradientDrawable().apply{setColor(wine);cornerRadius=(16f+((390f-resources.displayMetrics.widthPixels/resources.displayMetrics.density)/110f*10f)).coerceIn(16f,26f)*resources.displayMetrics.density};setOnClickListener{f()}})};private fun field(s:String):EditText{val e=EditText(this).apply{hint=s};body.addView(e);return e}
+ private fun base(){val sc=ScrollView(this);val outer=LinearLayout(this).apply{orientation=1;gravity=Gravity.CENTER_HORIZONTAL;setBackgroundColor(bg)};body=LinearLayout(this).apply{orientation=1;setPadding(22,22,22,24);setBackgroundColor(bg);layoutParams=LinearLayout.LayoutParams(-1,-2).apply{width=resources.displayMetrics.widthPixels.coerceAtMost((680*resources.displayMetrics.density).toInt())}};outer.addView(body);sc.addView(outer);setContentView(sc)};private fun title(s:String,z:Float=25f){body.addView(TextView(this).apply{text=s;textSize=z;setTextColor(wine);setPadding(12,9,12,9);typeface=android.graphics.Typeface.DEFAULT_BOLD;background=GradientDrawable().apply{setColor(paper);cornerRadius=13*resources.displayMetrics.density;setStroke((1*resources.displayMetrics.density).toInt(),coral)}})};private fun text(s:String){body.addView(TextView(this).apply{text=s;textSize=15f;setTextColor(clay);setPadding(0,5,0,10)})};private fun button(s:String,f:()->Unit):Button{val result=Button(this).apply{text=s;setTextColor(-1);background=GradientDrawable().apply{setColor(wine);cornerRadius=(16f+((390f-resources.displayMetrics.widthPixels/resources.displayMetrics.density)/110f*10f)).coerceIn(16f,26f)*resources.displayMetrics.density};setOnClickListener{f()}};body.addView(result);return result};private fun field(s:String):EditText{val e=EditText(this).apply{hint=s};body.addView(e);return e}
  private data class HttpResponse(val status:Int,val body:String)
- private fun go(task:()->String,done:(String)->Unit){val expectedGeneration=authSession.generationSnapshot();val expectedRestaurantId=rid;val expectedRestaurantRevision=selectedRestaurantRevision;ex.execute{requestGeneration.set(expectedGeneration);try{if(selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@execute;authSession.assertCurrentGeneration(expectedGeneration);val result=task();authSession.assertCurrentGeneration(expectedGeneration);runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@runOnUiThread;if(authSession.generationSnapshot()==expectedGeneration)done(result)}}catch(error:Exception){if(error is CenaSessionExpiredException)showExpiredSignInIfNeeded()else runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId||authSession.generationSnapshot()!=expectedGeneration)return@runOnUiThread;Toast.makeText(this,error.message?:"Request failed",Toast.LENGTH_LONG).show()}}finally{requestGeneration.remove()}}}
+ private fun go(task:()->String,done:(String)->Unit){go(task,done,null)}
+ private fun go(task:()->String,done:(String)->Unit,onError:((Exception)->Unit)?){val expectedGeneration=authSession.generationSnapshot();val expectedRestaurantId=rid;val expectedRestaurantRevision=selectedRestaurantRevision;ex.execute{requestGeneration.set(expectedGeneration);try{if(selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@execute;authSession.assertCurrentGeneration(expectedGeneration);val result=task();authSession.assertCurrentGeneration(expectedGeneration);runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId)return@runOnUiThread;if(authSession.generationSnapshot()==expectedGeneration)done(result)}}catch(error:Exception){if(error is CenaSessionExpiredException)showExpiredSignInIfNeeded()else runOnUiThread{if(isFinishing||isDestroyed||selectedRestaurantRevision!=expectedRestaurantRevision||rid!=expectedRestaurantId||authSession.generationSnapshot()!=expectedGeneration)return@runOnUiThread;if(onError!=null)onError(error)else Toast.makeText(this,error.message?:"Request failed",Toast.LENGTH_LONG).show()}}finally{requestGeneration.remove()}}}
  private fun rawRequest(baseUrl:String,path:String,method:String,data:JSONObject?,accessToken:String?,includeApiKey:Boolean):HttpResponse{val connection=URL(baseUrl.trimEnd('/')+path).openConnection() as HttpURLConnection;connection.requestMethod=method;connection.connectTimeout=9000;connection.readTimeout=12000;if(includeApiKey)connection.setRequestProperty("apikey",BuildConfig.SUPABASE_KEY);if(accessToken!=null)connection.setRequestProperty("Authorization","Bearer $accessToken");connection.setRequestProperty("Content-Type","application/json");if(data!=null){connection.doOutput=true;connection.outputStream.use{it.write(data.toString().toByteArray())}};val status=connection.responseCode;val stream=if(status<400)connection.inputStream else connection.errorStream;val body=stream?.bufferedReader()?.use{it.readText()}?:"";connection.disconnect();return HttpResponse(status,body)}
  private fun authenticatedRequest(baseUrl:String,path:String,method:String,data:JSONObject?,includeApiKey:Boolean):String{try{val session=authSession.restore()?:throw CenaSessionExpiredException();val generation=requestGeneration.get()?:session.generation;if(generation!=session.generation)throw CenaSessionExpiredException();var token=authSession.accessTokenForRequest(generation)?:throw CenaSessionExpiredException();var response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){token=authSession.refreshAfterUnauthorized(token,generation);authSession.assertCurrentGeneration(generation);response=rawRequest(baseUrl,path,method,data,token,includeApiKey);if(response.status==401){authSession.signOutIfCurrent(generation);throw CenaSessionExpiredException()}};authSession.assertCurrentGeneration(generation);if(response.status>=400)throw java.io.IOException(response.body.ifBlank{"Request failed (${response.status})."});return response.body}catch(error:CenaSessionExpiredException){showExpiredSignInIfNeeded();throw error}}
  private fun req(path:String,method:String="GET",data:JSONObject?=null):String=authenticatedRequest(BuildConfig.SUPABASE_URL,path,method,data,true)
@@ -463,16 +464,74 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
 
  private fun orders(){dashboard()}
  private fun pickupRange(start:String,end:String,timezone:String):String{val zone=runCatching{java.time.ZoneId.of(timezone)}.getOrDefault(java.time.ZoneId.of("America/Los_Angeles"));val day=java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d",java.util.Locale.getDefault()).withZone(zone);val time=java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT).withLocale(java.util.Locale.getDefault()).withZone(zone);return "${day.format(java.time.Instant.parse(start))} · ${time.format(java.time.Instant.parse(start))}–${time.format(java.time.Instant.parse(end))}"}
+ private fun activeOrdersPath(offset:Int):String = "/rest/v1/orders?select=id,status,payment_status,pickup_mode,total_cents,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.$rid&status=in.(placed,accepted,preparing,ready)&order=pickup_starts_at.asc,id.asc&limit=$ACTIVE_ORDER_PAGE_SIZE&offset=$offset"
+
  private fun ordersInline() {
   go({
-   val from = java.time.Instant.now().minus(java.time.Duration.ofDays(30)).toString()
-   req("/rest/v1/orders?select=id,status,payment_status,pickup_mode,total_cents,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.$rid&or=(status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.$from,payment_status.eq.refunded)&order=pickup_starts_at.asc")
+   val cutoff = java.time.Instant.now().minus(java.time.Duration.ofDays(RECENT_PICKUP_DAYS.toLong())).toString()
+   val active = JSONArray(req(activeOrdersPath(0)))
+   // Recent history is separate and bounded so old refunds/history can never crowd out active work.
+   // A refund with a pickup time uses that 30-day pickup window; only refunds missing pickup time
+   // fall back to order creation time.
+   var historyUnavailable = false
+   val history = try {
+    JSONArray(req("/rest/v1/orders?select=id,status,payment_status,pickup_mode,total_cents,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.$rid&status=not.in.(placed,accepted,preparing,ready)&or=(pickup_starts_at.gte.$cutoff,and(payment_status.eq.refunded,pickup_starts_at.is.null,created_at.gte.$cutoff))&order=pickup_starts_at.desc.nullslast,created_at.desc&limit=$RECENT_HISTORY_LIMIT"))
+   } catch (error: Exception) {
+    if (error is CenaSessionExpiredException) throw error
+    historyUnavailable = true
+    JSONArray()
+   }
+   JSONObject().put("active", active).put("history", history).put("history_unavailable", historyUnavailable).toString()
   }) { result ->
-   val orders = JSONArray(result)
-   if (orders.length() == 0) text("No upcoming pickup orders. New reservations appear here.")
+   val data = JSONObject(result)
+   val active = data.getJSONArray("active")
+   val history = data.getJSONArray("history")
+   if (active.length() == 0 && history.length() == 0) text("No upcoming pickup orders. New reservations appear here.")
+   for (index in 0 until active.length()) renderOrderCard(active.getJSONObject(index))
+   if (history.length() > 0) {
+    title("Recent pickup history", 17f)
+    text("Last $RECENT_PICKUP_DAYS days by pickup time. Refunds without a pickup time use order creation date. Showing up to $RECENT_HISTORY_LIMIT orders.")
+    for (index in 0 until history.length()) renderOrderCard(history.getJSONObject(index))
+   }
+   if (data.optBoolean("history_unavailable")) {
+    text("Recent pickup history is unavailable right now. Active pickup orders are still shown.")
+    button("Retry recent history") { dashboard() }
+   }
+   if (active.length() == ACTIVE_ORDER_PAGE_SIZE) {
+    var offset = active.length()
+    lateinit var moreButton: Button
+    moreButton = button("Load more active orders") {
+     if (!moreButton.isEnabled) return@button
+     moreButton.isEnabled = false
+     moreButton.text = "Loading active orders…"
+     go(
+      { req(activeOrdersPath(offset)) },
+      { pageText ->
+       val page = JSONArray(pageText)
+       if (page.length() == 0) {
+        body.removeView(moreButton)
+       } else {
+        for (index in 0 until page.length()) renderOrderCard(page.getJSONObject(index))
+        offset += page.length()
+        if (page.length() < ACTIVE_ORDER_PAGE_SIZE) body.removeView(moreButton)
+        else {
+         moreButton.isEnabled = true
+         moreButton.text = "Load more active orders"
+        }
+       }
+      },
+      { error ->
+       moreButton.isEnabled = true
+       moreButton.text = "Load more active orders"
+       Toast.makeText(this, error.message ?: "Could not load more active orders.", Toast.LENGTH_LONG).show()
+      },
+     )
+    }
+   }
+  }
+ }
 
-   for (index in 0 until orders.length()) {
-    val order = orders.getJSONObject(index)
+ private fun renderOrderCard(order: JSONObject) {
     val orderId = order.optString("id")
     val orderStatus = order.optString("status")
     val paymentStatus = order.optString("payment_status")
@@ -542,8 +601,5 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
        .show()
      }
     }
-   }
-  }
  }
-
 }
