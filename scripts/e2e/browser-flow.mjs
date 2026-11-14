@@ -129,7 +129,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
         return;
       }
 
-      if (requestUrl.pathname.startsWith('/v1/') && ['localhost', '127.0.0.1', '::1'].includes(requestUrl.hostname)) {
+      if ((requestUrl.pathname.startsWith('/v1/') || requestUrl.pathname === '/healthz') && ['localhost', '127.0.0.1', '::1'].includes(requestUrl.hostname)) {
         const expectedApi = new URL(apiOrigin);
         const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, expectedApi);
         try {
@@ -306,7 +306,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.equal(promo.redeemed_count, 0);
     if (!promo.active) {
       await merchantPage.getByRole('button', { name: 'Enable code', exact: true }).click();
-      await merchantPage.getByText('Promo code saved', { exact: true }).waitFor({ timeout: 15000 });
+      await merchantPage.getByText('Promo code enabled', { exact: true }).waitFor({ timeout: 15000 });
       promo = await queryPromo(fixture.restaurant.id);
     }
     assert.equal(promo.active, true, 'The saved promo must be enabled before customer quote tests');
