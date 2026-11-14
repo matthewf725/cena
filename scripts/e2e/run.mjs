@@ -27,7 +27,9 @@ function portAvailable(port) {
   return new Promise(resolve => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
-    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+    // Probe the dual-stack wildcard, not only IPv4: a stale `::` listener on
+    // Windows can occupy 127.0.0.1 too while an IPv4-only probe reports free.
+    server.listen({ port, host: '::', ipv6Only: false }, () => server.close(() => resolve(true)));
   });
 }
 function parseEnvOutput(output) {

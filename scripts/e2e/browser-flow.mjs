@@ -23,12 +23,13 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     try {
       const url = new URL(response.url());
       if (url.pathname.startsWith('/v1/')) apiTrace.push(`${response.request().method()} ${url.host}${url.pathname} -> ${response.status()}`);
+      else if (url.pathname.startsWith('/auth/v1/')) apiTrace.push(`${response.request().method()} ${url.host}${url.pathname} -> ${response.status()}`);
     } catch { /* non-http response */ }
   });
   context.on('requestfailed', request => {
     try {
       const url = new URL(request.url());
-      if (url.pathname.startsWith('/v1/')) apiTrace.push(`${request.method()} ${url.host}${url.pathname} failed: ${request.failure()?.errorText || 'network error'}`);
+      if (url.pathname.startsWith('/v1/') || url.pathname.startsWith('/auth/v1/')) apiTrace.push(`${request.method()} ${url.host}${url.pathname} failed: ${request.failure()?.errorText || 'network error'}`);
     } catch { /* non-http request */ }
   });
   let orderId = null;
@@ -373,21 +374,39 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).click();
     await customerPage.getByRole('button', { name: `Increase ${mealName} quantity`, exact: true }).waitFor();
-    await customerPage.getByText('$33.90', { exact: true }).waitFor();
+    await customerPage.getByText('$33.90', { exact: true }).first().waitFor();
     mark('guest browse, bag badge, quantity, and reload persistence passed');
 
     await startPickupFlow(customerPage);
     const checkoutEmail = `cena-e2e-order-${runId}-${browserName}@cena.test`;
+    mark('pickup slot and checkout contact step opened');
     await customerPage.getByPlaceholder('Email address', { exact: true }).fill(checkoutEmail);
     const terms = customerPage.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
     if (!(await terms.getAttribute('aria-checked')) || (await terms.getAttribute('aria-checked')) === 'false') await terms.click();
+    const checkoutOtpSendPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/otp') && response.request().method() === 'POST', { timeout: 30000 });
     await customerPage.getByRole('button', { name: 'Email me a sign-in code', exact: true }).click();
+    const checkoutOtpSend = await checkoutOtpSendPromise;
+    mark(`checkout OTP send returned ${checkoutOtpSend.status()}`);
+    assert.ok(checkoutOtpSend.ok(), 'Local Supabase should accept the checkout OTP request');
     await clickGotIt(customerPage);
     const checkoutOtp = await readOtp(checkoutEmail);
+    mark('checkout OTP received from local Mailpit');
     await customerPage.getByPlaceholder('6-digit email sign-in code').fill(checkoutOtp);
-    const noCodeQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 30000 });
+    const checkoutOtpVerifyPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/verify') && response.request().method() === 'POST', { timeout: 30000 });
+    const noCodeQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 8000 }).catch(() => null);
     await customerPage.getByRole('button', { name: 'Verify code and continue', exact: true }).click();
-    const noCodeQuoteResponse = await noCodeQuotePromise;
+    const checkoutOtpVerify = await checkoutOtpVerifyPromise;
+    mark(`checkout OTP verify returned ${checkoutOtpVerify.status()}`);
+    assert.ok(checkoutOtpVerify.ok(), 'Local Supabase checkout OTP verification should succeed');
+    let noCodeQuoteResponse = await noCodeQuotePromise;
+    if (!noCodeQuoteResponse) {
+      const reviewTotal = customerPage.getByRole('button', { name: 'Review total', exact: true });
+      await reviewTotal.waitFor({ timeout: 15000 });
+      mark('OTP verified; Review total CTA is available for the no-code quote');
+      const explicitQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 30000 });
+      await reviewTotal.click();
+      noCodeQuoteResponse = await explicitQuotePromise;
+    }
     assert.ok(noCodeQuoteResponse.ok(), 'No-code checkout quote should succeed');
     const noCodeQuote = await noCodeQuoteResponse.json();
     assert.equal(noCodeQuote.subtotal_cents, 1695 * 2);
