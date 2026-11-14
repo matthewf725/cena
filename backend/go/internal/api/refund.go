@@ -116,7 +116,8 @@ func (s *Server) refundOrder(w http.ResponseWriter, r *http.Request) {
 	var result stripeRefund
 	if err := json.Unmarshal(body, &result); err != nil || !stripeRefundPattern.MatchString(result.ID) ||
 		(refund.RefundID != "" && result.ID != refund.RefundID) || result.PaymentIntent != intentID ||
-		result.Currency != "usd" || result.Amount != refund.AmountCents || result.Metadata["cena_order_id"] != orderID {
+		result.Currency != "usd" || result.Amount != refund.AmountCents || result.Metadata["cena_order_id"] != orderID ||
+		result.Metadata["cena_refund_attempt"] != strconv.Itoa(refund.Attempt) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Stripe returned a refund that did not match this order. Contact Cena."})
 		return
 	}
@@ -135,16 +136,16 @@ func (s *Server) refundOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reconcileRefundEvent(ctx context.Context, event stripeEvent) error {
-	var refund stripeRefund
-	if err := json.Unmarshal(event.Data.Object, &refund); err != nil {
+	var eventRefund stripeRefund
+	if err := json.Unmarshal(event.Data.Object, &eventRefund); err != nil {
 		return err
 	}
-	orderID := refund.Metadata["cena_order_id"]
-	attempt, _ := strconv.Atoi(refund.Metadata["cena_refund_attempt"])
+	orderID := eventRefund.Metadata["cena_order_id"]
+	attempt, _ := strconv.Atoi(eventRefund.Metadata["cena_refund_attempt"])
 	if orderID == "" || attempt == 0 {
 		return nil
 	}
-	if !checkoutOrderIDPattern.MatchString(orderID) || !validConnectID(event.Account) || !stripeRefundPattern.MatchString(refund.ID) {
+	if !checkoutOrderIDPattern.MatchString(orderID) || !validConnectID(event.Account) || !stripeRefundPattern.MatchString(eventRefund.ID) {
 		return errors.New("invalid Stripe refund event")
 	}
 	body, _, err := s.serviceRPC(ctx, "checkout_refund_event_context", map[string]any{
@@ -157,19 +158,37 @@ func (s *Server) reconcileRefundEvent(ctx context.Context, event stripeEvent) er
 		checkoutReservation
 		RefundID string `json:"refund_id"`
 	}
-	if err := json.Unmarshal(body, &current); err != nil || current == nil {
+	if err := json.Unmarshal(body, &current); err != nil {
 		return err
 	}
-	// The POST records Stripe's refund ID. A webhook that arrives first can retry.
-	if current.RefundID == "" {
-		return errors.New("refund has not been linked yet")
+	if current == nil {
+		// Wrong account and stale attempt events have no matching pending DB record.
+		return nil
 	}
-	if current.RefundID != refund.ID || current.Currency != refund.Currency || current.AmountCents != refund.Amount {
+	if current.OrderID != orderID || current.StripeAccountID != event.Account || !validReservation(current.checkoutReservation) {
+		return errors.New("refund event context does not match this order")
+	}
+	// A webhook can arrive before the API records Stripe's response, or the API
+	// process can die after Stripe creates the refund. Retrieve the provider object
+	// in the stored connected-account context before linking its ID to this attempt.
+	providerBody, _, err := s.stripeRequest(ctx, http.MethodGet, "/v1/refunds/"+url.PathEscape(eventRefund.ID), nil, event.Account, "")
+	if err != nil {
+		return errors.New("could not retrieve the refund from Stripe")
+	}
+	var refund stripeRefund
+	if err := json.Unmarshal(providerBody, &refund); err != nil || refund.ID != eventRefund.ID ||
+		refund.Metadata["cena_order_id"] != orderID || refund.Metadata["cena_refund_attempt"] != strconv.Itoa(attempt) ||
+		eventRefund.Metadata["cena_refund_attempt"] != strconv.Itoa(attempt) ||
+		(current.RefundID != "" && current.RefundID != refund.ID) || refund.Currency != current.Currency || refund.Amount != current.AmountCents {
 		return errors.New("refund does not match this order")
 	}
 	session, err := s.retrieveCheckoutSession(ctx, current.SessionID, event.Account)
-	if err != nil || session.PaymentIntent != refund.PaymentIntent || !validSessionForReservation(session, current.checkoutReservation) {
+	if err != nil || session.ID != current.SessionID || session.Status != "complete" || session.PaymentStatus != "paid" ||
+		session.PaymentIntent != refund.PaymentIntent || !validSessionForReservation(session, current.checkoutReservation) {
 		return errors.New("refund payment session does not match this order")
+	}
+	if _, err := s.retrieveAndVerifyPaymentIntent(ctx, current.checkoutReservation, session); err != nil {
+		return errors.New("refund payment intent does not match this order")
 	}
 	status := refundStatus(refund.Status)
 	if status == "" {
