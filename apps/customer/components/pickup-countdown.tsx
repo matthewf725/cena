@@ -40,5 +40,5 @@ const styles = StyleSheet.create({
   outline: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderColor: green, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 7 },
   label: { color: green, fontSize: 12, fontWeight: '700', flex: 1 },
   counter: { color: green, fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'], flexShrink: 0 },
-  unavailable: { color: '#605751', fontSize: 13 },
+  unavailable: { color: '#77645B', fontSize: 13 },
 });

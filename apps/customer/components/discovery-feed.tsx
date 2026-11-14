@@ -167,11 +167,11 @@ export function DiscoveryFeed({ width, radius, query, setQuery, reduced, origin,
 }
 
 const maroon = '#5D100A';
-const ink = '#25211F';
-const muted = '#605751';
+const ink = '#271D19';
+const muted = '#77645B';
 const normalizeQuery = (query: string) => Array.from(query.trim()).slice(0, 120).join('');
 const styles = StyleSheet.create({
-  search: { minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#EDE5E0', borderRadius: 12, backgroundColor: '#FFF', paddingHorizontal: 14, marginBottom: 18 },
+  search: { minHeight: 50, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#E8DCD5', borderRadius: 12, backgroundColor: '#FFFDFA', paddingHorizontal: 14, marginBottom: 18 },
   input: { minWidth: 0, flex: 1, fontSize: 16, color: ink },
   empty: { marginBottom: 20 },
   heading: { color: ink, fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
   meals: { marginBottom: 23 },
   mealRail: { gap: 12, paddingBottom: 3 },
   tile: { width: 156 },
-  photo: { width: '100%', height: 98, overflow: 'hidden', backgroundColor: '#EDE5E0' },
+  photo: { width: '100%', height: 98, overflow: 'hidden', backgroundColor: '#E8DCD5' },
   mealName: { color: ink, fontSize: 14, lineHeight: 18, fontWeight: '700', marginTop: 7 },
   kitchen: { color: muted, fontSize: 13, marginTop: 3 },
   price: { color: maroon, fontSize: 14, fontWeight: '700', marginTop: 3 },

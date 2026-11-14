@@ -31,7 +31,7 @@ The customer app includes email OTP sign-in, saved profile/equipment, restaurant
 
 ## Restaurant app
 
-Restaurant staff sign in, select a restaurant membership, manage curbside availability and order status, view payment connection status, and start Stripe Connect onboarding. Returning through `cena-restaurant://connect/return` refreshes payment status from the authenticated API. Cancellable orders offer a confirmation step before requesting a refund; the UI reports the API's `refunded`, `pending`, or `failed` result and does not directly mark a refund successful.
+Restaurant staff sign in, select a restaurant membership, manage curbside availability and order status, view payment connection status, and start Stripe Connect onboarding. Restaurant owners and managers can list, create, edit, pause, and enable restaurant-funded promo codes through the existing role-authorized Supabase RPCs. Returning through `cena-restaurant://connect/return` refreshes payment status from the authenticated API. Cancellable orders offer a confirmation step before requesting a refund; the UI reports the API's `refunded`, `pending`, or `failed` result and does not directly mark a refund successful. Verified refunded orders remain visible with a refund-confirmed label.
 
 ## Verification and current limits
 

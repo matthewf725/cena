@@ -52,12 +52,12 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
 
 const styles = StyleSheet.create({
   section: { marginBottom: 22, minWidth: 0 },
-  title: { color: '#25211F', fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
+  title: { color: '#271D19', fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
   rail: { gap: 12, paddingBottom: 2 },
   card: { flexShrink: 0 },
-  photo: { width: '100%', overflow: 'hidden', backgroundColor: '#EADAD2' },
+  photo: { width: '100%', overflow: 'hidden', backgroundColor: '#F0E1D9' },
   caption: { paddingTop: 8, paddingBottom: 9 },
-  name: { color: '#25211F', fontSize: 15, lineHeight: 19, fontWeight: '800' },
-  details: { color: '#605751', fontSize: 13, lineHeight: 17, marginTop: 2 },
+  name: { color: '#271D19', fontSize: 15, lineHeight: 19, fontWeight: '800' },
+  details: { color: '#77645B', fontSize: 13, lineHeight: 17, marginTop: 2 },
   pressed: { opacity: 0.72 },
 });

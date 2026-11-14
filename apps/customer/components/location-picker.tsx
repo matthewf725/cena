@@ -55,7 +55,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating }
       <Text style={styles.helper}>Enter an address to see kitchens and pickup distances near it.</Text>
       <TextInput accessibilityLabel="Street address, city or ZIP code" style={styles.input} value={address}
         onChangeText={value => { setAddress(value); setError(''); }} editable={!busy} maxLength={200}
-        placeholder="Street address, city or ZIP code" placeholderTextColor="#605751" returnKeyType="search"
+        placeholder="Street address, city or ZIP code" placeholderTextColor="#77645B" returnKeyType="search"
         onSubmitEditing={() => void findAddress()} />
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
       <Pressable accessibilityRole="button" onPress={() => void findAddress()} disabled={busy || address.trim().length < 8}
@@ -79,10 +79,10 @@ const styles = StyleSheet.create({
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(28,18,14,.45)' },
   card: { padding: 16, backgroundColor: '#FAF6F3', borderRadius: 22, gap: 10, width: '100%', maxWidth: 420, alignSelf: 'center' },
   heading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { color: '#231F1C', fontSize: 24, fontWeight: '800' },
+  title: { color: '#271D19', fontSize: 24, fontWeight: '800' },
   close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  helper: { color: '#605751', fontSize: 14, lineHeight: 19 },
-  input: { minHeight: 46, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#D8CBC3', borderRadius: 13, paddingHorizontal: 12, color: '#231F1C', fontSize: 16 },
+  helper: { color: '#77645B', fontSize: 14, lineHeight: 19 },
+  input: { minHeight: 46, backgroundColor: '#FFFDFA', borderWidth: 1, borderColor: '#D8CBC3', borderRadius: 13, paddingHorizontal: 12, color: '#271D19', fontSize: 16 },
   button: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 13, backgroundColor: maroon },
   buttonText: { color: '#FFF', fontWeight: '800' }, disabled: { opacity: 0.55 },
   error: { color: maroon, fontSize: 14 },
