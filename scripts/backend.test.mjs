@@ -181,6 +181,7 @@ test('online checkout reserves once, hides unpaid orders, and finalizes idempote
   const { rows: analytics } = await database.query(`select count(*)::int as count from analytics_events where event_type='order_placed' and payload->>'order_id'=$1`, [first.order_id]);
   assert.equal(analytics[0].count, 1);
   await assert.rejects(withRole('authenticated', merchant, (tx) => tx.query("select update_order_status($1,'cancelled')", [first.order_id])), /refund/);
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query('delete from pickup_slots where id=(select slot_id from orders where id=$1)',[first.order_id])),/foreign key|orders/);
 
   await assert.rejects(withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2)', [outsider, first.order_id])), /authorized/);
   const { rows: [refund] } = await withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2) as result', [merchant, first.order_id]));
@@ -193,6 +194,37 @@ test('online checkout reserves once, hides unpaid orders, and finalizes idempote
   assert.equal((await withServiceRole(recordRefund)).rows[0].status, 'refunded');
   const { rows: [cancelled] } = await withRole('authenticated', merchant, (tx) => tx.query('select status,payment_status from orders where id=$1', [first.order_id]));
   assert.deepEqual(cancelled, { status: 'cancelled', payment_status: 'refunded' });
+});
+
+test('merchant can create pickup windows and inventory updates cannot undercut live reservations', async () => {
+  const { rows: [slot] } = await withRole('authenticated', merchant, (tx) => tx.query(`
+    insert into pickup_slots(restaurant_id,starts_at,ends_at,cutoff_at,capacity)
+    values($1,now()+interval '6 hours',now()+interval '6 hours 30 minutes',now()+interval '5 hours 30 minutes',8)
+    returning id
+  `,[fixture.restaurant]));
+  await withRole('authenticated',merchant,(tx)=>tx.query(`insert into slot_item_inventory(slot_id,item_id,available_qty) values($1,$2,8)`,[slot.id,fixture.item]));
+  await withRole('authenticated',merchant,(tx)=>tx.query(`update slot_item_inventory set available_qty=10 where slot_id=$1 and item_id=$2`,[slot.id,fixture.item]));
+  const created=await order(customer,'inventory-reservation-test',{slot:slot.id,quantity:2});
+  assert.equal(created.subtotal_cents,fixture.price_cents*2);
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query(`update slot_item_inventory set available_qty=1 where slot_id=$1 and item_id=$2`,[slot.id,fixture.item])),/check constraint/);
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query(`delete from slot_item_inventory where slot_id=$1 and item_id=$2`,[slot.id,fixture.item])),/reserved/);
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query(`update pickup_slots set reserved_count=0 where id=$1`,[slot.id])),/permission denied/);
+  await withRole('authenticated',merchant,async(tx)=>{
+    for(const status of ['accepted','preparing','ready','completed']) await tx.query('select update_order_status($1,$2)',[created.id,status]);
+  });
+  await withRole('authenticated',merchant,(tx)=>tx.query(`delete from slot_item_inventory where slot_id=$1 and item_id=$2`,[slot.id,fixture.item]));
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query(`delete from pickup_slots where id=$1`,[slot.id])),/foreign key|orders/);
+  const {rows:[remaining]}=await database.query('select count(*)::int as count from pickup_slots where id=$1',[slot.id]);
+  assert.equal(remaining.count,1,'order history keeps its pickup slot relationship');
+  const {rows:[emptySlot]}=await withRole('authenticated',merchant,(tx)=>tx.query(`
+    insert into pickup_slots(restaurant_id,starts_at,ends_at,cutoff_at,capacity)
+    values($1,now()+interval '8 hours',now()+interval '8 hours 30 minutes',now()+interval '7 hours 30 minutes',8)
+    returning id
+  `,[fixture.restaurant]));
+  await withRole('authenticated',merchant,(tx)=>tx.query('insert into slot_item_inventory(slot_id,item_id,available_qty) values($1,$2,8)',[emptySlot.id,fixture.item]));
+  await withRole('authenticated',merchant,(tx)=>tx.query('delete from pickup_slots where id=$1',[emptySlot.id]));
+  const {rows:[cascaded]}=await database.query('select count(*)::int as count from slot_item_inventory where slot_id=$1',[emptySlot.id]);
+  assert.equal(cascaded.count,0,'unbooked slot deletion cascades its inventory');
 });
 
 test('behavioral analytics requires an explicit opt-in', async () => {

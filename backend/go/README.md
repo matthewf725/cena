@@ -39,6 +39,34 @@ User-scoped reads and writes require `Authorization: Bearer <Supabase access tok
 
 Run unit tests with `go test ./...`.
 
+### Stripe sandbox checkout verification
+
+`TestStripeSandboxCheckoutExpiryIntegration` is opt-in. Run it only against a dedicated non-production Supabase project and a pre-onboarded Stripe test connected account. It requires an active promo code that discounts at least one item, a ready restaurant mapping with a 175-cent application fee, and a pickup slot more than 32 minutes away with inventory available. It creates an unpaid test Checkout Session, verifies the reduced amount and PaymentIntent fee/state, then expires the session through the API. It never opens the hosted URL or submits a payment method. A successful payment confirmation remains a separate manual sandbox-browser check. Deferred cleanup retries by idempotency key and expires any recorded session. If the provider outcome is ambiguous and expiry cannot be confirmed, inspect the sandbox order before rerunning; the API will not release a recorded reservation without Stripe confirmation.
+
+PowerShell example (replace placeholders with sandbox-only values):
+
+```powershell
+$env:CENA_STRIPE_SANDBOX_INTEGRATION = '1'
+$env:CENA_STRIPE_SANDBOX_CONFIRMATION = 'NONPRODUCTION_SANDBOX_ONLY'
+$env:CENA_STRIPE_SANDBOX_PROJECT_REF = '<your-nonprod-project-ref>'
+$env:SUPABASE_URL = 'https://<your-nonprod-project-ref>.supabase.co'
+$env:SUPABASE_ANON_KEY = '<sandbox-anon-key>'
+$env:SUPABASE_SERVICE_ROLE_KEY = '<sandbox-service-role-key>'
+$env:CENA_TEST_USER_JWT = '<sandbox-buyer-access-token>'
+$env:CENA_TEST_RESTAURANT_ID = '<restaurant-uuid>'
+$env:CENA_TEST_SLOT_ID = '<slot-uuid-more-than-32-minutes-away>'
+$env:CENA_TEST_ITEM_ID = '<available-item-uuid>'
+$env:CENA_TEST_PROMO_CODE = '<active-sandbox-promo-code>'
+$env:CENA_TEST_STRIPE_ACCOUNT_ID = 'acct_<sandbox-connected-account>'
+$env:STRIPE_SECRET_KEY = 'sk_test_<sandbox-secret-key>'
+$env:STRIPE_WEBHOOK_SECRET = '<sandbox-webhook-secret>'
+$env:CENA_WEB_BASE_URL = 'https://<sandbox-return-site>'
+$env:STRIPE_API_BASE_URL = $null
+go test -run '^TestStripeSandboxCheckoutExpiryIntegration$' -count=1 ./internal/api
+```
+
+The test refuses live Stripe keys, noncanonical Stripe API hosts, and runs without the explicit project confirmation. It does not print keys, tokens, or Checkout URLs. The integration test is skipped during ordinary `go test ./...` unless `CENA_STRIPE_SANDBOX_INTEGRATION=1` is set.
+
 ## Online payments
 
 1. Apply the online payment migrations to the same Supabase project the apps use. Configure the Go API and both app builds for that project.
