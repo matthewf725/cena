@@ -99,7 +99,7 @@ struct RestaurantHome: View {
             .confirmationDialog("Refund this customer’s full payment?", isPresented: Binding(get: { refundOrderID != nil }, set: { if !$0 { refundOrderID = nil } }), titleVisibility: .visible, presenting: refundOrderID) { id in
                 Button(refundBusy ? "Processing…" : "Refund full payment", role: .destructive) { Task { await refundPaidOrder(id) } }.disabled(refundBusy)
                 Button("Keep order", role: .cancel) { refundOrderID = nil }
-            } message: {
+            } message: { _ in
                 Text("Cena will request a full refund through Stripe. The order is cancelled only after Stripe confirms the refund. This cannot be undone.")
             }
     }
