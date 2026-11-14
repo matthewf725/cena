@@ -1,8 +1,8 @@
-const RUNTIME_VERSION = 'exposdk:54.0.0';
+const SUPPORTED_SDKS = new Set(['54.0.0', '57.0.0', '58.0.0']);
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Accept, Expo-Platform, Expo-Protocol-Version, Expo-Runtime-Version',
+  'Access-Control-Allow-Headers': 'Accept, Expo-Platform, Expo-Protocol-Version, Expo-Runtime-Version, Exponent-Platform, Exponent-SDK-Version',
   'Access-Control-Max-Age': '600',
 };
 
@@ -19,16 +19,16 @@ const MANIFESTS = new Map([
   }],
 ]);
 
-function responseHeaders(contentType = 'application/json') {
+function responseHeaders(contentType = 'application/json', protocol = '1') {
   return new Headers({
     ...CORS_HEADERS,
     'Cache-Control': 'private, no-store, max-age=0',
     'Content-Type': contentType,
-    'Expo-Protocol-Version': '1',
+    'Expo-Protocol-Version': protocol,
     'Expo-SFV-Version': '0',
     'Expo-Manifest-Filters': '',
     'Expo-Server-Defined-Headers': '',
-    Vary: 'Accept, Expo-Platform, Expo-Protocol-Version, Expo-Runtime-Version',
+    Vary: 'Accept, Expo-Platform, Expo-Protocol-Version, Expo-Runtime-Version, Exponent-SDK-Version',
     'X-Content-Type-Options': 'nosniff',
   });
 }
@@ -45,15 +45,15 @@ function suppliedValue(request, url, headerName, queryName) {
   return { value: header ?? query };
 }
 
-function isSafePreviewManifest(manifest, config, upstream) {
+function isSafePreviewManifest(manifest, config, upstream, sdkVersion) {
   if (!manifest || typeof manifest !== 'object'
     || typeof manifest.id !== 'string' || typeof manifest.createdAt !== 'string'
-    || manifest.runtimeVersion !== RUNTIME_VERSION
+    || manifest.runtimeVersion !== `exposdk:${sdkVersion}`
     || !manifest.launchAsset || !Array.isArray(manifest.assets)
     || !manifest.metadata || typeof manifest.metadata !== 'object'
     || !manifest.extra || manifest.extra.scopeKey !== config.scopeKey
     || !manifest.extra.expoClient || manifest.extra.expoClient.slug !== config.slug
-    || manifest.extra.expoClient.sdkVersion !== '54.0.0') return false;
+    || manifest.extra.expoClient.sdkVersion !== sdkVersion) return false;
 
   const allowedPrefix = `${upstream.origin}/ios-preview/`;
   const assets = [manifest.launchAsset, ...manifest.assets];
@@ -70,32 +70,49 @@ function isSafePreviewManifest(manifest, config, upstream) {
   });
 }
 
+function sdkFromRequest(runtime, sdkHeader, manifests) {
+  const candidate = runtime?.trim().replace(/^exposdk:/i, '');
+  const header = sdkHeader?.split(',').map(value => value.trim()).find(value => SUPPORTED_SDKS.has(value));
+  if (!candidate || candidate.toUpperCase() === 'UNVERSIONED') {
+    return header ?? ['58.0.0', '57.0.0', '54.0.0'].find(sdk => Object.hasOwn(manifests, sdk));
+  }
+  return candidate;
+}
+
 export function createManifestWorker(previews) {
   return {
-  async fetch(request) {
-    const requestUrl = new URL(request.url);
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: responseHeaders() });
-    }
-    if (request.method !== 'GET') return jsonError(405, 'Method not allowed.');
+    async fetch(request) {
+      const requestUrl = new URL(request.url);
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: responseHeaders() });
+      }
+      if (request.method !== 'GET') return jsonError(405, 'Method not allowed.');
 
-    const config = MANIFESTS.get(requestUrl.pathname);
-    if (!config) return jsonError(404, 'Unknown iOS preview manifest.');
+      const config = MANIFESTS.get(requestUrl.pathname);
+      if (!config) return jsonError(404, 'Unknown iOS preview manifest.');
 
-    const platform = suppliedValue(request, requestUrl, 'Expo-Platform', 'platform');
-    const runtime = suppliedValue(request, requestUrl, 'Expo-Runtime-Version', 'runtimeVersion');
-    const protocol = request.headers.get('Expo-Protocol-Version') ?? requestUrl.searchParams.get('protocolVersion');
-    if (platform.conflict || runtime.conflict) return jsonError(400, 'Conflicting platform or runtime values.');
-    if (platform.value && platform.value !== 'ios') return jsonError(400, 'Only iOS preview manifests are available.');
-    if (runtime.value && runtime.value !== RUNTIME_VERSION) return jsonError(406, 'The requested runtime is not available.');
-    if (protocol && protocol !== '1') return jsonError(406, 'Only Expo Updates protocol version 1 is available.');
+      const platform = suppliedValue(request, requestUrl, 'Expo-Platform', 'platform');
+      const runtime = suppliedValue(request, requestUrl, 'Expo-Runtime-Version', 'runtimeVersion');
+      const protocol = request.headers.get('Expo-Protocol-Version') ?? requestUrl.searchParams.get('protocolVersion');
+      if (platform.conflict || runtime.conflict) return jsonError(400, 'Conflicting platform or runtime values.');
+      const iosPlatform = platform.value ?? request.headers.get('Exponent-Platform');
+      if (iosPlatform && iosPlatform !== 'ios') return jsonError(400, 'Only iOS preview manifests are available.');
+      if (protocol && !['0', '1'].includes(protocol)) return jsonError(406, 'Use Expo Updates protocol version 0 or 1.');
 
-    const manifest = previews[config.slug];
-    if (!isSafePreviewManifest(manifest, config, new URL(config.url))) {
-      return jsonError(502, 'The preview manifest did not match the expected Expo SDK 54 app.');
-    }
+      const manifests = previews[config.slug] ?? {};
+      const sdkVersion = sdkFromRequest(runtime.value, request.headers.get('Exponent-SDK-Version'), manifests);
+      const manifest = manifests[sdkVersion];
+      if (!SUPPORTED_SDKS.has(sdkVersion) || !manifest) {
+        return jsonError(406, 'This Expo Go runtime has no Cena preview. Update Expo Go from the App Store.');
+      }
+      if (!isSafePreviewManifest(manifest, config, new URL(config.url), sdkVersion)) {
+        return jsonError(502, 'The preview manifest did not match the requested Expo SDK.');
+      }
 
-    return new Response(JSON.stringify(manifest), { status: 200, headers: responseHeaders('application/expo+json') });
-  },
+      return new Response(JSON.stringify(manifest), {
+        status: 200,
+        headers: responseHeaders('application/expo+json', protocol === '0' ? '0' : '1'),
+      });
+    },
   };
 }

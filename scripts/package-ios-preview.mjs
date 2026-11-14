@@ -8,8 +8,9 @@ const mimeTypes = {
   webp: 'image/webp', ttf: 'font/ttf',
 };
 
-async function packagePreview(app, exportDir, siteDir, siteOrigin, manifestOrigin) {
+async function packagePreview(app, exportDir, siteDir, siteOrigin, manifestOrigin, sdkVersion = '54.0.0') {
   if (!['customer', 'restaurant'].includes(app)) throw new Error('Choose customer or restaurant');
+  if (!/^5[478]\.0\.0$/.test(sdkVersion)) throw new Error('Use a supported Expo Go SDK version');
   const origin = new URL(siteOrigin);
   if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash
     || origin.username || origin.password) throw new Error('Use the public HTTPS app origin');
@@ -43,10 +44,10 @@ async function packagePreview(app, exportDir, siteDir, siteOrigin, manifestOrigi
   const launchAsset = await addAsset(ios.bundle, 'js');
   const id = randomUUID();
   const manifest = {
-    id, createdAt: new Date().toISOString(), runtimeVersion: 'exposdk:54.0.0', launchAsset, assets, metadata: {},
-    extra: { scopeKey: expo.slug, expoClient: { ...expo, sdkVersion: '54.0.0' } },
+    id, createdAt: new Date().toISOString(), runtimeVersion: `exposdk:${sdkVersion}`, launchAsset, assets, metadata: {},
+    extra: { scopeKey: expo.slug, expoClient: { ...expo, sdkVersion } },
   };
-  await writeFile(path.join(dest, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(path.join(dest, sdkVersion === '54.0.0' ? 'manifest.json' : `manifest-${sdkVersion.split('.')[0]}.json`), JSON.stringify(manifest));
 
   const manifestUrl = new URL(`/${app}/ios-preview/manifest.json`, manifestOrigin);
   if (manifestUrl.protocol !== 'https:' || manifestUrl.username || manifestUrl.password) {
