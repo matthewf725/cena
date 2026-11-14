@@ -111,12 +111,12 @@ create table public.analytics_events (
   payload jsonb not null default '{}', created_at timestamptz not null default now()
 );
 create index analytics_events_date_idx on public.analytics_events(created_at desc);
-create table public.waitlist_entries (
+create table if not exists public.waitlist_entries (
   id uuid primary key default gen_random_uuid(), email text not null, name text, role text not null default 'customer' check(role in ('customer','restaurant_owner','merchant')), source text not null default 'app',
   created_at timestamptz not null default now()
 );
-create unique index waitlist_email_lower_idx on public.waitlist_entries(lower(email));
-create table public.privacy_requests (
+create unique index if not exists waitlist_email_lower_idx on public.waitlist_entries(lower(email));
+create table if not exists public.privacy_requests (
   id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete set null,
   email text not null, request_type text not null check(request_type in ('access','export','delete','rectify')),
   details text not null default '' check(length(details)<=2000), status text not null default 'received' check(status in ('received','processing','completed','rejected')),
@@ -328,7 +328,9 @@ create policy orders_customer_read on public.orders for select to authenticated 
 create policy order_items_customer_read on public.order_items for select to authenticated using(exists(select 1 from public.orders o where o.id=order_id and (o.user_id=auth.uid() or public.is_restaurant_member(o.restaurant_id))));
 create policy analytics_customer_insert on public.analytics_events for insert to authenticated with check(user_id=auth.uid());
 create policy analytics_operator_read on public.analytics_events for select to authenticated using(public.is_operator());
+drop policy if exists privacy_insert_public on public.privacy_requests;
 create policy privacy_insert_public on public.privacy_requests for insert to anon,authenticated with check(length(trim(email)) between 5 and 320 and length(details)<=2000 and (user_id is null or user_id=auth.uid()));
+drop policy if exists privacy_self_read on public.privacy_requests;
 create policy privacy_self_read on public.privacy_requests for select to authenticated using(user_id=auth.uid());
 
 revoke all on all tables in schema public from anon,authenticated;

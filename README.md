@@ -28,17 +28,23 @@ The Go HTTP service runs with `go run ./cmd/cena-api` from `backend/go`. Configu
 1. Start Supabase CLI v3 with `supabase start`. This project uses local API port `54323` and Mailpit port `54324`. Use `supabase db reset` only to recreate local development data. For a hosted environment, link the project and run `supabase db push`. Load `supabase/seed.sql` only in a sandbox. It inserts illustrative menus and pickup slots.
 2. Copy `.env.example` into `apps/customer/.env.local` and `apps/restaurant/.env.local`. Set the project URL and publishable or legacy anon key. For a physical phone or Android emulator, use a project URL the device can reach.
 3. Configure the Supabase sign-in and signup email templates to send `{{ .Token }}`. Configure SMTP for hosted email OTP. Provision restaurant staff through Supabase Auth, then insert their memberships with the matching user and restaurant IDs. Restaurant staff use their provisioned credentials.
-4. Set the same URL and public key in `apps/site/dist/config.js` to connect the hosted waitlist and privacy request form. For the local site server, set `CENA_SITE_SUPABASE_URL` and `CENA_SITE_SUPABASE_PUBLIC_KEY`. Keep service keys out of both apps and the website.
+4. Set `CENA_SITE_SUPABASE_URL` and `CENA_SITE_SUPABASE_PUBLIC_KEY` for the signup site. The local server serves those values in `config.js`. On Vercel, set them for Production and use `apps/site` as the project root for a Git deployment. The build writes them into the static `config.js`. Use only a publishable or legacy anon key.
 5. Add `OPENAI_API_KEY` to Supabase Edge Function secrets and deploy `generate-prep`. `OPENAI_PREP_MODEL` can select another compatible structured-output model. The function drafts from restaurant-provided steps, and a restaurant owner or manager reviews and publishes them.
 
 Supabase stores orders and pickup timestamps, enforces stock and cutoff rules, and computes prices from the published catalog. Behavior analytics use an opt-in consent record. The restaurant app shows order and completed-sales summaries. A privileged `operator_analytics` RPC supplies aggregate counts for the operator role.
 
 Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`. Distance estimates are straight-line miles from the selected pickup area or an optional approximate device location. General discovery shows kitchens within 35 miles. Restaurants without coordinates can still appear in search and Recents. The request origin is used for ranking and is never written to the application database.
 
-## Before public launch
+## Hosted waitlist
 
-- Fill in the operator identity, contacts, retention periods, and terms in `docs/legal` and the matching pages in `apps/site/dist`. Complete the policy and operating review before collecting live data.
-- Configure production Supabase, email delivery, restaurant membership, and monitoring. Connect the signup site to the production project before opening access.
+The public signup page is at [cena-xi.vercel.app](https://cena-xi.vercel.app). Signups are stored in `public.waitlist_entries` in the hosted Cena Supabase project. The optional note is stored in `clarification`. Review rows in Supabase Table Editor. Visitors can submit the form through `join_waitlist` and cannot read the list.
+
+The hosted project initially received the waitlist and privacy-request schema. The checked-in migrations can add the app schema to that project without recreating the waitlist or deleting entries. Keep demo data in the sandbox.
+
+## Before launching the apps
+
+- Fill in the operator identity, contacts, retention periods, and app terms in `docs/legal` and the matching pages in `apps/site/dist`.
+- Configure the app schema in hosted Supabase, email delivery, restaurant membership, and monitoring.
 - Test each app on real iOS and Android devices and verify an order from customer reservation through restaurant pickup. Shipping requires the platform signing and store accounts.
 
 ## Photography

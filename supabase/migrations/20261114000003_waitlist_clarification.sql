@@ -4,7 +4,7 @@ alter table public.waitlist_entries
 
 drop function public.join_waitlist(text,text);
 
-create function public.join_waitlist(
+create or replace function public.join_waitlist(
   p_email text,
   p_role text default 'customer',
   p_clarification text default null
