@@ -8,6 +8,7 @@ const database = new PGlite({ extensions: { pgcrypto } });
 const customer = '10000000-0000-4000-8000-000000000001';
 const merchant = '10000000-0000-4000-8000-000000000002';
 const outsider = '10000000-0000-4000-8000-000000000003';
+const staff = '10000000-0000-4000-8000-000000000004';
 let fixture;
 
 before(async () => {
@@ -32,7 +33,7 @@ before(async () => {
     await database.exec(await readFile(new URL(file, migrations), 'utf8'));
   }
   await database.exec(await readFile(new URL('../supabase/seed.sql', import.meta.url), 'utf8'));
-  await database.query('insert into auth.users(id) values ($1),($2),($3)', [customer, merchant, outsider]);
+  await database.query('insert into auth.users(id) values ($1),($2),($3),($4)', [customer, merchant, outsider, staff]);
   const { rows: [row] } = await database.query(`
     select r.id as restaurant, c.id as item, c.price_cents, s.id as slot
     from restaurants r join pickup_slots s on s.restaurant_id = r.id
@@ -184,16 +185,53 @@ test('online checkout reserves once, hides unpaid orders, and finalizes idempote
   await assert.rejects(withRole('authenticated',merchant,(tx)=>tx.query('delete from pickup_slots where id=(select slot_id from orders where id=$1)',[first.order_id])),/foreign key|orders/);
 
   await assert.rejects(withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2)', [outsider, first.order_id])), /authorized/);
+  await database.query('insert into merchant_memberships(user_id,restaurant_id,role) values($1,$2,\'staff\')',
+    [staff, fixture.restaurant],
+  );
+  await assert.rejects(withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2)', [staff, first.order_id])), /authorized/);
   const { rows: [refund] } = await withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2) as result', [merchant, first.order_id]));
   assert.equal(refund.result.status, 'pending');
   assert.equal(refund.result.amount_cents, first.amount_cents);
+  const { rows: [reservedBeforeRefund] } = await database.query(`
+    select s.reserved_count, i.reserved_qty
+    from pickup_slots s join slot_item_inventory i on i.slot_id=s.id
+    where s.id=$1 and i.item_id=$2
+  `, [fixture.slot, fixture.item]);
+  const { rows: [sameAttempt] } = await withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2) as result', [merchant, first.order_id]));
+  assert.equal(sameAttempt.result.attempt, refund.result.attempt, 'retrying a pending refund must reuse its attempt');
+  assert.equal(sameAttempt.result.refund_id, null);
   await assert.rejects(withRole('authenticated', merchant, (tx) => tx.query("select update_order_status($1,'accepted')", [first.order_id])), /refund/);
   const recordRefund = (tx) => tx.query("select record_checkout_refund($1,$2,'re_fixture','succeeded') as status", [first.order_id, refund.result.attempt]);
   await assert.rejects(withRole('authenticated', merchant, recordRefund), /permission denied/);
-  assert.equal((await withServiceRole(recordRefund)).rows[0].status, 'refunded');
-  assert.equal((await withServiceRole(recordRefund)).rows[0].status, 'refunded');
+  await assert.rejects(withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'bad-id','pending')", [first.order_id, refund.result.attempt])), /invalid refund result/);
+  await assert.rejects(withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'re_other','pending')", [first.order_id, refund.result.attempt + 1])), /attempt mismatch/);
+  await withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'re_pending','pending')", [first.order_id, refund.result.attempt]));
+  await assert.rejects(withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'re_other','pending')", [first.order_id, refund.result.attempt])), /refund does not match/);
+  await withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'re_pending','failed')", [first.order_id, refund.result.attempt]));
+  const { rows: [retryRefund] } = await withServiceRole((tx) => tx.query('select begin_checkout_refund($1,$2) as result', [merchant, first.order_id]));
+  assert.equal(retryRefund.result.status, 'pending');
+  assert.equal(retryRefund.result.attempt, refund.result.attempt + 1, 'failed refund retry must get a fresh provider attempt');
+  assert.equal(retryRefund.result.refund_id, null, 'failed provider ID must not be reused');
+  await assert.rejects(withServiceRole((tx) => tx.query("select record_checkout_refund($1,$2,'re_other','succeeded')", [first.order_id, retryRefund.result.attempt + 1])), /attempt mismatch/);
+  const recordRetry = (tx) => tx.query("select record_checkout_refund($1,$2,'re_fixture','succeeded') as status", [first.order_id, retryRefund.result.attempt]);
+  assert.equal((await withServiceRole(recordRetry)).rows[0].status, 'refunded');
+  assert.equal((await withServiceRole(recordRetry)).rows[0].status, 'refunded');
   const { rows: [cancelled] } = await withRole('authenticated', merchant, (tx) => tx.query('select status,payment_status from orders where id=$1', [first.order_id]));
   assert.deepEqual(cancelled, { status: 'cancelled', payment_status: 'refunded' });
+  const { rows: [released] } = await database.query(`
+    select s.reserved_count, i.reserved_qty
+    from pickup_slots s join slot_item_inventory i on i.slot_id=s.id
+    where s.id=$1 and i.item_id=$2
+  `, [fixture.slot, fixture.item]);
+  assert.deepEqual(released, {
+    reserved_count: reservedBeforeRefund.reserved_count - 1,
+    reserved_qty: reservedBeforeRefund.reserved_qty - 1,
+  }, 'completed refund must release one slot and this order’s item reservation');
+  const { rows: [wrongAccount] } = await withServiceRole((tx) => tx.query(
+    'select checkout_refund_event_context($1,$2,$3) as result',
+    [first.order_id, retryRefund.result.attempt, 'acct_wrong'],
+  ));
+  assert.equal(wrongAccount.result, null, 'refund webhook lookup must reject a mismatched connected account');
 });
 
 test('merchant can create pickup windows and inventory updates cannot undercut live reservations', async () => {

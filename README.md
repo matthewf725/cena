@@ -39,6 +39,14 @@ Cena opens Stripe Checkout when a customer confirms a pickup window. The restaur
 
 Configure the Go API for Stripe Connect in test mode, onboard a restaurant through its Payments screen, and verify a paid order reaches the restaurant before using live keys. See the [payment setup](backend/go/README.md#online-payments). Customer and restaurant builds need the Go API URL in addition to their Supabase settings.
 
+Restaurant owners and managers can create a percentage code for their own restaurant and set its availability window and redemption cap. Cena shows an updated total before payment and revalidates that total before creating the Stripe Checkout Session. An expired unpaid reservation releases its promotion hold. A refunded paid order still counts toward the code's redemption cap.
+
+## Automated app checks
+
+Run `pnpm typecheck`, `pnpm test`, and `go test ./...` from `backend/go` for the SQL and API checks. The browser journey uses a local Supabase project with the current migrations, local Mailpit, and a simulated Stripe server. See the [browser test setup](scripts/e2e/README.md) for fresh-run commands and supported browsers.
+
+Run the [Android emulator smoke checks](scripts/android-smoke.sh) and the [iOS simulator checks](native/ios/README.md#build-on-macos) locally. The [test coverage graph](docs/qa-scenarios.md) tracks the evidence for each workflow. Authenticated purchases, restaurant payment setup, and refunds also need device verification with a Stripe sandbox before public app release.
+
 Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`. Distance estimates are straight-line miles from the selected pickup area or an optional approximate device location. General discovery shows kitchens within 35 miles. Restaurants without coordinates can still appear in search and Recents. The request origin is used for ranking and is never written to the application database.
 
 ## Hosted waitlist
