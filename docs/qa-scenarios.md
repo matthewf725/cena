@@ -40,8 +40,8 @@ flowchart TD
 | C08 | Live cutoff and expiration. The timer advances, identifies same-day ordering, and closed windows become unavailable. | Partial · SQL cutoff rejection and Chromium shows the correctly labeled timer decrementing by a second. Boundary UI and timezone are open. |
 | C09 | First item and repeated add. Pending/confirmed bag changes are visible in the Bag tab. | Partial · native empty bag smoke. Full signed-in journey belongs to browser E2E. |
 | C10 | Increase, decrease, remove, and restart. Bag contents and the counter agree after reload. | Open · browser E2E plus device restart. |
-| C11 | Add an item from a second restaurant. The app asks before replacing the current bag. | Open · both decisions and persisted result. |
-| C12 | Today unavailable, future day available. The next available day is offered; changing day resets the time. | Open · test midnight, date rollover, and date/time edit. |
+| C11 | Add an item from a second restaurant. The current bag is preserved until the shopper clears it. | Pass · Chromium rejected the second kitchen and kept the original item. Native replacement prompts still need replay. |
+| C12 | Today unavailable, future day available. The next available day is offered; changing day resets the time. | Partial · a Chromium fixture shifted all slots to tomorrow in `America/Los_Angeles`. The date was checked and the shopper could continue to times. Day switching and DST remain open. |
 | C13 | Same-day order, advance order, sold-out item, or full window. Only viable choices can reach payment. | Pass · SQL rejection and quote lead-time tests. Device presentation is open. |
 | C14 | Counter or supported curbside. Vehicle fields appear only for curbside and required details are validated. | Pass · SQL acceptance and curbside rejection. Full app input/keyboard behavior is open. |
 | C15 | Back, cancel, refuse a bag replacement, or leave checkout. The bag remains recoverable. | Open · test on WebKit and devices. |
@@ -90,7 +90,7 @@ flowchart TD
 | R25 | Readiness before/after onboarding. UI updates using authoritative account charges/payouts state. | Partial · the browser replay verified initial `not_connected`, completed simulated Connect onboarding, and displayed the $1.75 fee. Genuine Stripe onboarding remains open. |
 | R26 | Resume interrupted onboarding, check mismatched return, and switch location. Return link never sets readiness directly. | Partial · server tests and prior Android sign-in/deep-link smoke. Authenticated device return open. |
 | R27 | Fee and amount reconciliation. Charged amount, flat Cena fee, and Stripe account match server snapshot. | Pass · Go/SQL with simulated processor. Real sandbox metadata open. |
-| R28 | Capped promotion and simultaneous orders. Reservations consume one use, release it if unpaid, and honor the paid price. | Pass · SQL lifecycle and immutable snapshots. Actual concurrent PostgreSQL contention is open. |
+| R28 | Capped promotion and simultaneous orders. Reservations consume one use, release it if unpaid, and honor the paid price. | Pass · SQL lifecycle, immutable snapshots, and two concurrent PostgreSQL requests for the final use produced one accepted order. |
 
 ## Money · provider and database
 
@@ -108,7 +108,7 @@ flowchart TD
 | P10 | Resume paid/expired/refunded session. State is checked via API rather than a callback parameter. | Pass · Go with simulated provider. Browser and native recovery open. |
 | P11 | Authorized full refund. Stripe result, order status, and inventory reflect verified state. | Partial · local SQL verified owner/staff/outsider access, idempotent settlement, wrong-account webhook lookup, and unit/slot release. Real refund open. |
 | P12 | Refund failure, pending result, or repeated request. Order stays consistent and retries remain idempotent. | Partial · local SQL verified pending reuse, incremented attempt after failure, and rejection of stale attempt or mismatched provider ID. Provider-race and native pending/retry are open. |
-| P13 | Simultaneous purchase, expiration, and stock edit. Postgres enforces lock order and never oversells. | Partial · PGlite state tests and static lock ordering; true concurrency open. |
+| P13 | Simultaneous purchase, expiration, and stock edit. Postgres enforces lock order and never oversells. | Partial · two concurrent PostgreSQL requests reused one order for the same idempotency key. Two customers racing for one promo use produced one reservation. Concurrent expiry and stock editing remain open. |
 | P14 | Stripe sandbox account live connection, hosted Checkout completion, asynchronous webhook, and refund. | Open · real account, webhook URL, credentials, and dedicated fixtures required. |
 | P15 | Hosted API, database migrations, Auth email delivery, and signed store builds. | Open · local health confirmed, hosted production parity and release build evidence missing. |
 | P16 | Production settlement, app fee, and operational recovery. | Open · verify in dedicated sandbox before any live setup. |
@@ -123,7 +123,7 @@ flowchart TD
 | N04 | Android restaurant debug and release builds, launch, login, return link. | Partial · both variants built locally. Latest API 36 cold launch displayed the sign-in form. An earlier run checked the offline return link. Authenticated replay open. |
 | N05 | Browser previews at compact phone, iPhone, tablet and desktop. No unintended horizontal overflow. | Pass · Chromium and WebKit at widths 320, 390, and 834 on entry screens. Workflow screens remain open. |
 | N06 | Motion during carousel, modal, tab changes, and payment confirmation. Reduced Motion disables nonessential transitions. | Partial · preview responsive and reduced-motion checks. Frame timing and native settings exercise open. |
-| N07 | Screen reader labels and focus order through checkout and merchant forms. Browser supports keyboard-only interaction. | Partial · selected checkout roles confirmed. VoiceOver and TalkBack full journeys are open. |
+| N07 | Screen reader labels and focus order through checkout and merchant forms. Browser supports keyboard-only interaction. | Partial · Chromium verified selected pickup radio state after the ARIA fix. VoiceOver and TalkBack full journeys are open. |
 | N08 | Dynamic type, zoom, large display size, iPad, landscape, foldable/narrow screen, and safe areas. | Open · device matrix. |
 | N09 | Contrast and visible states in the warm theme, bright light, and OS dark mode. | Partial · text pair contrast checked; interactive screen states remain open. |
 | N10 | Offline, slow connection, interruption, relaunch, background/foreground, stale data, and connection change. | Open · verify authenticated workflows after disruption. |
