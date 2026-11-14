@@ -19,6 +19,9 @@ func TestStartCheckoutUsesVerifiedUserPriceAndConnectedAccount(t *testing.T) {
 	var orderReservation map[string]any
 	var recorded bool
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if deadline, ok := r.Context().Deadline(); !ok || time.Until(deadline) > checkoutWriteBudget {
+			t.Errorf("checkout %s did not inherit the operation deadline", r.URL.Path)
+		}
 		if r.URL.Host == "supabase.test" {
 			switch r.URL.Path {
 			case "/auth/v1/user":

@@ -15,6 +15,7 @@ import (
 )
 
 const webhookBodyLimit = 1 << 20
+const checkoutWriteBudget = 18 * time.Second
 
 var checkoutOrderIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
@@ -208,6 +209,10 @@ func (s *Server) authenticatedSupabaseUser(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), checkoutWriteBudget)
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	userID, ok := s.authenticatedSupabaseUser(w, r)
 	if !ok {
 		return
