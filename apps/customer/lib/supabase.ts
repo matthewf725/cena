@@ -42,7 +42,9 @@ export async function loadCustomerCatalog() {
   if (error || !catalog) return { data: null, error };
   const kitchens = await Promise.all((catalog.restaurants || []).map(async restaurant => {
     const availability = await fetchPickupAvailability(restaurant.id);
-    const slots = availability.data || [];
+    const slots = (availability.data || []).filter(slot =>
+      slot.reserved_count < slot.capacity && slot.items.some(item => item.remaining > 0),
+    );
     const items = (catalog.items || []).filter(item => item.restaurant_id === restaurant.id);
     const meals = items.map(item => ({
       id: item.id, backendItemId: item.id, name: item.name, subtitle: item.description,
@@ -58,7 +60,10 @@ export async function loadCustomerCatalog() {
         remaining: Object.fromEntries(slot.items.map(i => [i.item_id, i.remaining])) })),
     };
   }));
-  return { data: kitchens.filter(k => k.meals.length), error: null };
+  return {
+    data: kitchens.filter(k => k.meals.length).sort((a, b) => a.pickupSlots[0].startsAt.localeCompare(b.pickupSlots[0].startsAt)),
+    error: null,
+  };
 }
 
 export async function placeOrder(input: { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[] }) {
