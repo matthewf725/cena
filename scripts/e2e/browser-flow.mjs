@@ -6,6 +6,10 @@ const browserTypes = { chromium, webkit };
 const mailpitOrigin = 'http://127.0.0.1:54324';
 const restaurantSlug = 'sunrise-cafe';
 const mealName = 'Rigatoni alla Vodka Kit';
+const sanitizeDiagnostic = value => value
+  .replace(/\b(?:Bearer\s+)?[A-Za-z0-9_-]{80,}\b/g, '[redacted-token]')
+  .replace(/([?&](?:apikey|access_token|refresh_token|code)=)[^&\s]+/gi, '$1[redacted]')
+  .slice(0, 260);
 
 export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, apiOrigin, customerOrigin = process.env.CENA_E2E_CUSTOMER_ORIGIN || 'http://localhost:8081', restaurantOrigin = process.env.CENA_E2E_RESTAURANT_ORIGIN || 'http://localhost:8082', fake, runId, artifactsDir }) {
   const type = browserTypes[browserName];
@@ -13,6 +17,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   const browser = await type.launch({ headless: process.env.CENA_E2E_HEADLESS !== '0' });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const errors = [];
+  const browserDiagnostics = [];
   const networkBlocks = [];
   const apiTrace = [];
   const externalPages = [];
@@ -105,7 +110,23 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   }
 
   async function createRoutes(page) {
-    page.on('pageerror', error => errors.push(error.message));
+    page.on('pageerror', error => errors.push(`pageerror: ${sanitizeDiagnostic(error.message)}`));
+    page.on('console', message => {
+      if (message.type() === 'error') {
+        const location = message.location();
+        let source = '';
+        try {
+          const url = new URL(location.url);
+          source = `${url.origin}${url.pathname}:${location.lineNumber || 0}:${location.columnNumber || 0}`;
+        } catch { /* console message without a source URL */ }
+        browserDiagnostics.push(`console: ${sanitizeDiagnostic(message.text())}${source ? ` @ ${source}` : ''}`);
+      }
+    });
+    page.on('requestfailed', request => {
+      const url = new URL(request.url());
+      if (!['http:', 'https:'].includes(url.protocol)) return;
+      browserDiagnostics.push(`requestfailed: ${url.origin}${url.pathname} (${sanitizeDiagnostic(request.failure()?.errorText || 'network error')})`);
+    });
     if (routesInstalled) return;
     routesInstalled = true;
     await context.route('**/*', async route => {
@@ -405,9 +426,9 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
     customerPage = await context.newPage();
     await createRoutes(customerPage);
-    await customerPage.goto(customerOrigin, { waitUntil: 'commit', timeout: 30000 });
-    mark('customer document response committed');
-    await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 45000 });
+    await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    mark('customer document DOM content loaded');
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
     await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
     const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first();
@@ -454,6 +475,9 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     }
     mark(`checkout OTP verify returned ${checkoutOtpVerify.status()}`);
     assert.ok(checkoutOtpVerify.ok(), 'Local Supabase checkout OTP verification should succeed');
+    const verifiedCheckoutSession = await checkoutOtpVerify.json();
+    customerUserId = verifiedCheckoutSession.user?.id ?? verifiedCheckoutSession.session?.user?.id;
+    assert.ok(customerUserId, 'Checkout OTP verification should identify the signed-in customer');
     let noCodeQuoteResponse = await noCodeQuotePromise;
     if (!noCodeQuoteResponse) {
       const reviewTotal = customerPage.getByRole('button', { name: 'Review total', exact: true });
@@ -495,6 +519,48 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByText(`$${(expectedAmountCents / 100).toFixed(2)}`, { exact: true }).last().waitFor();
     mark('invalid promo rejected and 10% quote matched exact cents');
 
+    const checkoutSessionsBeforeLateRejection = fake.audit.filter(entry => entry.kind === 'checkout_session').length;
+    const pausePromoResponsePromise = merchantPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/rest/v1/rpc/save_restaurant_promotion') && response.request().method() === 'POST');
+    await merchantPage.getByRole('button', { name: 'Pause code', exact: true }).click();
+    const pausePromoResponse = await pausePromoResponsePromise;
+    assert.ok(pausePromoResponse.ok(), `Merchant disabling promo failed (${pausePromoResponse.status()})`);
+    assert.equal((await queryPromo(fixture.restaurant.id)).active, false);
+
+    const lateRejectionPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout' && response.request().method() === 'POST');
+    await customerPage.getByRole('button', { name: /Continue to secure payment/ }).click();
+    const lateRejection = await lateRejectionPromise;
+    assert.equal(lateRejection.status(), 422, 'Checkout must revalidate a promo that changed after its quote');
+    await customerPage.getByText('That discount code is unavailable. Check the code or continue without it.', { exact: true }).waitFor({ timeout: 15000 });
+    const recoveredNoCodeQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout/quote' && response.request().method() === 'POST', { timeout: 10000 }).catch(() => null);
+    await customerPage.getByRole('button', { name: 'Remove code and review total', exact: true }).click();
+    assert.equal(await customerPage.getByLabel('Restaurant discount code').inputValue(), '');
+    let recoveredNoCodeQuote = await recoveredNoCodeQuotePromise;
+    if (!recoveredNoCodeQuote) {
+      const reviewTotal = customerPage.getByRole('button', { name: 'Review total', exact: true });
+      await reviewTotal.waitFor({ timeout: 15000 });
+      const explicitRequotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout/quote' && response.request().method() === 'POST', { timeout: 30000 });
+      await reviewTotal.click();
+      recoveredNoCodeQuote = await explicitRequotePromise;
+    }
+    assert.ok(recoveredNoCodeQuote.ok(), `Discount-free recovery quote failed (${recoveredNoCodeQuote.status()})`);
+    assert.equal((await recoveredNoCodeQuote.json()).amount_cents, expectedSubtotalCents);
+    await customerPage.getByText('$33.90', { exact: true }).last().waitFor();
+    assert.equal((await queryRows('orders', 'id', { user_id: `eq.${customerUserId}` })).length, 0, 'Rejected stale promo must not create an order');
+    assert.equal(fake.audit.filter(entry => entry.kind === 'checkout_session').length, checkoutSessionsBeforeLateRejection, 'Rejected stale promo must not create a Stripe Checkout Session');
+
+    const enablePromoResponsePromise = merchantPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/rest/v1/rpc/save_restaurant_promotion') && response.request().method() === 'POST');
+    await merchantPage.getByRole('button', { name: 'Enable code', exact: true }).click();
+    const enablePromoResponse = await enablePromoResponsePromise;
+    assert.ok(enablePromoResponse.ok(), `Merchant re-enabling promo failed (${enablePromoResponse.status()})`);
+    assert.equal((await queryPromo(fixture.restaurant.id)).active, true);
+    await customerPage.getByLabel('Restaurant discount code').fill(promoCode);
+    const recoveredQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout/quote' && response.request().method() === 'POST');
+    await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).click();
+    const recoveredQuoteResponse = await recoveredQuotePromise;
+    assert.ok(recoveredQuoteResponse.ok(), `Recovered promo quote failed (${recoveredQuoteResponse.status()})`);
+    assert.equal((await recoveredQuoteResponse.json()).amount_cents, expectedAmountCents);
+    mark('late promo rejection returned 422 without creating order/Checkout; customer removed code and successfully re-quoted');
+
     async function createCheckout() {
       const responsePromise = customerPage.waitForResponse(response => {
         const url = new URL(response.url());
@@ -517,7 +583,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.ok(firstCheckout.token, 'Customer auth bearer should be present on checkout request');
     orderId = firstCheckout.body.order_id;
     customerToken = firstCheckout.token;
-    customerUserId = decodeJwt(customerToken).sub;
+    assert.equal(customerUserId, decodeJwt(customerToken).sub, 'OTP user and checkout owner should match');
     mark('customer checkout created with fake Stripe session; checking pending status');
     const statusResponse = await context.request.get(`${apiOrigin}/v1/checkout/${orderId}`, {
       headers: { authorization: `Bearer ${customerToken}` },
@@ -705,6 +771,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const webhookAudit = fake.audit.find(entry => entry.kind === 'webhook' && entry.orderId === paidOrderId && entry.status === 200);
     assert.ok(checkoutAudit && webhookAudit);
     assert.deepEqual(errors, [], `Unexpected browser runtime errors: ${errors.join('; ')}`);
+    const productWarnings = Array.from(new Set(browserDiagnostics.filter(item => /Unexpected text node|React does not recognize/i.test(item))));
+    assert.deepEqual(productWarnings, [], `React Native Web warning diagnostics remain: ${productWarnings.join('; ')}`);
     assert.deepEqual(networkBlocks, [], `Browser attempted non-loopback requests: ${networkBlocks.join(', ')}`);
     report.orderId = paidOrderId;
     report.amountCents = expectedAmountCents;
@@ -714,6 +782,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     report.connectedAccount = checkoutAudit.account;
     report.webhookStatus = webhookAudit.status;
     report.finalStatus = 'refunded';
+    report.browserDiagnostics = Array.from(new Set(browserDiagnostics)).slice(0, 8);
     return report;
   } catch (error) {
     report.error = error instanceof Error ? error.message : String(error);
@@ -728,7 +797,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     for (const [name, page] of [['customer', customerPage], ['restaurant', merchantPage]]) {
       if (page && !page.isClosed()) await page.screenshot({ path: `${artifactsDir}/${browserName}-${name}-failure.png`, fullPage: true }).catch(() => {});
     }
-    throw new Error(`${report.error}; completed stages: ${report.stages.join(' > ')}; API trace: ${apiTrace.slice(-20).join(' | ')}`);
+    throw new Error(`${report.error}; completed stages: ${report.stages.join(' > ')}; API trace: ${apiTrace.slice(-20).join(' | ')}; browser errors: ${Array.from(new Set(errors)).slice(0, 8).join(' | ') || 'none'}; browser diagnostics: ${Array.from(new Set(browserDiagnostics)).slice(0, 8).join(' | ') || 'none'}`);
   } finally {
     if (fixtureRestaurantId) {
       await serviceRequest(`/rest/v1/restaurants?id=eq.${fixtureRestaurantId}`, {
