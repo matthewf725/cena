@@ -131,12 +131,14 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
       if (requestUrl.pathname.startsWith('/v1/') && ['localhost', '127.0.0.1', '::1'].includes(requestUrl.hostname)) {
         const expectedApi = new URL(apiOrigin);
-        if (requestUrl.hostname !== expectedApi.hostname || requestUrl.port !== expectedApi.port) {
-          networkBlocks.push(`Unexpected API origin ${requestUrl.origin}`);
-          await route.abort('blockedbyclient');
-          return;
+        const target = new URL(`${requestUrl.pathname}${requestUrl.search}`, expectedApi);
+        try {
+          const upstream = await route.fetch({ url: target.toString(), maxRedirects: 0, timeout: 10000 });
+          await route.fulfill({ response: upstream });
+        } catch (error) {
+          networkBlocks.push(`Local API proxy failed for ${requestUrl.pathname}: ${error instanceof Error ? error.message : String(error)}`);
+          await route.abort('failed').catch(() => {});
         }
-        await route.continue();
         return;
       }
 

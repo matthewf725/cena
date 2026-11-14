@@ -120,14 +120,16 @@ async function main() {
 
   const appEnv = { EXPO_NO_DOTENV: '1', EXPO_PUBLIC_SUPABASE_URL: supabase.apiUrl, EXPO_PUBLIC_SUPABASE_ANON_KEY: supabase.anonKey, EXPO_PUBLIC_CENA_API_URL: apiOrigin, CI: '1' };
   const previews = [
-    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--non-interactive'] },
-    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--non-interactive'] },
+    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--non-interactive', '--clear'] },
+    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--non-interactive', '--clear'] },
   ];
   for (const preview of previews) {
     if (!await portAvailable(preview.port)) throw new Error(`Preview port ${preview.port} is occupied. Set CENA_E2E_CUSTOMER_PORT and CENA_E2E_RESTAURANT_PORT to free ports; the runner never reuses potentially stale preview bundles.`);
     console.log(`Starting fresh Expo preview at ${preview.origin} with local API ${apiOrigin}`);
-    start(pnpmBin(), preview.args, appEnv);
-    await waitHttp(preview.origin, 120000);
+    const previewProcess = start(pnpmBin(), preview.args, appEnv);
+    await waitHttp(preview.origin, 120000, previewProcess);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if (previewProcess.cenaExitCode !== undefined || previewProcess.exitCode !== null) throw new Error(`Expo preview process exited for ${preview.origin}`);
   }
 
   try {
