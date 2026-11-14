@@ -1,4 +1,5 @@
-import { FlatList, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, ImageBackground, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './type';
 import type { Kitchen } from '../lib/data';
 import { formatDistance } from '../lib/discovery';
 import { foodPhoto } from '../lib/food-photos';
@@ -55,13 +56,13 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
 
 const styles = StyleSheet.create({
   section: { marginBottom: 22, minWidth: 0 },
-  title: { color: '#271D19', fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
+  title: { fontWeight:'500', color: '#271D19', fontSize: 25, lineHeight: 30, marginBottom: 10 },
   rail: { gap: 12, paddingBottom: 2 },
   card: { flexShrink: 0, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8DCD5', overflow: 'hidden' },
   photo: { width: '100%', overflow: 'hidden', backgroundColor: '#F0E1D9' },
   caption: { paddingTop: 10, paddingBottom: 10, paddingHorizontal: 12 },
   countdown: { paddingHorizontal: 12, paddingBottom: 12 },
-  name: { color: '#271D19', fontSize: 15, lineHeight: 19, fontWeight: '800' },
-  details: { color: '#77645B', fontSize: 13, lineHeight: 17, marginTop: 2 },
+  name: { fontWeight:'500', color: '#271D19', fontSize: 18, lineHeight: 23 },
+  details: { color: '#77645B', fontSize: 14, lineHeight: 19, marginTop: 2 },
   pressed: { opacity: 0.72 },
 });

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, FlatList, ImageBackground, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ActivityIndicator, FlatList, ImageBackground, Pressable, ScrollView, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Text } from './type';
 import { discoverPickupFeed, type DiscoveryPage, type MealTile, type PickupOrigin } from '../lib/discovery';
 import type { Kitchen } from '../lib/data';
 import { foodPhoto } from '../lib/food-photos';
 import { MealPrice } from './meal-price';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, radius, query, reduced, origin, fromCity, recentIds, recentMealIds, open, openMeal, headerHeight, bottomSpace, onScroll, welcome }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fromCity, recentIds, recentMealIds, open, openMeal, headerHeight, bottomSpace, onScroll, welcome }: {
   width: number;
+  side: number;
   radius: number;
   query: string;
   reduced: boolean;
@@ -165,7 +167,7 @@ export function DiscoveryFeed({ width, radius, query, reduced, origin, fromCity,
       onScroll={onScroll} scrollEventThrottle={16}
       showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
       initialNumToRender={4} maxToRenderPerBatch={4} windowSize={5}
-      contentContainerStyle={{ paddingHorizontal: width < 390 ? 14 : 18, paddingTop: headerHeight + 12, paddingBottom: bottomSpace }}
+      contentContainerStyle={{ paddingHorizontal: side, paddingTop: headerHeight + 12, paddingBottom: bottomSpace }}
     />
   );
 }
@@ -176,15 +178,15 @@ const muted = '#77645B';
 const normalizeQuery = (query: string) => Array.from(query.trim()).slice(0, 120).join('');
 const styles = StyleSheet.create({
   empty: { marginBottom: 20 },
-  heading: { color: ink, fontSize: 22, lineHeight: 27, fontWeight: '800', marginBottom: 10 },
+  heading: { fontWeight:'500', color: ink, fontSize: 25, lineHeight: 30, marginBottom: 10 },
   help: { color: muted, fontSize: 14 },
   meals: { marginBottom: 23 },
   mealRail: { gap: 12, paddingBottom: 3 },
   tile: { width: 156 },
   photo: { width: '100%', height: 98, overflow: 'hidden', backgroundColor: '#E8DCD5' },
-  mealName: { color: ink, fontSize: 14, lineHeight: 18, fontWeight: '700', marginTop: 7 },
+  mealName: { color: ink, fontSize: 14, lineHeight: 18, fontWeight: '500', marginTop: 7 },
   kitchen: { color: muted, fontSize: 13, marginTop: 3 },
-  price: { color: maroon, fontSize: 14, fontWeight: '700', marginTop: 3 },
+  price: { color: maroon, fontSize: 14, fontWeight: '500', marginTop: 3 },
   pressed: { opacity: 0.72 },
   footer: { paddingVertical: 16, alignItems: 'center' },
 });

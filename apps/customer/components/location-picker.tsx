@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View, type TextInput as TextInputHandle } from 'react-native';
+import { Text, TextInput } from './type';
 import { LocateFixed, X } from 'lucide-react-native';
 import type { PickupOrigin } from '../lib/discovery';
 
@@ -12,7 +13,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating }
   reset: () => void;
   locating: boolean;
 }) {
-  const addressInput = useRef<TextInput>(null);
+  const addressInput = useRef<TextInputHandle>(null);
   const cardRef = useRef<View>(null);
   const closeRef = useRef(close);closeRef.current=close;
   const dismissRef = useRef<()=>void>(()=>{});
@@ -127,13 +128,13 @@ const styles = StyleSheet.create({
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(28,18,14,.45)' },
   card: { padding: 16, backgroundColor: '#FAF6F3', borderRadius: 22, gap: 10, width: '100%', maxWidth: 420, alignSelf: 'center' },
   heading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { color: '#271D19', fontSize: 24, fontWeight: '800' },
+  title: { fontWeight: '500', color: '#271D19', fontSize: 24},
   close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   helper: { color: '#77645B', fontSize: 14, lineHeight: 19 },
   input: { minHeight: 46, backgroundColor: '#FFFDFA', borderWidth: 1, borderColor: '#D8CBC3', borderRadius: 13, paddingHorizontal: 12, color: '#271D19', fontSize: 16 },
   button: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 13, backgroundColor: maroon },
-  buttonText: { color: '#FFF', fontWeight: '800' }, disabled: { opacity: 0.55 },
+  buttonText: { color: '#FFF', fontWeight: '500' }, disabled: { opacity: 0.55 },
   error: { color: maroon, fontSize: 14 },
   link: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 9, justifyContent: 'center' },
-  linkText: { color: maroon, fontSize: 14, fontWeight: '700' },
+  linkText: { color: maroon, fontSize: 14, fontWeight: '500' },
 });

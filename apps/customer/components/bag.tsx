@@ -1,4 +1,5 @@
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from './type';
 import { ChevronRight, Minus, Plus, ShoppingBag } from 'lucide-react-native';
 import type { Meal } from '../lib/data';
 import { foodPhoto } from '../lib/food-photos';
@@ -68,18 +69,18 @@ export function Bag({ items, subtotal, radius, loading, locked = false, bottomNa
 const maroon = '#5D100A';
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0 }, content: { padding: 18, gap: 12 },
-  title: { fontSize: 27, fontWeight: '800', color: '#271D19', marginBottom: 4 },
+  title: { fontWeight: '500', fontSize: 27, color: '#271D19', marginBottom: 4 },
   card: { backgroundColor: '#FFFDFA', borderWidth: 1, borderColor: '#E8DCD5', padding: 12, gap: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 }, details: { flex: 1, minWidth: 0, gap: 3 },
   photo: { width: 59, height: 59, backgroundColor: '#E8DCD5' },
-  item: { fontSize: 16, fontWeight: '700', color: '#271D19' }, secondary: { fontSize: 13, color: '#77645B' },
-  price: { fontSize: 15, fontWeight: '800', color: maroon }, actions: { justifyContent: 'space-between' },
+  item: { fontSize: 16, fontWeight: '500', color: '#271D19' }, secondary: { fontSize: 13, color: '#77645B' },
+  price: { fontSize: 15, fontWeight: '500', color: maroon }, actions: { justifyContent: 'space-between' },
   stepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FAF6F3', borderRadius: 24 },
   step: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  quantity: { minWidth: 18, textAlign: 'center', color: maroon, fontWeight: '800' },
-  remove: { color: maroon, fontSize: 13, paddingVertical: 12, fontWeight: '700' },
+  quantity: { minWidth: 18, textAlign: 'center', color: maroon, fontWeight: '500' },
+  remove: { color: maroon, fontSize: 13, paddingVertical: 12, fontWeight: '500' },
   empty: { minHeight: 190, backgroundColor: '#FFFDFA', alignItems: 'center', justifyContent: 'center', padding: 18, gap: 16 },
   footer: { paddingHorizontal: 18, paddingVertical: 12, gap: 10, borderTopWidth: 1, borderTopColor: '#E8DCD5' },
   button: { backgroundColor: maroon, minHeight: 46, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
-  buttonText: { color: '#FFF', fontSize: 15, fontWeight: '800', flexShrink: 1 }, disabled: { opacity: 0.55 },
+  buttonText: { color: '#FFF', fontSize: 15, fontWeight: '500', flexShrink: 1 }, disabled: { opacity: 0.55 },
 });

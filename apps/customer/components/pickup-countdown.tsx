@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
+import { Text } from './type';
 import { Clock3 } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 
@@ -24,7 +25,7 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
   const clock = [hours, minutes, seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
 
   return (
-    <View style={styles.outline}>
+    <View style={styles.row}>
       <Clock3 size={16} color={green} aria-hidden={Platform.OS==='web'?true:undefined}
         {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:true,importantForAccessibility:'no'})} />
       <Text style={styles.label}>Order cutoff for pickup today</Text>
@@ -38,8 +39,8 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
 const green = '#245C40';
 
 const styles = StyleSheet.create({
-  outline: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderColor: green, borderRadius: 12, paddingHorizontal: 9, paddingVertical: 7 },
-  label: { color: green, fontSize: 12, fontWeight: '700', flex: 1 },
-  counter: { color: green, fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'], flexShrink: 0 },
-  unavailable: { color: '#77645B', fontSize: 13 },
+  row: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  label: { color: green, fontSize: 13, lineHeight: 17, flex: 1 },
+  counter: { color: green, fontSize: 14, fontWeight: '500', fontVariant: ['tabular-nums'], minWidth: 64, textAlign: 'right', flexShrink: 0 },
+  unavailable: { color: '#77645B', fontSize: 14 },
 });
