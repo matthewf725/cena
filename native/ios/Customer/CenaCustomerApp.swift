@@ -80,6 +80,7 @@ struct CustomerHome: View {
     @State private var busy = false
     @State private var message: String?
     @State private var orderNumber: String?
+    @State private var expandedOrderIDs: Set<String> = []
     @State private var profileName = ""
     @State private var profilePhone = ""
     @State private var profileEquipment: [String] = []
@@ -510,11 +511,14 @@ struct CustomerHome: View {
                 ForEach(0..<history.count, id: \.self) { i in
                     let o = history[i]
                     let paymentStatus = str(o["payment_status"]).lowercased()
+                    let orderStatus = str(o["status"]).lowercased()
+                    let orderStatusLabel = orderStatus == "completed" ? "Picked up" : orderStatus.capitalized
+                    let orderID = str(o["id"])
                     let total = (o["total_cents"] as? NSNumber)?.intValue ?? int(o["subtotal_cents"])
                     let discount = int(o["discount_cents"])
                     let totalLabel = paymentStatus == "paid" ? "Paid" : paymentStatus == "refunded" ? "Refunded" : "Order total"
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(str(o["status"]).capitalized).font(.headline)
+                        Text(orderStatusLabel).font(.headline)
                         Text("\(totalLabel) $\(money(total)) · \(str(o["pickup_mode"]).capitalized) pickup").font(.subheadline)
                         if discount > 0 {
                             Text("Promo savings $\(money(discount))").font(.caption).foregroundStyle(CenaStyle.clay)
@@ -524,9 +528,30 @@ struct CustomerHome: View {
                                 .font(.caption).foregroundStyle(CenaStyle.maroon)
                         }
                         Text(str(o["pickup_starts_at"])).font(.caption).foregroundStyle(.secondary)
-                        ForEach(Array(((o["order_items"] as? [[String: Any]]) ?? []).enumerated()), id: \.offset) { _, item in
+                        ForEach(Array(((o["order_items"] as? [[String: Any]]) ?? []).enumerated()), id: \.offset) { index, item in
                             Text("\(int(item["quantity"])) × \(str(item["name_snapshot"]))").font(.caption.weight(.medium))
-                            if let steps = item["prep_steps_snapshot"] as? [String], !steps.isEmpty { Text(steps.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
+                            if let steps = item["prep_steps_snapshot"] as? [String], !steps.isEmpty {
+                                let snapshotKey = "\(orderID):\(index)"
+                                let expanded = expandedOrderIDs.contains(snapshotKey)
+                                Button(expanded ? "Hide saved prep steps" : "View saved prep steps (\(steps.count))") {
+                                    if expanded { expandedOrderIDs.remove(snapshotKey) }
+                                    else { expandedOrderIDs.insert(snapshotKey) }
+                                }
+                                .font(.caption.weight(.semibold)).foregroundStyle(CenaStyle.maroon)
+                                .accessibilityIdentifier("customer.orders.prep.\(snapshotKey)")
+                                if expanded {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        Text("Preparation saved with this order")
+                                            .font(.caption.weight(.semibold)).foregroundStyle(CenaStyle.clay)
+                                        ForEach(Array(steps.enumerated()), id: \.offset) { stepIndex, step in
+                                            Text("\(stepIndex + 1). \(step)")
+                                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                    .padding(.leading, 10)
+                                    .accessibilityElement(children: .contain)
+                                }
+                            }
                         }
                     }.padding(12).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose)
                 }
@@ -634,7 +659,7 @@ struct CustomerHome: View {
                 if pendingCheckoutID != nil { Section("Pending payment") { Button("Return to payment") { tab = 2 }.foregroundStyle(CenaStyle.maroon) } }
                 Section { Button("Sign out", role: .destructive) {
                     persistBag(); api.signOut(); cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag(); restoreIdempotencyKey()
-                    recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; clearEmailCodeState()
+                    recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; expandedOrderIDs = []; recentHistoryUnavailable = false; clearEmailCodeState()
                     profileName = ""; profilePhone = ""; profileEquipment = []; profileNotice = nil; profileEditRevision += 1
                     analyticsConsentRequestID = UUID(); analyticsConsented = false; analyticsConsentLoading = false; analyticsConsentSaving = false; analyticsConsentNotice = nil
                 } }
@@ -1198,9 +1223,15 @@ struct CustomerHome: View {
         }
     }
     private func loadHistory() async {
-        guard api.signedIn else { return }
-        do { history = try await api.rows("orders", query: "select=id,status,payment_status,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,order_items(name_snapshot,quantity,prep_steps_snapshot)&order=created_at.desc&limit=20", authenticated: true) }
-        catch { message = error.localizedDescription }
+        guard api.signedIn, let ownerID = profileUserID else { return }
+        do {
+            let loadedHistory = try await api.rows("orders", query: "select=id,status,payment_status,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,order_items(name_snapshot,quantity,prep_steps_snapshot)&order=created_at.desc,id.desc&limit=20", authenticated: true)
+            guard api.signedIn, ownerID == profileUserID else { return }
+            history = loadedHistory
+        } catch {
+            guard api.signedIn, ownerID == profileUserID else { return }
+            message = error.localizedDescription
+        }
     }
     private func imageKey(for value: [String: Any]) -> String {
         let hint = (str(value["image_key"]) + " " + str(value["cuisine"]) + " " + str(value["name"]) + " " + str(value["category"])).lowercased()
