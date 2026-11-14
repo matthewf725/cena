@@ -61,6 +61,8 @@ The customer app includes email OTP sign-in, saved profile/equipment, restaurant
 
 Restaurant staff sign in, select a restaurant membership, manage curbside availability and order status, edit meal kit drafts, view payment connection status, and start Stripe Connect onboarding. Owners and managers can publish reviewed pickup instructions and manage restaurant-funded promo codes. The catalog editor supports separate kit, regular menu, and prepared meal prices. Returning through `cena-restaurant://connect/return` refreshes payment status from the authenticated API. Cancellable orders offer a confirmation step before requesting a refund. The app reports the API's `refunded`, `pending`, or `failed` result, and confirmed refunds remain visible in order history.
 
+Insights shows authenticated order totals for the previous 30 or 90 days, completed pickups, kit quantities, and Stripe gross, refunded, and retained payments. The report groups orders by creation date and excludes at-pickup collections from Stripe totals.
+
 ## Verification and current limits
 
 Both apps assembled in debug and unsigned release configurations. The local API 36 emulator verified customer email OTP, profile save and reload, merchant sign-in and curbside changes, catalog draft publication, and marking a ready pickup complete. The [QA scenario graph](../../docs/qa-scenarios.md) records browser, database and native coverage. Checkout, merchant onboarding and refunds still need a native run with genuine Stripe sandbox credentials. Local Gradle builds require Android Studio's JDK and `ANDROID_HOME`.
