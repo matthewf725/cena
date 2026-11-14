@@ -16,6 +16,14 @@ const contentTypes = {
 createServer(async (request, response) => {
   try {
     const path = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
+    const supabaseUrl = process.env.CENA_SITE_SUPABASE_URL;
+    const supabaseKey = process.env.CENA_SITE_SUPABASE_PUBLIC_KEY;
+    if (path === '/config.js' && supabaseUrl && supabaseKey) {
+      const config = JSON.stringify({ SUPABASE_URL: supabaseUrl, SUPABASE_ANON_KEY: supabaseKey });
+      response.writeHead(200, { 'Content-Type': contentTypes['.js'], 'Cache-Control': 'no-store' });
+      response.end(`window.CENA_CONFIG = ${config};\n`);
+      return;
+    }
     const file = resolve(root, path === '/' ? 'index.html' : `.${path}`);
     if (!file.startsWith(`${root}${sep}`) || !(await stat(file)).isFile()) {
       response.writeHead(404).end();
