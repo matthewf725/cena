@@ -33,6 +33,8 @@ The Go HTTP service runs with `go run ./cmd/cena-api` from `backend/go`. Configu
 
 Supabase stores orders and pickup timestamps, enforces stock and cutoff rules, and computes prices from the published catalog. Behavior analytics use an opt-in consent record. The restaurant app shows order and completed-sales summaries. A privileged `operator_analytics` RPC supplies aggregate counts for the operator role.
 
+Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`. Distance estimates are straight-line miles from the selected pickup area or an optional approximate device location. General discovery shows kitchens within 35 miles. Restaurants without coordinates can still appear in search and Recents. The request origin is used for ranking and is never written to the application database.
+
 ## Before public launch
 
 - Fill in the operator identity, contacts, retention periods, and terms in `docs/legal` and the matching pages in `apps/site/dist`. Complete the policy and operating review before collecting live data.

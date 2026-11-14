@@ -44,8 +44,8 @@ enum CenaBackendError: LocalizedError {
         let d = try await request("/rest/v1/\(table)?\(query)", authenticated: authenticated)
         return (try JSONSerialization.jsonObject(with: d)) as? [[String: Any]] ?? []
     }
-    func rpc(_ name: String, body: [String: Any]) async throws -> Any {
-        let d = try await request("/rest/v1/rpc/\(name)", method: "POST", body: body, authenticated: true)
+    func rpc(_ name: String, body: [String: Any], authenticated: Bool = true) async throws -> Any {
+        let d = try await request("/rest/v1/rpc/\(name)", method: "POST", body: body, authenticated: authenticated)
         return (try? JSONSerialization.jsonObject(with: d)) ?? [:]
     }
     func patch(_ table: String, query: String, body: [String: Any], authenticated: Bool = false) async throws -> Data {

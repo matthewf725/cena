@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { Kitchen, Meal } from './data';
 
 // Public reads work anonymously; order writes require an email OTP session.
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -17,15 +18,6 @@ export const verifyEmailCode = async (email: string, token: string) => {
   return supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token, type: 'email' });
 };
 
-export async function fetchPublishedMenu() {
-  if (!supabase) return { data: null, error: null };
-  const [{ data: restaurants, error: restaurantError }, { data: items, error: itemError }] = await Promise.all([
-    supabase.from('restaurants').select('id,slug,name,cuisine,image_key,description,address,timezone,curbside_enabled').eq('active', true),
-    supabase.from('catalog_items').select('id,restaurant_id,name,description,price_cents,regular_price_cents,equipment,allergens,published_steps,image_key,category,prep_minutes').eq('active', true).not('published_at', 'is', null),
-  ]);
-  return { data: restaurantError || itemError ? null : { restaurants, items }, error: restaurantError || itemError };
-}
-
 // Available meal kits are derived per slot from available_qty - reserved_qty.
 export async function fetchPickupAvailability(restaurantId: string) {
   if (!supabase) return { data: null, error: null };
@@ -36,33 +28,34 @@ export async function fetchPickupAvailability(restaurantId: string) {
   return { data: inventoryError ? null : slots.map(slot => ({ ...slot, items: (inventory || []).filter(i => i.slot_id === slot.id).map(i => ({ ...i, remaining: i.available_qty - i.reserved_qty })) })), error: inventoryError };
 }
 
-export async function loadCustomerCatalog() {
-  if (!supabase) return { data: null, error: null };
-  const { data: catalog, error } = await fetchPublishedMenu();
-  if (error || !catalog) return { data: null, error };
-  const kitchens = await Promise.all((catalog.restaurants || []).map(async restaurant => {
-    const availability = await fetchPickupAvailability(restaurant.id);
-    const slots = (availability.data || []).filter(slot =>
-      slot.reserved_count < slot.capacity && slot.items.some(item => item.remaining > 0),
-    );
-    const items = (catalog.items || []).filter(item => item.restaurant_id === restaurant.id);
-    const meals = items.map(item => ({
-      id: item.id, backendItemId: item.id, name: item.name, subtitle: item.description,
-      price: item.price_cents / 100, was: (item.regular_price_cents || item.price_cents) / 100,
-      image: item.image_key || 'mediterranean', equipment: (item.equipment || [])[0],
-      publishedSteps: item.published_steps || [],
-    }));
-    return {
-      id: restaurant.slug, backendId: restaurant.id, name: restaurant.name, cuisine: restaurant.cuisine,
-      time: '15–30 min', image: restaurant.image_key || 'mediterranean', curbsideEnabled: restaurant.curbside_enabled, address: restaurant.address, timezone: restaurant.timezone,
-      meals: meals.filter(meal => slots.some(slot => slot.items.some(i => i.item_id === meal.backendItemId && i.remaining > 0))),
-      pickupSlots: slots.map(slot => ({ id: slot.id, startsAt: slot.starts_at, endsAt: slot.ends_at, cutoffAt: slot.cutoff_at,
-        remaining: Object.fromEntries(slot.items.map(i => [i.item_id, i.remaining])) })),
-    };
+export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
+  if (!supabase || !kitchen.backendId) return kitchen;
+  const restaurantId = kitchen.backendId;
+  const [menu, availability] = await Promise.all([
+    supabase.from('catalog_items').select('id,name,description,price_cents,regular_price_cents,equipment,published_steps,image_key')
+      .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null).order('name'),
+    fetchPickupAvailability(restaurantId),
+  ]);
+  if (menu.error || availability.error) throw menu.error ?? availability.error;
+  const slots = (availability.data ?? []).filter(slot => slot.reserved_count < slot.capacity);
+  const meals: Meal[] = (menu.data ?? []).map(item => ({
+    id: item.id,
+    backendItemId: item.id,
+    name: item.name,
+    subtitle: item.description,
+    price: item.price_cents / 100,
+    was: (item.regular_price_cents ?? item.price_cents) / 100,
+    image: item.image_key ?? 'mediterranean',
+    equipment: item.equipment?.[0],
+    publishedSteps: item.published_steps ?? [],
   }));
   return {
-    data: kitchens.filter(k => k.meals.length).sort((a, b) => a.pickupSlots[0].startsAt.localeCompare(b.pickupSlots[0].startsAt)),
-    error: null,
+    ...kitchen,
+    meals: meals.filter(meal => slots.some(slot => slot.items.some(item => item.item_id === meal.id && item.remaining > 0))),
+    pickupSlots: slots.filter(slot => slot.items.some(item => item.remaining > 0)).map(slot => ({
+      id: slot.id, startsAt: slot.starts_at, endsAt: slot.ends_at, cutoffAt: slot.cutoff_at,
+      remaining: Object.fromEntries(slot.items.map(item => [item.item_id, item.remaining])),
+    })),
   };
 }
 
