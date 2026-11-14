@@ -33,7 +33,7 @@
 #email,.clarification-input{display:block;width:100%;height:60px;border:1px solid #dbc9bf;border-radius:var(--corner-radius);background:#fff;padding:0 15px;font:16px var(--sans);color:var(--ink);outline-offset:3px}
 #email:focus-visible,.clarification-input:focus-visible,.signup-submit:focus-visible{outline:3px solid #c57760;outline-offset:3px}
 #email[aria-invalid=true]{border-color:#a3281e}
-.signup-submit{display:flex;width:100%;min-height:58px;margin:17px 0 0;background:transparent;border:1px solid rgba(93,16,10,.48);border-radius:var(--corner-radius);color:var(--maroon);font-size:16px;letter-spacing:.2px}
+.signup-submit{display:flex;width:100%;min-height:64px;margin:17px 0 0;background:transparent;border:1px solid rgba(93,16,10,.48);border-radius:var(--corner-radius);color:var(--maroon);font-size:18px;letter-spacing:.2px}
 .signup-submit:hover{background:var(--maroon);color:var(--ivory)}
 .signup-submit:disabled{opacity:.7;cursor:wait;transform:none}
 .signup-form .form-help{margin-top:13px}
@@ -50,19 +50,19 @@
 }
 .hero-title-accent {
   display:block;
-  max-width:24ch;
+  max-width:22ch;
   margin-top:18px;
   color:var(--maroon);
   font-family:var(--sans);
-  font-size:clamp(24px,3.1vw,40px);
+  font-size:clamp(28px,3.4vw,44px);
   font-weight:600;
   line-height:1.12;
   letter-spacing:-.025em;
 }
 .hero-copy .button-dark {
-  min-height:58px;
-  font-size:16px;
-  padding-inline:clamp(18px,3vw,26px);
+  min-height:64px;
+  font-size:18px;
+  padding-inline:clamp(20px,3vw,28px);
   gap:18px;
 }
 
