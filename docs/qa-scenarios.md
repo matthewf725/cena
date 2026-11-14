@@ -127,7 +127,7 @@ flowchart TD
 | N07 | Screen reader labels and focus order through checkout and merchant forms. Browser supports keyboard-only interaction. | Partial · Chromium verified selected pickup radio state after the ARIA fix. VoiceOver and TalkBack full journeys are open. |
 | N08 | Dynamic type, zoom, large display size, iPad, landscape, foldable/narrow screen, and safe areas. | Open · device matrix. |
 | N09 | Contrast and visible states in the warm theme, bright light, and OS dark mode. | Partial · text pair contrast checked; interactive screen states remain open. |
-| N10 | Offline, slow connection, interruption, relaunch, background/foreground, stale data, and connection change. | Open · verify authenticated workflows after disruption. |
+| N10 | Offline, slow connection, interruption, relaunch, background/foreground, stale data, and connection change. | Partial · Android customer and restaurant emulators renewed short-lived sessions against a loopback Auth fixture and resumed authenticated reads after rotation. Broader network disruption testing is open. |
 | N11 | Physical-phone full purchase and merchant pickup using reachable HTTPS services. | Open · device and sandbox environment. |
 | N12 | Installed links return to correct app; missing app fallback is usable. | Partial · website route buttons, Expo return-path mapping, and Android guest return checked. Paid return and iOS physical link are open. |
 
