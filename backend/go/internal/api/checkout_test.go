@@ -40,6 +40,10 @@ func TestStartCheckoutUsesVerifiedUserPriceAndConnectedAccount(t *testing.T) {
 				if orderReservation["p_expected_amount_cents"] != float64(2599) || orderReservation["p_promo_code"] != nil {
 					t.Errorf("expected quote and empty promotion were not forwarded: %#v", orderReservation)
 				}
+				itemsJSON, _ := json.Marshal(orderReservation["p_items"])
+				if !strings.Contains(string(itemsJSON), `"selections":{"sauce":["pesto"]}`) {
+					t.Errorf("meal selections were not forwarded: %s", itemsJSON)
+				}
 				out, _ := json.Marshal(checkoutReservation{OrderID: orderID, AmountCents: 2599, SubtotalCents: 2599, Currency: "usd", ApplicationFeeCents: 175, StripeAccountID: "acct_test123", ExpiresAt: expires, Status: "pending"})
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(out)))}, nil
 			case "/rest/v1/rpc/record_checkout_session":
@@ -77,7 +81,7 @@ func TestStartCheckoutUsesVerifiedUserPriceAndConnectedAccount(t *testing.T) {
 		return jsonResponse(http.StatusNotFound, `{}`), nil
 	})}
 	h := New(Config{SupabaseURL: "https://supabase.test", SupabaseAnonKey: "anon", SupabaseServiceRoleKey: "service-role", StripeSecretKey: "sk_test_fake", StripeWebhookSecret: "whsec_fake", WebBaseURL: "https://cena.example", Client: client, StripeClient: client})
-	body := `{"p_restaurant_id":"` + userID + `","p_slot_id":"` + orderID + `","p_idempotency_key":"checkout-12345678","p_pickup_mode":"counter","p_items":[{"item_id":"` + orderID + `","quantity":1}],"expected_amount_cents":2599}`
+	body := `{"p_restaurant_id":"` + userID + `","p_slot_id":"` + orderID + `","p_idempotency_key":"checkout-12345678","p_pickup_mode":"counter","p_items":[{"item_id":"` + orderID + `","quantity":1,"selections":{"sauce":["pesto"]}}],"expected_amount_cents":2599}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/checkout", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer user-jwt")
 	w := httptest.NewRecorder()
@@ -160,6 +164,7 @@ func TestCheckoutAvailabilityUsesPublicErrorCodes(t *testing.T) {
 	}{
 		{"invalid promotion", "/v1/checkout/quote", `{"code":"P0001","message":"promo code is unavailable","details":"private DB details"}`, "promo_unavailable", "That discount code is unavailable. Check the code or continue without it."},
 		{"closed window", "/v1/checkout", `{"code":"P0001","message":"online checkout closes 32 minutes before pickup"}`, "pickup_unavailable", "That pickup time is no longer available. Choose another time."},
+		{"meal options changed", "/v1/checkout", `{"code":"P0001","message":"meal options need review"}`, "meal_options_invalid", "Some meal options changed. Review your selections and try again."},
 		{"unknown failure", "/v1/checkout/quote", `{"code":"P0001","message":"private DB details"}`, "", "request rejected by data service"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,6 +259,30 @@ func TestExpiredCheckoutReplayWaitsForAuthoritativeRelease(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != tc.wantHTTP ||
 				response.Status != tc.wantState || released != (tc.releaseHTTP != 0) {
 				t.Fatalf("status %d body %s attempted release %t", rec.Code, rec.Body.String(), released)
+			}
+		})
+	}
+}
+
+func TestValidOrderItemsMealSelectionsBoundsAndShape(t *testing.T) {
+	const id = `550e8400-e29b-41d4-a716-446655440000`
+	for _, tc := range []struct {
+		name string
+		json string
+		want bool
+	}{
+		{"omitted selections remain supported", `[{"item_id":"` + id + `","quantity":1}]`, true},
+		{"valid slug selections", `[{"item_id":"` + id + `","quantity":2,"selections":{"sauce":["pesto","spicy_oil"],"size":["large"]}}]`, true},
+		{"null selections are optional", `[{"item_id":"` + id + `","quantity":1,"selections":null}]`, true},
+		{"invalid group id", `[{"item_id":"` + id + `","quantity":1,"selections":{"bad group":["pesto"]}}]`, false},
+		{"invalid choice id", `[{"item_id":"` + id + `","quantity":1,"selections":{"sauce":["bad choice"]}}]`, false},
+		{"duplicate selections", `[{"item_id":"` + id + `","quantity":1,"selections":{"sauce":["pesto","pesto"]}}]`, false},
+		{"too many groups", `[{"item_id":"` + id + `","quantity":1,"selections":{"a":[],"b":[],"c":[],"d":[],"e":[],"f":[],"g":[],"h":[],"i":[],"j":[],"k":[],"l":[],"m":[]}}]`, false},
+		{"wrong selection value type", `[{"item_id":"` + id + `","quantity":1,"selections":{"sauce":"pesto"}}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validOrderItems(json.RawMessage(tc.json)); got != tc.want {
+				t.Fatalf("validOrderItems() = %t, want %t", got, tc.want)
 			}
 		})
 	}

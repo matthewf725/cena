@@ -18,6 +18,7 @@ const webhookBodyLimit = 1 << 20
 const checkoutWriteBudget = 18 * time.Second
 
 var checkoutOrderIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+var mealOptionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 type checkoutReservation struct {
 	OrderID             string    `json:"order_id"`
@@ -134,8 +135,9 @@ func (s *Server) quoteCheckout(w http.ResponseWriter, r *http.Request) {
 
 func validOrderItems(raw json.RawMessage) bool {
 	var items []struct {
-		ItemID   string `json:"item_id"`
-		Quantity int    `json:"quantity"`
+		ItemID     string              `json:"item_id"`
+		Quantity   int                 `json:"quantity"`
+		Selections map[string][]string `json:"selections"`
 	}
 	if len(raw) == 0 || len(raw) > 32<<10 || json.Unmarshal(raw, &items) != nil || len(items) == 0 || len(items) > 30 {
 		return false
@@ -143,6 +145,24 @@ func validOrderItems(raw json.RawMessage) bool {
 	for _, item := range items {
 		if !checkoutOrderIDPattern.MatchString(item.ItemID) || item.Quantity < 1 || item.Quantity > 100 {
 			return false
+		}
+		if len(item.Selections) > 12 {
+			return false
+		}
+		for groupID, choiceIDs := range item.Selections {
+			if !mealOptionIDPattern.MatchString(groupID) || len(choiceIDs) > 20 {
+				return false
+			}
+			seen := make(map[string]struct{}, len(choiceIDs))
+			for _, choiceID := range choiceIDs {
+				if !mealOptionIDPattern.MatchString(choiceID) {
+					return false
+				}
+				if _, duplicate := seen[choiceID]; duplicate {
+					return false
+				}
+				seen[choiceID] = struct{}{}
+			}
 		}
 	}
 	return true
@@ -397,6 +417,8 @@ func writeCheckoutAvailabilityError(w http.ResponseWriter, status int, body []by
 		code, message = "restaurant_unavailable", "This restaurant isn’t taking online orders right now."
 	case "curbside unavailable":
 		code, message = "curbside_unavailable", "Curbside is unavailable. Choose counter pickup to continue."
+	case "meal options need review":
+		code, message = "meal_options_invalid", "Some meal options changed. Review your selections and try again."
 	case "order total is below the platform fee":
 		code, message = "order_total_too_low", "The order total is too low for online payment. Update your bag or remove the discount code."
 	default:
