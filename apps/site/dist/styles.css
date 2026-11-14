@@ -28,3 +28,13 @@
 .clarification-label{display:block;margin:14px 0 6px;font-size:10px;font-weight:700;color:var(--maroon)}.clarification-label span{font-weight:400;color:#89766e}.clarification-input{display:block;width:100%;height:39px;border:1px solid #dbc9bf;background:#fff;padding:0 12px;font:11px var(--sans);color:var(--ink);outline-offset:2px}.clarification-input::placeholder{color:#9c8b83}.clarification-input:focus-visible{outline:2px solid var(--coral)}.clarification-help{font-size:9px;color:#89766e;margin:6px 0 0}.clarification-input,.clarification-help{max-width:100%}.clarification-input{border-radius:var(--corner-radius)}
 
 .form-help a{color:var(--maroon);text-decoration:underline;text-underline-offset:2px}
+
+/* Keep the waitlist flow in a simple, thumb-friendly vertical order. */
+#email{display:block;width:100%;height:60px;border:1px solid #dbc9bf;border-radius:var(--corner-radius);background:#fff;padding:0 15px;font:16px var(--sans);color:var(--ink);outline-offset:3px}
+#email:focus-visible,.clarification-input:focus-visible,.signup-submit:focus-visible{outline:3px solid #c57760;outline-offset:3px}
+#email[aria-invalid=true]{border-color:#a3281e}
+.signup-submit{display:flex;width:100%;min-height:52px;margin:17px 0 0;background:transparent;border:1px solid rgba(93,16,10,.48);border-radius:var(--corner-radius);color:var(--maroon);font-size:12px;letter-spacing:.2px}
+.signup-submit:hover{background:var(--maroon);color:var(--ivory)}
+.signup-submit:disabled{opacity:.7;cursor:wait;transform:none}
+.signup-form .form-help{margin-top:13px}
+.signup-form .clarification-help{margin-top:7px}

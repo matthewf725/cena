@@ -105,7 +105,7 @@
         finally {
             submit.disabled = false;
             submit.removeAttribute("aria-busy");
-            submit.innerHTML = 'Join the list <span aria-hidden="true">↗</span>';
+            submit.textContent = "Join the list";
         }
     });
 })();
