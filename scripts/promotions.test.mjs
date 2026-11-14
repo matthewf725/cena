@@ -8,6 +8,7 @@ const db = new PGlite({ extensions: { pgcrypto } });
 const customer = '10000000-0000-4000-8000-000000000011';
 const merchant = '10000000-0000-4000-8000-000000000012';
 const outsider = '10000000-0000-4000-8000-000000000013';
+const staff = '10000000-0000-4000-8000-000000000014';
 let fixture;
 
 before(async () => {
@@ -22,7 +23,7 @@ before(async () => {
   const dir = new URL('../supabase/migrations/', import.meta.url);
   for (const file of (await readdir(dir)).filter((x) => x.endsWith('.sql')).sort()) await db.exec(await readFile(new URL(file, dir), 'utf8'));
   await db.exec(await readFile(new URL('../supabase/seed.sql', import.meta.url), 'utf8'));
-  await db.query('insert into auth.users(id) values($1),($2),($3)', [customer,merchant,outsider]);
+  await db.query('insert into auth.users(id) values($1),($2),($3),($4)', [customer,merchant,outsider,staff]);
   const { rows: [row] } = await db.query(`
     select r.id as restaurant,s.id as slot,c.id as item,c.price_cents
     from restaurants r join pickup_slots s on s.restaurant_id=r.id
@@ -138,6 +139,24 @@ test('restaurant promotions are private, scheduled, scoped, capped, and snapshot
   });
   const visiblePaidForMerchant=await as('authenticated',merchant,(tx)=>tx.query('select payment_status from orders where id=$1',[second.order_id]));
   assert.deepEqual(visiblePaidForMerchant.rows,[{payment_status:'paid'}],'settled checkout becomes visible through merchant RLS');
+  await db.query("insert into merchant_memberships(user_id,restaurant_id,role) values($1,$2,'staff')",[staff,fixture.restaurant]);
+  await assert.rejects(service((tx)=>tx.query('select begin_checkout_refund($1,$2)',[outsider,second.order_id])),/not authorized/);
+  await assert.rejects(service((tx)=>tx.query('select begin_checkout_refund($1,$2)',[staff,second.order_id])),/not authorized/);
+  await assert.rejects(as('authenticated',merchant,(tx)=>tx.query('select begin_checkout_refund($1,$2)',[merchant,second.order_id])),/permission denied/);
+  const refund=await service((tx)=>tx.query('select begin_checkout_refund($1,$2) as result',[merchant,second.order_id]));
+  assert.deepEqual(Object.fromEntries(['status','order_id','attempt','refund_id','session_id','stripe_account_id','amount_cents','subtotal_cents','discount_cents','promo_code','discount_percent','currency','application_fee_cents'].map((key)=>[key,refund.rows[0].result[key]])),{
+    status:'pending',order_id:second.order_id,attempt:1,refund_id:null,session_id:'cs_promo_paid',stripe_account_id:second.stripe_account_id,
+    amount_cents:refreshedQuote.amount_cents,subtotal_cents:fixture.price_cents,discount_cents:refreshedQuote.discount_cents,
+    promo_code:'SUNDAY25',discount_percent:30,currency:'usd',application_fee_cents:second.application_fee_cents,
+  });
+  const refundEvent=await service((tx)=>tx.query('select checkout_refund_event_context($1,$2,$3) as result',[second.order_id,refund.rows[0].result.attempt,second.stripe_account_id]));
+  assert.deepEqual(Object.fromEntries(['order_id','amount_cents','currency','subtotal_cents','discount_cents','promo_code','discount_percent','application_fee_cents','stripe_account_id','session_id','refund_id'].map((key)=>[key,refundEvent.rows[0].result[key]])),{
+    order_id:second.order_id,amount_cents:refreshedQuote.amount_cents,currency:'usd',subtotal_cents:fixture.price_cents,
+    discount_cents:refreshedQuote.discount_cents,promo_code:'SUNDAY25',discount_percent:30,application_fee_cents:second.application_fee_cents,
+    stripe_account_id:second.stripe_account_id,session_id:'cs_promo_paid',refund_id:null,
+  });
+  const wrongRefundAccount=await service((tx)=>tx.query('select checkout_refund_event_context($1,$2,$3) as result',[second.order_id,refund.rows[0].result.attempt,'acct_wrong']));
+  assert.equal(wrongRefundAccount.rows[0].result,null,'refund event context remains scoped to the recorded connected account');
   const {rows:[used]}=await db.query('select reserved_redemptions,redeemed_count from restaurant_promotions where code=$1',['SUNDAY25']);
   assert.deepEqual(used,{reserved_redemptions:0,redeemed_count:1});
   const {rows:[order]}=await db.query('select subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent from orders where id=$1',[second.order_id]);
