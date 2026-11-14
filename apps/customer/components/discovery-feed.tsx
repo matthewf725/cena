@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Text } from './type';
 import { discoverPickupFeed, type DiscoveryPage, type PickupOrigin } from '../lib/discovery';
@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 import type { Kitchen } from '../lib/data';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, bottomSpace, onScroll, welcome }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, topSpace, bottomSpace, onScroll }: {
   width: number;
   side: number;
   radius: number;
@@ -15,9 +15,9 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   origin: PickupOrigin;
   recentIds: string[];
   open: (kitchen: Kitchen) => void;
+  topSpace: number;
   bottomSpace: number;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  welcome?: ReactNode;
 }) {
   const list = useRef<FlatList<DiscoveryPage['categories'][number]>>(null);
   const [page, setPage] = useState<DiscoveryPage | null>(null);
@@ -99,7 +99,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   const rail = { width, radius, open, reduced };
   const content = (
     <>
-      {welcome}
       {page && (
         <>
           {!filter && (page.recents.length > 0
@@ -135,7 +134,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
       onScroll={onScroll} scrollEventThrottle={16}
       showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
       initialNumToRender={4} maxToRenderPerBatch={4} windowSize={5}
-      contentContainerStyle={{ paddingHorizontal: side, paddingBottom: bottomSpace, minHeight: welcome && viewportHeight ? viewportHeight + 12 : undefined }}
+      contentContainerStyle={{ paddingHorizontal: side, paddingTop: topSpace, paddingBottom: bottomSpace }}
     />
   );
 }

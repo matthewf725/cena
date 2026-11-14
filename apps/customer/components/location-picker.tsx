@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
   scrollContent: { flexGrow:1, paddingBottom:24 },
   heading: { minHeight:64, flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:20 },
   title: { fontWeight:'500', color:'#271D19', fontSize:24 },
-  close: { width:44, height:44, alignItems:'center', justifyContent:'center' },
+  close: { width:44, height:44, borderRadius:22, borderWidth:1, borderColor:'#E8DCD5', backgroundColor:'#FFFDFA', alignItems:'center', justifyContent:'center' },
   body: { paddingHorizontal:20, paddingTop:18, gap:12 },
   helper: { color:'#77645B',fontSize:15,lineHeight:21 },
   currentArea: { minHeight:60,flexDirection:'row',alignItems:'center',gap:11,paddingHorizontal:12,backgroundColor:'#FFFDFA',borderRadius:13,borderWidth:1,borderColor:'#E8DCD5' },

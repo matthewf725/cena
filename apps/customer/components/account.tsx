@@ -7,6 +7,7 @@ import { loadCustomerAccount, saveCustomerAccount, sendCustomerSignInCode, signI
 
 type Props = {
   userId: string | null;
+  topSpace: number;
   equipment: string[]; setEquipment: (value: string[]) => void;
   analyticsConsented: boolean; setAnalyticsConsented: (value: boolean) => void;
   email: string; setEmail: (value: string) => void;
@@ -147,7 +148,7 @@ export function Account(props: Props) {
 
   const locked = hydrating || busy;
 
-  return <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
+  return <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={[s.content, { paddingTop: props.topSpace + 20 }]}>
     <Text accessibilityRole="header" style={s.title}>Profile</Text>
     <View style={s.hero}><View style={s.avatar}><Text style={s.initial}>{props.displayName.trim().charAt(0).toUpperCase() || 'C'}</Text></View><View style={{flex:1}}><Text style={s.name}>{signedIn ? (props.displayName.trim() || 'Welcome back') : 'Welcome to Cena'}</Text><Text style={s.hint}>{signedIn ? props.email : 'Keep pickup details handy. Sign in to sync across devices.'}</Text></View><ChevronRight size={18} color={muted}/></View>
     {hydrating && <View style={s.loading}><ActivityIndicator color={maroon}/><Text style={s.hint}>Loading your saved profile…</Text></View>}

@@ -6,12 +6,13 @@ import { foodPhoto } from '../lib/food-photos';
 
 export type BagLine = { meal: Meal; qty: number; options: string; restaurantId: string; selections?: MealSelections };
 
-export function Bag({ items, subtotal, radius, loading, locked = false, bottomNavHeight = 0, change, remove, browse, addItems, checkout }: {
+export function Bag({ items, subtotal, radius, loading, locked = false, topSpace, bottomNavHeight = 0, change, remove, browse, addItems, checkout }: {
   items: (BagLine & { key: string })[];
   subtotal: number;
   radius: number;
   loading: boolean;
   locked?: boolean;
+  topSpace: number;
   bottomNavHeight?: number;
   change: (id: string, delta: number) => void;
   remove: (id: string) => void;
@@ -20,7 +21,7 @@ export function Bag({ items, subtotal, radius, loading, locked = false, bottomNa
   checkout: () => void;
 }) {
   return <View style={styles.page}>
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.content, { paddingTop: topSpace + 18 }]}>
       <View style={styles.header}>
         <Text accessibilityRole="header" style={styles.title}>Your bag</Text>
         {!!items.length && <Pressable accessibilityRole="button" accessibilityLabel="Add items" disabled={locked} onPress={addItems}

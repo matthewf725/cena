@@ -151,8 +151,9 @@ try {
   const kitchen = page.getByRole('button', { name: /^View .+ menu$/ }).first();
   await activateWithKeyboard(kitchen);
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
-  await activateWithKeyboard(chooseOptions, 'Space');
+  const mealNameButton = page.getByRole('button', { name: /^View (?!photo and options).+$/ }).first();
+  await activateWithKeyboard(mealNameButton, 'Space');
+  if (await page.getByText('Required', { exact: true }).count()) await activateWithKeyboard(page.getByRole('radio').first(), 'Space');
   const addToBag = page.getByRole('button', { name: 'Add to bag', exact: true });
   await addToBag.waitFor();
   await activateWithKeyboard(addToBag, 'Space');

@@ -136,10 +136,11 @@ try {
   // This is a loopback response override; it performs no order, auth, or database write.
   await page.getByRole('button', { name: firstKitchenLabel, exact: true }).first().click();
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
-  await chooseOptions.waitFor({ timeout: 15000 });
-  const firstMealName = (await chooseOptions.getAttribute('aria-label')).replace(/^Choose options for /, '');
-  await chooseOptions.click();
+  const firstMeal = page.getByRole('button', { name: /^View (?!photo and options).+$/ }).first();
+  await firstMeal.waitFor({ timeout: 15000 });
+  const firstMealName = (await firstMeal.getAttribute('aria-label')).replace(/^View /, '');
+  await firstMeal.click();
+  if (await page.getByText('Required', { exact: true }).count()) await page.getByRole('radio').first().click();
   await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
   await page.getByRole('button', { name: 'View bag', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Go back', exact: true }).click();
@@ -147,8 +148,9 @@ try {
   const alternateLabel = kitchenLabels.find(label => label && label !== firstKitchenLabel);
   assert.ok(alternateLabel, 'Two stocked restaurants are needed to test the bag conflict');
   await page.getByRole('button', { name: alternateLabel, exact: true }).first().click();
-  const otherOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
-  await otherOptions.click({ timeout: 15000 });
+  const otherMeal = page.getByRole('button', { name: /^View (?!photo and options).+$/ }).first();
+  await otherMeal.click({ timeout: 15000 });
+  if (await page.getByText('Required', { exact: true }).count()) await page.getByRole('radio').first().click();
   await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
   await page.getByText('One kitchen at a time', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('Got it', { exact: true }).click();

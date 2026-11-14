@@ -86,9 +86,14 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const sourceItem = sourceItems[0];
     const itemRows = await serviceRequest('/rest/v1/catalog_items?select=id', {
       method: 'POST', headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({ restaurant_id: restaurant.id, name: sourceItem.name, description: sourceItem.description, price_cents: sourceItem.price_cents, regular_price_cents: sourceItem.regular_price_cents, equipment: sourceItem.equipment, allergens: sourceItem.allergens, published_steps: sourceItem.published_steps, image_key: sourceItem.image_key, image_url: sourceItem.image_url, category: sourceItem.category, active: true, prep_minutes: sourceItem.prep_minutes, published_at: new Date().toISOString() }),
+      body: JSON.stringify({ restaurant_id: restaurant.id, name: sourceItem.name, description: sourceItem.description, price_cents: sourceItem.price_cents, regular_price_cents: sourceItem.regular_price_cents, equipment: sourceItem.equipment, allergens: sourceItem.allergens, published_steps: sourceItem.published_steps, image_key: sourceItem.image_key, image_url: sourceItem.image_url, category: sourceItem.category, active: true, prep_minutes: sourceItem.prep_minutes, published_at: new Date().toISOString(), option_groups: [{ id: 'qa_required_side', name: 'Choose a side', min: 1, max: 1, choices: [{ id: 'qa_side_salad', name: 'Side salad' }, { id: 'qa_garlic_bread', name: 'Garlic bread' }] }] }),
     });
     const itemId = itemRows[0].id;
+    const optionalItemRows = await serviceRequest('/rest/v1/catalog_items?select=id', {
+      method: 'POST', headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ restaurant_id: restaurant.id, name: 'Optional Sauce Test Kit', description: 'Disposable local quick-add fixture.', price_cents: sourceItem.price_cents, regular_price_cents: sourceItem.regular_price_cents, equipment: sourceItem.equipment, allergens: sourceItem.allergens, published_steps: sourceItem.published_steps, image_key: sourceItem.image_key, image_url: sourceItem.image_url, category: sourceItem.category, active: true, prep_minutes: sourceItem.prep_minutes, published_at: new Date().toISOString(), option_groups: [{ id: 'qa_optional_sauce', name: 'Optional sauce', min: 0, max: 1, choices: [{ id: 'qa_tomato_sauce', name: 'Tomato sauce' }] }] }),
+    });
+    const optionalItemId = optionalItemRows[0].id;
     const sourceSlot = sourceSlots[0];
     const slotStartsAt = new Date(Date.now() + 90 * 60 * 1000);
     const slotEndsAt = new Date(slotStartsAt.getTime() + 30 * 60 * 1000);
@@ -99,14 +104,14 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     });
     await serviceRequest('/rest/v1/slot_item_inventory', {
       method: 'POST', headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ slot_id: slotRows[0].id, item_id: itemId, available_qty: sourceSlot.capacity, reserved_qty: 0 }),
+      body: JSON.stringify([{ slot_id: slotRows[0].id, item_id: itemId, available_qty: sourceSlot.capacity, reserved_qty: 0 }, { slot_id: slotRows[0].id, item_id: optionalItemId, available_qty: sourceSlot.capacity, reserved_qty: 0 }]),
     });
     await serviceRequest('/rest/v1/merchant_memberships', {
       method: 'POST',
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ user_id: create.id, restaurant_id: restaurant.id, role: 'owner' }),
     });
-    return { email, password, restaurant, itemId, slotId: slotRows[0].id, availableQty: sourceSlot.capacity };
+    return { email, password, restaurant, itemId, optionalItemId, slotId: slotRows[0].id, availableQty: sourceSlot.capacity };
   }
 
   async function createRoutes(page) {
@@ -444,8 +449,30 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await chooseOptions.waitFor({ timeout: 30000 });
     await chooseOptions.click();
     await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
-    await chooseOptions.click();
+    await customerPage.getByText('Choose at least 1 option to continue.', { exact: true }).waitFor({ timeout: 5000 });
+    await customerPage.getByRole('radio', { name: 'Side salad', exact: true }).click();
     await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
+    mark('required option plus opens selector and blocks add until a choice is selected');
+    const quickAdd = customerPage.getByRole('button', { name: 'Add one Optional Sauce Test Kit to bag', exact: true });
+    await quickAdd.waitFor({ timeout: 15000 });
+    await quickAdd.click();
+    await customerPage.getByRole('button', { name: 'View bag', exact: true }).waitFor();
+    assert.equal(await customerPage.getByRole('button', { name: 'Close meal options', exact: true }).count(), 0,
+      'Optional choices should allow direct add without opening the options sheet');
+    await customerPage.getByRole('button', { name: 'View bag', exact: true }).click();
+    await customerPage.getByText('Optional Sauce Test Kit', { exact: true }).waitFor();
+    await customerPage.getByRole('button', { name: 'Remove Optional Sauce Test Kit', exact: true }).click();
+    await customerPage.getByRole('tab', { name: 'Bag, 1 item', exact: true }).waitFor();
+    mark('optional-choice plus quick-adds while one line is already configured');
+    await customerPage.getByRole('button', { name: 'Add items', exact: true }).click();
+    await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
+    const repeatConfigured = customerPage.getByRole('button', { name: `Add one ${mealName} to bag`, exact: true });
+    await repeatConfigured.waitFor({ timeout: 15000 });
+    await repeatConfigured.click();
+    assert.equal(await customerPage.getByRole('button', { name: 'Close meal options', exact: true }).count(), 0,
+      'A single previously configured option line should repeat directly without reopening the selector');
+    await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
+    mark('a single configured variant repeats directly from plus');
     await customerPage.reload({ waitUntil: 'domcontentloaded' });
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).click();
@@ -824,11 +851,16 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       await customerPage.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
       await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first().click();
       await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-      const chooseItem = customerPage.getByRole('button', { name: `Choose options for ${mealName}`, exact: true });
-      await chooseItem.waitFor({ timeout: 30000 });
-      for (let i = bagCount; i < 2; i += 1) {
-        await chooseItem.click();
+      if (bagCount === 0) {
+        await customerPage.getByRole('button', { name: `Choose options for ${mealName}`, exact: true }).click();
+        await customerPage.getByRole('radio', { name: 'Side salad', exact: true }).click();
         await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
+        bagCount = 1;
+      }
+      if (bagCount === 1) {
+        await customerPage.getByRole('button', { name: `Add one ${mealName} to bag`, exact: true }).click();
+        await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
+        bagCount = 2;
       }
       bagCount = 2;
     }
@@ -948,9 +980,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     mark('customer remains authenticated after profile reload');
     assert.equal(await customerPage.getByPlaceholder('Add your name').inputValue(), `E2E ${browserName} Customer`);
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
-    await customerPage.getByText(`Welcome back, E2E ${browserName} Customer`, { exact: true }).waitFor({ timeout: 15000 });
-    assert.equal((await customerPage.locator('[aria-label="Open account"]').innerText()).trim(), 'E');
-    mark('saved profile name drives the Home greeting and account initial');
+    await customerPage.getByRole('button', { name: 'Open account', exact: true }).getByText('E', { exact: true }).waitFor({ timeout: 15000 });
+    mark('saved profile name drives the Home account initial');
     const profileRows = await queryRows('profiles', 'display_name,phone', { display_name: `eq.E2E ${browserName} Customer`, phone: 'eq.5105550147' });
     assert.ok(profileRows.length > 0, 'Saved profile should be backed by local Supabase');
     mark('customer OTP profile save and reload persistence passed');

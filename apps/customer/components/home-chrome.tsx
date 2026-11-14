@@ -1,48 +1,45 @@
-import { useEffect, useRef, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
+import { useEffect, useId, useRef, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
+import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { MapPin, Search, X } from 'lucide-react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Text, TextInput } from './type';
 
 export const searchGap = 12;
 export const homeContentMaxWidth = 760;
+export const headerContentGap = 12;
 
 const maroon = '#46110E';
 const muted = '#77645B';
-const greetingFont = Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' });
 const controlSize = 44;
+const headerTint = '#FFE1D5';
 
-function gradient(image: string) {
-  return Platform.OS === 'web' ? { backgroundImage: image } as ViewStyle : { experimental_backgroundImage: image };
-}
-
-const warmSurface = gradient('linear-gradient(180deg, #FFE1D5 0%, #FFE1D5 58%, rgba(255,225,213,.72) 76%, rgba(255,225,213,0) 100%)');
-
-export function PageHeader({ children, identityHeight, topInset, expanded = false, reduced = true }: {
+export function PageHeader({ children, identityHeight, topInset, overlay = false }: {
   children: ReactNode;
   identityHeight: number;
   topInset: number;
-  expanded?: boolean;
-  reduced?: boolean;
+  overlay?: boolean;
 }) {
-  const extra = useRef(new Animated.Value(expanded ? 72 : 0)).current;
-  useEffect(() => {
-    const toValue = expanded ? 72 : 0;
-    if (reduced) { extra.setValue(toValue); return; }
-    const animation = Animated.timing(extra, { toValue, duration: 240, useNativeDriver: false });
-    animation.start();
-    return () => animation.stop();
-  }, [expanded, extra, reduced]);
-
-  return <View pointerEvents="box-none" style={{ minHeight: identityHeight + 12 }}>
-    <Animated.View pointerEvents="none" style={[s.surface, warmSurface, {
-      top: -topInset, height: Animated.add(extra, identityHeight + topInset + 12),
-    }]} />
+  const tintId = useId();
+  const barHeight = identityHeight + topInset;
+  const fadeHeight = barHeight + 32;
+  return <View pointerEvents="box-none" style={[s.header,
+    overlay ? s.headerOverlay : { minHeight: identityHeight + headerContentGap },
+  ]}>
+    <View pointerEvents="none" aria-hidden style={[s.surface, { top: -topInset, height: fadeHeight }]}>
+      <Svg width="100%" height="100%">
+        <Defs>
+          <LinearGradient id={tintId} x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset={0} stopColor={headerTint} />
+            <Stop offset={(barHeight - 14) / fadeHeight} stopColor={headerTint} />
+            <Stop offset={(barHeight + 7) / fadeHeight} stopColor={headerTint} stopOpacity={0.38} />
+            <Stop offset={1} stopColor={headerTint} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill={`url(#${tintId})`} />
+      </Svg>
+    </View>
     {children}
   </View>;
-}
-
-export function HomeWelcome({ greeting }: { greeting: string }) {
-  return <Text accessibilityRole="header" numberOfLines={1} style={s.greeting}>{greeting}</Text>;
 }
 
 export function HeaderWordmark({ children }: {
@@ -120,16 +117,17 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
         onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
         autoCorrect={false} returnKeyType="search" clearButtonMode="never" />
       {!!query && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={s.clear}>
-        <X size={18} color={maroon} aria-hidden />
+        <View pointerEvents="none" style={s.clearCircle}><X size={18} color={maroon} aria-hidden /></View>
       </Pressable>}
     </View>
   </View>;
 }
 
 const s = StyleSheet.create({
+  header: { zIndex: 1, overflow: 'visible' },
+  headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0 },
   surface: { position: 'absolute', left: 0, right: 0 },
   wordmark: { marginRight: 'auto' },
-  greeting: { color: maroon, fontFamily: greetingFont, fontSize: 32, fontWeight: '400', lineHeight: 42, includeFontPadding: false, letterSpacing: -0.7, marginTop: 16, marginBottom: 24 },
   pressTarget: { flexShrink: 0 },
   control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
   pickupLabelClip: { overflow: 'hidden' },
@@ -137,6 +135,7 @@ const s = StyleSheet.create({
   searchDock: { position: 'absolute', alignItems: 'center', zIndex: 1 },
   search: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 1, borderColor: '#DCCAC1', backgroundColor: '#FFFFFF', paddingLeft: 13, paddingRight: 4, boxShadow: '0 4px 16px rgba(39,29,25,.10)' },
   searchFocused: { borderColor: '#A46E64' },
-  input: { minWidth: 0, flex: 1, height: '100%', fontSize: 16, color: '#271D19', paddingRight: 8, ...(Platform.OS==='web'?{outlineWidth:0}:{}) },
+  input: { minWidth: 0, flex: 1, height: '100%', fontSize: 16, color: '#271D19', paddingRight: 8, ...(Platform.OS==='web'?{outlineWidth:0,outlineColor:'transparent',boxShadow:'none',borderWidth:0}:{}) },
   clear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  clearCircle: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FAF6F3', alignItems: 'center', justifyContent: 'center' },
 });

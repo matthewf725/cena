@@ -33,7 +33,8 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const radius = 20 + Math.max(0, Math.min(8, (390 - width) * 0.08));
-  const safeGap = topInset > 0 ? topInset + 12 : 28;
+  // Dynamic Island iPhones already include clearance below the island in the top safe area.
+  const sheetTop = Platform.OS === 'ios' && topInset >= 54 ? topInset : Math.max(28, topInset + 12);
   const nativeMotion = Platform.OS !== 'web';
   const hasEquipment = equipment !== undefined;
   const needsEquipment = Boolean(meal.equipment && hasEquipment
@@ -47,7 +48,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       return;
     }
     Animated.parallel([
-      Animated.timing(translateY, { toValue: Math.max(sheetHeight, height - safeGap) + 8, duration: 190, useNativeDriver: nativeMotion }),
+      Animated.timing(translateY, { toValue: (sheetHeight || height - sheetTop) + 8, duration: 190, useNativeDriver: nativeMotion }),
       Animated.timing(scrimOpacity, { toValue: 0, duration: 170, useNativeDriver: nativeMotion }),
     ]).start(({ finished }) => { if (finished) onCloseRef.current(); });
   }
@@ -143,13 +144,14 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
     onAdd(quantity, normalized);
   }
 
-  return <Modal visible transparent animationType={reduced?'none':'fade'} onRequestClose={closeAnimated}>
+  return <Modal visible transparent statusBarTranslucent navigationBarTranslucent animationType={reduced?'none':'fade'} onRequestClose={closeAnimated}>
     <View style={styles.overlay}>
     <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]}>
       <Pressable accessible={false} aria-hidden onPress={closeAnimated} style={StyleSheet.absoluteFillObject} />
     </Animated.View>
+    <View pointerEvents="box-none" style={[styles.sheetFrame, { top: sheetTop }]}>
     <Animated.View onLayout={event => setSheetHeight(event.nativeEvent.layout.height)} accessibilityViewIsModal
-      style={[styles.sheet, { height: Math.min(height*.92, height-safeGap), borderTopLeftRadius: radius, borderTopRightRadius: radius, transform: [{ translateY }] }]}>
+      style={[styles.sheet, { borderTopLeftRadius: radius, borderTopRightRadius: radius, transform: [{ translateY }] }]}>
       <View {...(Platform.OS==='web'?{}:panResponder.panHandlers)}>
         <View ref={dragHandle} style={styles.dragRegion}><View style={styles.dragHandle}/></View>
         <View style={styles.header}>
@@ -219,6 +221,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       </View>
     </Animated.View>
     </View>
+    </View>
   </Modal>;
 }
 
@@ -228,16 +231,17 @@ const muted = '#77645B';
 const line = '#E8DCD5';
 
 const styles = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, justifyContent: 'flex-end' },
+  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 30 },
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(28,18,14,.4)' },
-  sheet: { width: '100%', maxWidth: 720, alignSelf: 'center', height: '82%', backgroundColor: '#FAF6F3', overflow: 'hidden' },
+  sheetFrame: { position: 'absolute', bottom: 0, left: 0, right: 0, alignItems: 'center' },
+  sheet: { flex: 1, minHeight: 0, width: '100%', maxWidth: 720, backgroundColor: '#FAF6F3', overflow: 'hidden' },
   dragRegion: { minHeight: 26, justifyContent:'center', ...(Platform.OS==='web'?{touchAction:'none'}:{}) },
   dragHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: '#CFC0B8', marginBottom: 5 },
   header: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 12, paddingTop: 4, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: line, gap: 8 },
   headerText: { flex: 1, minWidth: 0 },
   title: { color: ink, fontSize: 24, lineHeight: 30, fontWeight: '500' },
   subtitle: { color: muted, fontSize: 14, lineHeight: 20, marginTop: 3, marginBottom: 5 },
-  close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginTop: -4 },
+  close: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: line, backgroundColor: '#FFFDFA', alignItems: 'center', justifyContent: 'center', marginTop: -4 },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 21, paddingTop: 14, paddingBottom: 20 },
   tag: { alignSelf: 'flex-start', backgroundColor: '#F2E7E0', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 12 },

@@ -23,12 +23,22 @@ async function openAndAddMeal(page) {
   assert.ok(await kitchen.count(), 'A kitchen menu should be available');
   await kitchen.click();
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 20000 });
-  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
-  await chooseOptions.waitFor({ timeout: 15000 });
-  await chooseOptions.waitFor({ state: 'visible' });
-  await page.waitForFunction(button => !button.hasAttribute('disabled') && button.getAttribute('aria-disabled') !== 'true', await chooseOptions.elementHandle(), { timeout: 15000 });
-  await chooseOptions.click();
-  await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
+  const requiredPlus = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
+  if (await requiredPlus.count()) {
+    await requiredPlus.waitFor({ timeout: 15000 });
+    await requiredPlus.waitFor({ state: 'visible' });
+    await page.waitForFunction(button => !button.hasAttribute('disabled') && button.getAttribute('aria-disabled') !== 'true', await requiredPlus.elementHandle(), { timeout: 15000 });
+    await requiredPlus.click();
+    if (await page.getByText('Required', { exact: true }).count()) await page.getByRole('radio').first().click();
+    await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
+  } else {
+    const quickAdd = page.locator('button[aria-label^="Add one "]').first();
+    await quickAdd.waitFor({ timeout: 15000 });
+    await page.waitForFunction(button => !button.hasAttribute('disabled') && button.getAttribute('aria-disabled') !== 'true', await quickAdd.elementHandle(), { timeout: 15000 });
+    await quickAdd.click();
+    assert.equal(await page.getByRole('button', { name: 'Close meal options', exact: true }).count(), 0,
+      'Quick add should not open the options sheet when no required choice is missing');
+  }
   await page.getByRole('button', { name: 'View bag', exact: true }).waitFor();
 }
 
