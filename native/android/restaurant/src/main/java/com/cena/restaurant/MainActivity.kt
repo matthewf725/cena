@@ -1,6 +1,6 @@
 package com.cena.restaurant
 import android.app.*;import android.content.Intent;import android.net.Uri;import android.os.*;import android.graphics.Color;import android.graphics.drawable.GradientDrawable;import android.view.*;import android.widget.*;import org.json.*;import java.net.*;import java.util.concurrent.Executors
-class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val paper=Color.rgb(255,253,250);private val peach=Color.rgb(255,240,232);private val rose=Color.rgb(233,207,196);private val coral=Color.rgb(197,119,96);private val clay=Color.rgb(133,87,74);private val ink=Color.rgb(39,29,25);private val wine=Color.rgb(93,16,10);private val ex=Executors.newSingleThreadExecutor();private lateinit var body:LinearLayout;private val pref by lazy{getSharedPreferences("merchant",0)};private var rid="";private var rname="";private var rtimezone="America/Los_Angeles";private var merchantRole="staff";private var curb=false;private var awaitingStripeReturn=false
+class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val paper=Color.rgb(255,253,250);private val peach=Color.rgb(255,240,232);private val rose=Color.rgb(233,207,196);private val coral=Color.rgb(197,119,96);private val clay=Color.rgb(133,87,74);private val ink=Color.rgb(39,29,25);private val wine=Color.rgb(93,16,10);private val ex=Executors.newSingleThreadExecutor();private lateinit var body:LinearLayout;private val pref by lazy{getSharedPreferences("merchant",0)};private var rid="";private var rname="";private var rtimezone="America/Los_Angeles";private var merchantRole="staff";private var curb=false;private var awaitingStripeReturn=false;private var insightsDays=30;private var insightsOrders:JSONArray?=null;private var insightsError:String?=null;private var insightsLoading=false;private var insightsTruncated=false;private var insightsRequestVersion=0
  override fun onCreate(b:Bundle?){super.onCreate(b);window.statusBarColor=bg;window.navigationBarColor=bg;window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;awaitingStripeReturn=isStripeReturn(intent.data);if(pref.getString("token",null)!=null)loadRestaurants()else login()}
  override fun onResume(){super.onResume();if(awaitingStripeReturn&&rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}}
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);if(isStripeReturn(intent.data)){awaitingStripeReturn=true;if(rid.isNotBlank()){awaitingStripeReturn=false;paymentSetup()}else if(pref.getString("token",null)!=null)loadRestaurants()}}
@@ -14,7 +14,7 @@ private fun apiReq(path:String,method:String="GET",data:JSONObject?=null):String
  private fun loadRestaurants(){go({req("/rest/v1/merchant_memberships?select=role,restaurant:restaurants(id,name,address,curbside_enabled,timezone)")}){val a=JSONArray(it);base();title("Your restaurants");if(a.length()==0)text("No restaurant membership is connected to this account.");for(i in 0 until a.length()){val membership=a.getJSONObject(i);val r=membership.optJSONObject("restaurant")?:continue;button("${r.optString("name")}\n${r.optString("address")}"){rid=r.optString("id");merchantRole=membership.optString("role","staff");rname=r.optString("name");rtimezone=r.optString("timezone","America/Los_Angeles");curb=r.optBoolean("curbside_enabled");dashboard();if(awaitingStripeReturn){awaitingStripeReturn=false;paymentSetup()}}};button("Sign out"){pref.edit().clear().apply();login()}}}
  private fun promotionsScreen(){go({req("/rest/v1/rpc/list_restaurant_promotions","POST",JSONObject().put("p_restaurant_id",rid))}){renderPromotions(JSONArray(it))}}
  private fun renderPromotions(promos:JSONArray){base();title("Promo codes");text("Restaurant-funded discounts · no code is active until you enable it.");button("+ Create promo code"){promotionForm(null)};button("Refresh promo codes"){promotionsScreen()};if(promos.length()==0)text("No promotion codes yet.");for(i in 0 until promos.length()){val p=promos.getJSONObject(i);val code=p.optString("code");val active=p.optBoolean("active");val now=java.time.Instant.now();val starts=runCatching{java.time.Instant.parse(p.optString("starts_at"))}.getOrNull();val ends=runCatching{java.time.Instant.parse(p.optString("ends_at"))}.getOrNull();val state=when{!active->"Paused";starts!=null&&starts.isAfter(now)->"Scheduled";ends!=null&&!ends.isAfter(now)->"Ended";else->"Active"};title("$code · ${p.optInt("discount_percent")}% off",18f);text("$state · ${p.optInt("redemption_count")} redeemed${if(p.isNull("max_redemptions"))"" else " / ${p.optInt("max_redemptions")}"} · ${p.optInt("reserved_redemptions")} reserved\nStarts ${p.optString("starts_at").replace("T"," ").take(16)}${if(p.isNull("ends_at"))"" else " · Ends ${p.optString("ends_at").replace("T"," ").take(16)}"}");button(if(active)"Pause $code" else "Enable $code"){go({req("/rest/v1/rpc/save_restaurant_promotion","POST",JSONObject().put("p_restaurant_id",rid).put("p_code",code).put("p_discount_percent",p.optInt("discount_percent")).put("p_starts_at",p.optString("starts_at")).put("p_ends_at",if(p.isNull("ends_at"))JSONObject.NULL else p.optString("ends_at")).put("p_max_redemptions",if(p.isNull("max_redemptions"))JSONObject.NULL else p.optInt("max_redemptions")).put("p_active",!active)).toString()}){promotionsScreen()}};button("Edit $code"){promotionForm(p)}};button("Back to restaurant"){dashboard()}}
- private fun promotionForm(existing:JSONObject?){base();title(if(existing==null)"New promo code" else "Edit promo code");val pattern=java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");val zone=runCatching{java.time.ZoneId.of(rtimezone)}.getOrDefault(java.time.ZoneId.of("America/Los_Angeles"));val code=field("Code (3–32 letters, digits, _ or -)");code.setText(existing?.optString("code")?:"");code.isEnabled=existing==null;code.isSingleLine=true;code.filters=arrayOf(android.text.InputFilter.LengthFilter(32));code.inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;val percent=field("Discount percent (1–90)");percent.inputType=android.text.InputType.TYPE_CLASS_NUMBER;percent.setText(existing?.optInt("discount_percent")?.toString()?:"10");fun local(value:String?):String{if(value.isNullOrBlank())return "";return runCatching{java.time.LocalDateTime.ofInstant(java.time.Instant.parse(value),zone).format(pattern)}.getOrDefault("")};val starts=field("Starts · local time YYYY-MM-DD HH:mm");starts.setText(local(existing?.optString("starts_at")?.takeIf{it!="null"}).ifBlank{java.time.LocalDateTime.now(zone).plusMinutes(5).withSecond(0).withNano(0).format(pattern)});val ends=field("Ends · optional local time YYYY-MM-DD HH:mm");ends.setText(local(existing?.optString("ends_at")?.takeIf{it!="null"}));val max=field("Maximum redemptions · optional");max.inputType=android.text.InputType.TYPE_CLASS_NUMBER;max.setText(existing?.optInt("max_redemptions")?.takeIf{it>0}?.toString()?:"");val enabled=CheckBox(this).apply{text="Enable code";setTextColor(wine);isChecked=existing?.optBoolean("active")?:false};body.addView(enabled);val error=TextView(this).apply{setTextColor(Color.rgb(160,45,35));textSize=13f};body.addView(error);button(if(existing==null)"Save promo code" else "Save changes"){val normalized=code.text.toString().trim().uppercase(java.util.Locale.ROOT);val pct=percent.text.toString().toIntOrNull();val maxCount=max.text.toString().trim().takeIf{it.isNotEmpty()}?.toIntOrNull();val parsedStart=runCatching{java.time.LocalDateTime.parse(starts.text.toString().trim(),pattern)}.getOrNull();val parsedEnd=ends.text.toString().trim().takeIf{it.isNotEmpty()}?.let{runCatching{java.time.LocalDateTime.parse(it,pattern)}.getOrNull()};when{!normalized.matches(Regex("^[A-Z0-9][A-Z0-9_-]{2,31}$"))->error.text="Enter a 3–32 character code using letters, digits, hyphens, or underscores.";pct==null||pct !in 1..90->error.text="Discount must be between 1 and 90 percent.";parsedStart==null->error.text="Enter a start time as YYYY-MM-DD HH:mm.";ends.text.isNotBlank()&&parsedEnd==null->error.text="Enter an end time as YYYY-MM-DD HH:mm.";parsedEnd!=null&&!parsedEnd.isAfter(parsedStart)->error.text="End time must be after start time.";max.text.isNotBlank()&&(maxCount==null||maxCount<1)->error.text="Maximum redemptions must be a positive number.";else->{val startsIso=parsedStart.atZone(zone).toInstant().toString();val endsIso=parsedEnd?.atZone(zone)?.toInstant()?.toString();val payload=JSONObject().put("p_restaurant_id",rid).put("p_code",normalized).put("p_discount_percent",pct).put("p_starts_at",startsIso).put("p_ends_at",endsIso?:JSONObject.NULL).put("p_max_redemptions",maxCount?:JSONObject.NULL).put("p_active",enabled.isChecked);go({req("/rest/v1/rpc/save_restaurant_promotion","POST",payload).let{"saved"}}){promotionsScreen()}}}};button("Back to promo codes"){promotionsScreen()}} private fun dashboard(){base();title(rname);text("Today's pickup operations");button(if(curb)"Curbside pickup: ON" else "Curbside pickup: OFF"){go({req("/rest/v1/restaurants?id=eq.$rid","PATCH",JSONObject().put("curbside_enabled",!curb));"ok"}){curb=!curb;dashboard()}};button("Refresh orders"){orders()};button("Payment setup"){paymentSetup()};button("Manage meal kits"){catalogScreen()};if(merchantRole=="owner"||merchantRole=="manager")button("Manage promo codes"){promotionsScreen()};ordersInline()}
+ private fun promotionForm(existing:JSONObject?){base();title(if(existing==null)"New promo code" else "Edit promo code");val pattern=java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");val zone=runCatching{java.time.ZoneId.of(rtimezone)}.getOrDefault(java.time.ZoneId.of("America/Los_Angeles"));val code=field("Code (3–32 letters, digits, _ or -)");code.setText(existing?.optString("code")?:"");code.isEnabled=existing==null;code.isSingleLine=true;code.filters=arrayOf(android.text.InputFilter.LengthFilter(32));code.inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;val percent=field("Discount percent (1–90)");percent.inputType=android.text.InputType.TYPE_CLASS_NUMBER;percent.setText(existing?.optInt("discount_percent")?.toString()?:"10");fun local(value:String?):String{if(value.isNullOrBlank())return "";return runCatching{java.time.LocalDateTime.ofInstant(java.time.Instant.parse(value),zone).format(pattern)}.getOrDefault("")};val starts=field("Starts · local time YYYY-MM-DD HH:mm");starts.setText(local(existing?.optString("starts_at")?.takeIf{it!="null"}).ifBlank{java.time.LocalDateTime.now(zone).plusMinutes(5).withSecond(0).withNano(0).format(pattern)});val ends=field("Ends · optional local time YYYY-MM-DD HH:mm");ends.setText(local(existing?.optString("ends_at")?.takeIf{it!="null"}));val max=field("Maximum redemptions · optional");max.inputType=android.text.InputType.TYPE_CLASS_NUMBER;max.setText(existing?.optInt("max_redemptions")?.takeIf{it>0}?.toString()?:"");val enabled=CheckBox(this).apply{text="Enable code";setTextColor(wine);isChecked=existing?.optBoolean("active")?:false};body.addView(enabled);val error=TextView(this).apply{setTextColor(Color.rgb(160,45,35));textSize=13f};body.addView(error);button(if(existing==null)"Save promo code" else "Save changes"){val normalized=code.text.toString().trim().uppercase(java.util.Locale.ROOT);val pct=percent.text.toString().toIntOrNull();val maxCount=max.text.toString().trim().takeIf{it.isNotEmpty()}?.toIntOrNull();val parsedStart=runCatching{java.time.LocalDateTime.parse(starts.text.toString().trim(),pattern)}.getOrNull();val parsedEnd=ends.text.toString().trim().takeIf{it.isNotEmpty()}?.let{runCatching{java.time.LocalDateTime.parse(it,pattern)}.getOrNull()};when{!normalized.matches(Regex("^[A-Z0-9][A-Z0-9_-]{2,31}$"))->error.text="Enter a 3–32 character code using letters, digits, hyphens, or underscores.";pct==null||pct !in 1..90->error.text="Discount must be between 1 and 90 percent.";parsedStart==null->error.text="Enter a start time as YYYY-MM-DD HH:mm.";ends.text.isNotBlank()&&parsedEnd==null->error.text="Enter an end time as YYYY-MM-DD HH:mm.";parsedEnd!=null&&!parsedEnd.isAfter(parsedStart)->error.text="End time must be after start time.";max.text.isNotBlank()&&(maxCount==null||maxCount<1)->error.text="Maximum redemptions must be a positive number.";else->{val startsIso=parsedStart.atZone(zone).toInstant().toString();val endsIso=parsedEnd?.atZone(zone)?.toInstant()?.toString();val payload=JSONObject().put("p_restaurant_id",rid).put("p_code",normalized).put("p_discount_percent",pct).put("p_starts_at",startsIso).put("p_ends_at",endsIso?:JSONObject.NULL).put("p_max_redemptions",maxCount?:JSONObject.NULL).put("p_active",enabled.isChecked);go({req("/rest/v1/rpc/save_restaurant_promotion","POST",payload).let{"saved"}}){promotionsScreen()}}}};button("Back to promo codes"){promotionsScreen()}} private fun dashboard(){base();title(rname);text("Today's pickup operations");button(if(curb)"Curbside pickup: ON" else "Curbside pickup: OFF"){go({req("/rest/v1/restaurants?id=eq.$rid","PATCH",JSONObject().put("curbside_enabled",!curb));"ok"}){curb=!curb;dashboard()}};button("Refresh orders"){orders()};button("Payment setup"){paymentSetup()};button("Manage meal kits"){catalogScreen()};button("Insights"){loadInsights()};if(merchantRole=="owner"||merchantRole=="manager")button("Manage promo codes"){promotionsScreen()};ordersInline()}
  private fun catalogScreen() {
   go({
    val items = JSONArray(req("/rest/v1/catalog_items?select=id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,active,published_steps,published_at,created_at&restaurant_id=eq.$rid&order=created_at.desc"))
@@ -246,6 +246,209 @@ private fun apiReq(path:String,method:String="GET",data:JSONObject?=null):String
 
   button("Back to meal kits") { catalogScreen() }
  }
+ private data class MerchantInsights(
+  val orderCount: Int,
+  val completedCount: Int,
+  val completedKits: Int,
+  val stripeGrossCents: Long,
+  val refundedStripeCents: Long,
+  val completedPayAtPickupOrders: Int
+) {
+  val netStripeCents: Long get() = stripeGrossCents - refundedStripeCents
+ }
+
+ private fun loadInsights(days: Int = insightsDays) {
+  insightsDays = days
+  val requestVersion = ++insightsRequestVersion
+  insightsOrders = null
+  insightsError = null
+  insightsTruncated = false
+  insightsLoading = true
+  renderInsights()
+
+  go({
+   try {
+   val createdAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(days.toLong())).toString()
+   val orders = JSONArray()
+   val pageSize = 500
+   var offset = 0
+   var truncated = false
+   while (offset < 10_000) {
+    val path = "/rest/v1/orders?select=id,status,payment_method,payment_status,total_cents,subtotal_cents,created_at,items:order_items(quantity)" +
+     "&restaurant_id=eq.$rid&created_at=gte.$createdAfter&order=created_at.desc,id.desc&limit=$pageSize&offset=$offset"
+    val page = JSONArray(req(path))
+    for (index in 0 until page.length()) orders.put(page.getJSONObject(index))
+    if (page.length() < pageSize) break
+    offset += pageSize
+    if (offset >= 10_000) truncated = true
+   }
+   JSONObject().put("orders", orders).put("truncated", truncated).toString()
+   } catch (error: Exception) {
+    JSONObject().put("error", error.message ?: "Could not load orders.").toString()
+   }
+  }) { response ->
+   if (requestVersion != insightsRequestVersion || days != insightsDays) return@go
+   val result = JSONObject(response)
+   if (result.has("error")) {
+    insightsError = "Could not load insights. Check your connection and try again."
+    insightsLoading = false
+    renderInsights()
+    return@go
+   }
+   insightsOrders = result.getJSONArray("orders")
+   insightsTruncated = result.optBoolean("truncated")
+   insightsError = null
+   insightsLoading = false
+   renderInsights()
+  }
+ }
+
+ private fun renderInsights() {
+  base()
+  title("Restaurant insights")
+  text("Review confirmed pickup activity and Stripe payments for this location.")
+
+  val periods = LinearLayout(this).apply {
+   orientation = LinearLayout.HORIZONTAL
+   gravity = android.view.Gravity.CENTER
+   setPadding(0, 4, 0, 8)
+  }
+  for (days in listOf(30, 90)) {
+   val selected = days == insightsDays
+   val periodButton = Button(this).apply {
+    text = "Past $days days"
+    contentDescription = "Past $days days${if (selected) ", selected" else ""}"
+    isSelected = selected
+    setTextColor(if (selected) Color.WHITE else wine)
+    backgroundTintList = android.content.res.ColorStateList.valueOf(if (selected) wine else rose)
+    setOnClickListener { if (days != insightsDays) loadInsights(days) }
+   }
+   val params = LinearLayout.LayoutParams(0, -2, 1f)
+   params.marginEnd = (6 * resources.displayMetrics.density).toInt()
+   periods.addView(periodButton, params)
+  }
+  body.addView(periods)
+  text("Orders are grouped by creation date. Stripe totals include confirmed payments and full refunds; they are not a payout or settlement report.")
+
+  if (insightsLoading && insightsOrders == null) {
+   text("Loading order insights…")
+  } else if (insightsError != null && insightsOrders == null) {
+   title("Insights unavailable", 18f)
+   text(insightsError ?: "Could not load orders.")
+   button("Retry insights") { loadInsights() }
+  } else if (insightsOrders != null) {
+   val summary = summarizeInsights(insightsOrders!!)
+   val hasActivity = summary.orderCount > 0 || summary.stripeGrossCents > 0 || summary.refundedStripeCents > 0
+   if (!hasActivity) {
+    title("No orders in this period", 18f)
+    text("Completed pickups and confirmed Stripe payments will appear here when this location has order history.")
+   } else {
+    insightsMetric("Orders placed", summary.orderCount.toString(), "Confirmed orders")
+    insightsMetric("Completed pickups", summary.completedCount.toString(), "Marked completed")
+    insightsMetric("Kits in completed orders", summary.completedKits.toString(), "Quantity from completed order items")
+    insightsMetric("Stripe payments · gross", formatInsightsCurrency(summary.stripeGrossCents), "Paid orders, including orders later refunded")
+    insightsMetric("Stripe refunded", formatInsightsCurrency(summary.refundedStripeCents), "Full Stripe refunds confirmed")
+    insightsMetric("Net Stripe payments", formatInsightsCurrency(summary.netStripeCents), "Confirmed Stripe totals minus confirmed refunds")
+    if (summary.completedPayAtPickupOrders > 0) {
+     text("${summary.completedPayAtPickupOrders} completed pay-at-pickup orders are excluded from Stripe totals. Cena does not record whether those payments were collected.")
+    }
+   }
+   if (insightsTruncated) {
+    text("This report reached its 10,000-order limit. Earlier records in this period may be omitted.")
+   }
+   if (insightsError != null) text("Refresh failed: ${insightsError}")
+   button("Refresh insights") { loadInsights() }
+  }
+  button("Back to restaurant") { dashboard() }
+ }
+
+ private fun insightsMetric(label: String, value: String, detail: String) {
+  val card = LinearLayout(this).apply {
+   orientation = LinearLayout.VERTICAL
+   setPadding((16 * resources.displayMetrics.density).toInt(), (12 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (12 * resources.displayMetrics.density).toInt())
+   background = GradientDrawable().apply {
+    setColor(paper)
+    cornerRadius = 16 * resources.displayMetrics.density
+    setStroke((1 * resources.displayMetrics.density).toInt(), rose)
+   }
+   isFocusable = true
+   contentDescription = "$label: $value. $detail"
+  }
+  card.addView(TextView(this).apply {
+   text = label
+   textSize = 13f
+   setTextColor(clay)
+  })
+  card.addView(TextView(this).apply {
+   text = value
+   textSize = 24f
+   setTextColor(ink)
+   typeface = android.graphics.Typeface.DEFAULT_BOLD
+   setPadding(0, 3, 0, 2)
+  })
+  card.addView(TextView(this).apply {
+   text = detail
+   textSize = 12f
+   setTextColor(clay)
+  })
+  body.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+   bottomMargin = (10 * resources.displayMetrics.density).toInt()
+  })
+ }
+
+ private fun formatInsightsCurrency(cents: Long): String =
+  String.format(java.util.Locale.ROOT, "$%.2f", cents / 100.0)
+
+ private fun summarizeInsights(orders: JSONArray): MerchantInsights {
+  var confirmedOrders = 0
+  var completedOrders = 0
+  var completedKits = 0
+  var stripeGrossCents = 0L
+  var refundedStripeCents = 0L
+  var completedPayAtPickupOrders = 0
+
+  for (index in 0 until orders.length()) {
+   val order = orders.optJSONObject(index) ?: continue
+   val status = order.optString("status").lowercase(java.util.Locale.ROOT)
+   val paymentMethod = order.optString("payment_method").lowercase(java.util.Locale.ROOT)
+   val paymentStatus = order.optString("payment_status").lowercase(java.util.Locale.ROOT)
+   val amountCents = order.optInt("total_cents", order.optInt("subtotal_cents")).coerceAtLeast(0)
+
+   if (status !in listOf("pending_payment", "cancelled") &&
+    paymentStatus !in listOf("pending", "expired", "failed", "cancelled")) {
+    confirmedOrders++
+   }
+
+   if (status == "completed") {
+    completedOrders++
+    if (paymentMethod == "pay_at_pickup") completedPayAtPickupOrders++
+    val items = order.optJSONArray("items") ?: JSONArray()
+    for (itemIndex in 0 until items.length()) {
+     completedKits += items.optJSONObject(itemIndex)?.optInt("quantity")?.coerceAtLeast(0) ?: 0
+    }
+   }
+
+   if (paymentMethod == "stripe_checkout") {
+    when (paymentStatus) {
+     "paid" -> stripeGrossCents += amountCents
+     "refunded" -> {
+      stripeGrossCents += amountCents
+      refundedStripeCents += amountCents
+     }
+    }
+   }
+  }
+
+  return MerchantInsights(
+   confirmedOrders,
+   completedOrders,
+   completedKits,
+   stripeGrossCents,
+   refundedStripeCents,
+   completedPayAtPickupOrders
+  )
+ }
+
  private fun orders(){dashboard()}
  private fun pickupRange(start:String,end:String,timezone:String):String{val zone=runCatching{java.time.ZoneId.of(timezone)}.getOrDefault(java.time.ZoneId.of("America/Los_Angeles"));val day=java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d",java.util.Locale.getDefault()).withZone(zone);val time=java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT).withLocale(java.util.Locale.getDefault()).withZone(zone);return "${day.format(java.time.Instant.parse(start))} · ${time.format(java.time.Instant.parse(start))}–${time.format(java.time.Instant.parse(end))}"}
  private fun ordersInline() {
