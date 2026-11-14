@@ -37,6 +37,11 @@ type Server struct {
 }
 
 func New(cfg Config) http.Handler {
+	return NewServer(cfg).Handler()
+}
+
+// NewServer constructs the HTTP API and its background checkout reconciler dependencies.
+func NewServer(cfg Config) *Server {
 	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(cfg.SupabaseURL), "/"))
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
 		panic("invalid Supabase URL")
@@ -88,6 +93,10 @@ func New(cfg Config) http.Handler {
 	s.mux.HandleFunc("POST /v1/analytics/events", s.trackEvent)
 	s.registerConnectRoutes()
 	s.registerRefundRoutes()
+	return s
+}
+
+func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")

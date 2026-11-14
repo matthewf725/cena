@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"cena/backend/go/internal/api"
@@ -39,7 +42,25 @@ func main() {
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" {
 		log.Fatal("SUPABASE_URL and SUPABASE_ANON_KEY are required")
 	}
-	srv := &http.Server{Addr: ":" + port, Handler: api.New(cfg), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := api.NewServer(cfg)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if strings.TrimSpace(cfg.SupabaseServiceRoleKey) != "" && strings.TrimSpace(cfg.StripeSecretKey) != "" &&
+		strings.TrimSpace(cfg.StripeWebhookSecret) != "" && strings.TrimSpace(cfg.WebBaseURL) != "" {
+		go server.RunCheckoutReconciler(ctx)
+	}
+	srv := &http.Server{Addr: ":" + port, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
 	log.Printf("Cena API listening on :%s", port)
-	log.Fatal(srv.ListenAndServe())
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	<-shutdownDone
 }
