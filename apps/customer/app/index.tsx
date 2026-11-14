@@ -532,8 +532,10 @@ export default function Home() {
       let session;
       try{session=await createCheckout({...orderInput,idempotencyKey:idempotency.current.key,promoCode:normalizedPromo||undefined,expectedAmountCents:quote.data.amount_cents});}
       catch(error){
+        if(currentAuthUserId.current!==ownerUserId)return;
         if(error instanceof CheckoutRequestError&&error.status===409&&error.checkoutStatus==='refunded'&&error.orderId){
           const checkoutState=await fetchCheckoutStatus(error.orderId);
+          if(currentAuthUserId.current!==ownerUserId)return;
           const prior={orderId:error.orderId,url:'',restaurantId:active.id,date,slot,email,total:quote.data.amount_cents/100,ownerUserId,cartRevision:cartRevisionRef.current,items:Object.values(cart).map(({meal,qty})=>({meal,qty}))};
           if(checkoutState==='refunded')await resolveRefundedCheckout(prior);
           else if(checkoutState==='paid')await confirmPaidCheckout(prior);
@@ -546,14 +548,23 @@ export default function Home() {
           setNotice({title:'Payment session ended',message:'Your bag is saved. Choose another pickup time or start a new secure checkout.'});return;
         }
         if(error instanceof CheckoutRequestError&&error.status===409){setQuote(current=>current?.fingerprint===fingerprint?null:current);setQuoteError(error.message||'Your total changed. Check the updated total before continuing.');setQuoteRecovery(null);return;}
-        if(error instanceof CheckoutRequestError&&[
-          'promo_unavailable','pickup_unavailable','item_unavailable','curbside_unavailable',
-          'restaurant_unavailable','order_total_too_low',
-        ].includes(error.reason||'')){
-          setQuote(current=>current?.fingerprint===fingerprint?null:current);
-          setQuoteError(error.message);
-          setQuoteRecovery(error.reason);
-          return;
+        if(error instanceof CheckoutRequestError&&error.status===422){
+          const messages={
+            promo_unavailable:'That discount code is unavailable. Check the code or continue without it.',
+            pickup_unavailable:'That pickup time is no longer available. Choose another time.',
+            item_unavailable:'A meal kit in your bag is unavailable for that pickup time. Update your bag or choose another time.',
+            curbside_unavailable:'Curbside is unavailable. Choose counter pickup to continue.',
+            restaurant_unavailable:'This restaurant isn’t taking online orders right now.',
+            order_total_too_low:'The order total is too low for online payment. Update your bag or remove the discount code.',
+          } as const;
+          const reason=error.reason as keyof typeof messages;
+          const message=messages[reason];
+          if(message){
+            setQuote(current=>current?.fingerprint===fingerprint?null:current);
+            setQuoteError(message);
+            setQuoteRecovery(reason);
+            return;
+          }
         }
         throw error;
       }
