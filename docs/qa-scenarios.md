@@ -12,7 +12,7 @@ flowchart TD
     R1 --> R2[R07–R15 · Menu, prep steps, windows, and stock]
     R2 --> R3[R16–R23 · Order queue, fulfillment, and reporting]
     R1 --> R4[R24–R28 · Dining offers and Stripe Connect]
-    C4 --> P[P01–P16 · Price, payment, inventory, and refunds]
+    C4 --> P[P01–P17 · Price, payment, inventory, and refunds]
     R4 --> P
     P --> R3
     R3 --> C4
