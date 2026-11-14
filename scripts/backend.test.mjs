@@ -8,6 +8,7 @@ const database = new PGlite({ extensions: { pgcrypto } });
 const customer = '10000000-0000-4000-8000-000000000001';
 const merchant = '10000000-0000-4000-8000-000000000002';
 const outsider = '10000000-0000-4000-8000-000000000003';
+const manager = '10000000-0000-4000-8000-000000000005';
 const staff = '10000000-0000-4000-8000-000000000004';
 let fixture;
 
@@ -290,4 +291,64 @@ test('only authorized merchants can publish the reviewed revision', async () => 
   await withRole('authenticated', merchant, (tx) => publish(tx, latest.updated_at));
   const { rows: [published] } = await withRole('anon', null, (tx) => tx.query('select published_steps from catalog_items where id=$1', [fixture.item]));
   assert.deepEqual(published.published_steps, ['Reviewed instruction']);
+});
+
+test('merchant catalog create and save stay atomic and private until manager review', async () => {
+  await database.query('insert into auth.users(id) values($1)',[manager]);
+  await database.query(`insert into merchant_memberships(user_id,restaurant_id,role) values
+    ($1,$3,'staff'),($2,$3,'manager')`,[outsider,manager,fixture.restaurant]);
+  const create = (tx,name) => tx.query(`select * from create_catalog_item_draft($1,$2,'Merchant draft lifecycle',1800,null,null,'{}','{}',false,$3)`,[
+    fixture.restaurant,name,['Chef supplied step'],
+  ]);
+  const { rows: [created] } = await withRole('authenticated', outsider, (tx) => create(tx,'R07 regression kit'));
+  const publicBeforeDraft = await withRole('anon', null, (tx) => tx.query(
+    'select id from catalog_items where id=$1', [created.catalog_item_id],
+  ));
+  assert.equal(publicBeforeDraft.rows.length, 0, 'unpublished catalog row is not public');
+  await assert.rejects(withRole('anon', null, (tx) => tx.query(
+    'select id from prep_drafts where id=$1', [created.prep_draft_id],
+  )), /permission denied/);
+
+  const save = (tx) => tx.query(`select * from save_catalog_item_draft($1,$2,'R07 saved kit',null,1900,null,null,'{}','{}',true,$3)`,[
+    created.catalog_item_id,fixture.restaurant,['Updated chef step'],
+  ]);
+  const {rows:[saved]}=await withRole('authenticated',outsider,save);
+  await assert.rejects(withRole('authenticated',outsider,(tx)=>tx.query(
+    'select * from publish_prep_draft($1,$2,$3)',[created.prep_draft_id,saved.draft_updated_at,['Reviewed final step']],
+  )),/not authorized/);
+
+  await database.exec(`
+    create function public.test_reject_catalog_draft() returns trigger language plpgsql as $$
+    begin if new.name='R07 rollback kit' then raise exception 'injected draft failure'; end if; return new; end $$;
+    create trigger test_reject_catalog_draft before insert on public.prep_drafts
+    for each row execute function public.test_reject_catalog_draft();
+  `);
+  try {
+    await assert.rejects(withRole('authenticated',outsider,(tx)=>create(tx,'R07 rollback kit')),/injected draft failure/);
+    const {rows:[rolledBack]}=await database.query(`select count(*)::int as count from catalog_items where name='R07 rollback kit'`);
+    assert.equal(rolledBack.count,0,'catalog insert rolls back when draft insert fails');
+  } finally {
+    await database.exec('drop trigger test_reject_catalog_draft on public.prep_drafts; drop function public.test_reject_catalog_draft();');
+  }
+
+  await withRole('authenticated',manager,(tx)=>tx.query(
+    'select * from publish_prep_draft($1,$2,$3)',[created.prep_draft_id,saved.draft_updated_at,['Reviewed final step']],
+  ));
+  const { rows: [visible] } = await withRole('anon', null, (tx) => tx.query(`
+    select name,price_cents,published_steps from catalog_items where id=$1
+  `, [created.catalog_item_id]));
+  assert.deepEqual(visible,{name:'R07 saved kit',price_cents:1900,published_steps:['Reviewed final step']});
+
+  const {rows:[legacy]}=await withRole('authenticated',outsider,(tx)=>tx.query(`
+    insert into catalog_items(restaurant_id,name,price_cents,active)
+    values($1,'R07 legacy item without draft',1200,false) returning id
+  `,[fixture.restaurant]));
+  const {rows:[repaired]}=await withRole('authenticated',outsider,(tx)=>tx.query(`
+    select * from save_catalog_item_draft($1,$2,'R07 legacy item repaired',null,1300,null,null,'{}','{}',false,$3)
+  `,[legacy.id,fixture.restaurant,['Chef instruction']]));
+  assert.ok(repaired.prep_draft_id,'saving a legacy catalog row creates its missing prep draft');
+  const {rows:[draft]}=await withRole('authenticated',outsider,(tx)=>tx.query(
+    'select name,price_cents,source_steps from prep_drafts where id=$1',[repaired.prep_draft_id],
+  ));
+  assert.deepEqual(draft,{name:'R07 legacy item repaired',price_cents:1300,source_steps:['Chef instruction']});
 });

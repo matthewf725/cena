@@ -99,17 +99,39 @@ export async function fetchCatalog(restaurantId:string) {
 }
 export async function saveCatalogItem(id:string,restaurantId:string,values:Record<string,unknown>,sourceSteps:string[]) {
   if(!supabase) return;
-  const {error}=await supabase.from('catalog_items').update(values).eq('id',id); if(error) throw error;
-  const {data,error:readError}=await supabase.from('prep_drafts').select('id').eq('catalog_item_id',id).maybeSingle();if(readError)throw readError;
-  const draft={restaurant_id:restaurantId,catalog_item_id:id,name:String(values.name||''),description:'',price_cents:Number(values.price_cents||0),source_steps:sourceSteps};
-  const result=data?await supabase.from('prep_drafts').update({name:draft.name,price_cents:draft.price_cents,source_steps:draft.source_steps,generated_steps:[],active:values.active===undefined?true:values.active}).eq('id',data.id).select('id,updated_at').single():await supabase.from('prep_drafts').insert({...draft,generated_steps:[],active:values.active===undefined?true:values.active}).select('id,updated_at').single();
-  if(result.error)throw result.error;
-  return result.data;
+  const {data,error}=await supabase.rpc('save_catalog_item_draft',{
+    p_catalog_item_id:id,
+    p_restaurant_id:restaurantId,
+    p_name:String(values.name||''),
+    p_description:values.description==null?null:String(values.description),
+    p_price_cents:Number(values.price_cents||0),
+    p_regular_price_cents:values.regular_price_cents==null?null:Number(values.regular_price_cents),
+    p_prepared_meal_total_cents:values.prepared_meal_total_cents==null?null:Number(values.prepared_meal_total_cents),
+    p_equipment:Array.isArray(values.equipment)?values.equipment:[],
+    p_allergens:Array.isArray(values.allergens)?values.allergens:[],
+    p_active:values.active===undefined?true:Boolean(values.active),
+    p_source_steps:sourceSteps,
+  });
+  if(error)throw error;
+  const saved=data?.[0];
+  if(!saved)throw new Error('The catalog draft was not saved.');
+  return {id:saved.prep_draft_id,updated_at:saved.draft_updated_at};
 }
 export async function createCatalogItem(restaurantId:string,values:Record<string,unknown>,sourceSteps:string[]) {
   if(!supabase)return;
-  const {data,error}=await supabase.from('catalog_items').insert({...values,restaurant_id:restaurantId,active:false}).select('id').single();if(error)throw error;
-  const {error:draftError}=await supabase.from('prep_drafts').insert({restaurant_id:restaurantId,catalog_item_id:data.id,name:String(values.name||'New menu item'),description:String(values.description||''),price_cents:Number(values.price_cents||0),source_steps:sourceSteps,active:values.active===undefined?true:values.active});if(draftError)throw draftError;
+  const {error}=await supabase.rpc('create_catalog_item_draft',{
+    p_restaurant_id:restaurantId,
+    p_name:String(values.name||'New menu item'),
+    p_description:String(values.description||''),
+    p_price_cents:Number(values.price_cents||0),
+    p_regular_price_cents:values.regular_price_cents==null?null:Number(values.regular_price_cents),
+    p_prepared_meal_total_cents:values.prepared_meal_total_cents==null?null:Number(values.prepared_meal_total_cents),
+    p_equipment:Array.isArray(values.equipment)?values.equipment:[],
+    p_allergens:Array.isArray(values.allergens)?values.allergens:[],
+    p_active:values.active===undefined?true:Boolean(values.active),
+    p_source_steps:sourceSteps,
+  });
+  if(error)throw error;
 }
 export async function generatePrep(itemId:string) {
   if(!supabase)throw new Error('Configure Supabase before generating chef steps.');

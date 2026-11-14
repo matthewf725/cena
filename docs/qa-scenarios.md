@@ -69,9 +69,9 @@ flowchart TD
 | R04 | Switch locations while loading. Earlier responses cannot overwrite a newer location. | Partial · browser app revision guard checked in source; timed interaction open. |
 | R05 | Sign out, relaunch, and resume an expired session. Private ops are cleared or restored only for the right account. | Open · authenticated device test. |
 | R06 | Duplicate taps, permission loss, offline failure, and retry. UI reports the operation’s final result accurately. | Open · test merchant changes and reconnection. |
-| R07 | Create or edit a catalog draft with price, photo, allergens, and equipment. Draft stays private until reviewed. | Partial · backend publication and comparison-price tests. Native menu editing coverage open. |
+| R07 | Create or edit a catalog draft with price, photo, allergens, and equipment. Draft stays private until reviewed. | Partial · local SQL verified atomic catalog/draft writes, staff edits, private drafts, and rollback. Browser and native menu editing still need replay. |
 | R08 | Generate prep steps. Only cooking instructions are regenerated, with restaurant access required. | Pass · prep function tests use a simulated AI response. A real model and device flow are open. |
-| R09 | Edit while generating, review, publish, and stale revision. Generation cannot replace a newer draft. | Pass · prep concurrency/backend publication tests. Native authoring flow open. |
+| R09 | Edit while generating, review, publish, and stale revision. Generation cannot replace a newer draft. | Pass · prep concurrency and SQL publication tests. SQL also verified manager publish, staff rejection, and legacy draft recovery. Native authoring remains open. |
 | R10 | Pause a published meal. New orders cannot reserve it; prior customer receipts retain their snapshot. | Partial · checkout eligibility. Native menu pause and existing order display open. |
 | R11 | Create a pickup window with local timezone, cutoff, length, and capacity. Invalid ranges are rejected. | Pass · direct merchant writes in SQL. Device scheduler, DST, and alternate timezones open. |
 | R12 | Stock initial and later quantities. Changes never undercut active holds. | Pass · PGlite integration enforced column grants and quantity constraints. Device editor open. |
@@ -128,7 +128,7 @@ flowchart TD
 | N09 | Contrast and visible states in the warm theme, bright light, and OS dark mode. | Partial · text pair contrast checked; interactive screen states remain open. |
 | N10 | Offline, slow connection, interruption, relaunch, background/foreground, stale data, and connection change. | Open · verify authenticated workflows after disruption. |
 | N11 | Physical-phone full purchase and merchant pickup using reachable HTTPS services. | Open · device and sandbox environment. |
-| N12 | Installed links return to correct app; missing app fallback is usable. | Partial · website route buttons and Android guest return observed. Paid return and iOS physical link still open. |
+| N12 | Installed links return to correct app; missing app fallback is usable. | Partial · website route buttons, Expo return-path mapping, and Android guest return checked. Paid return and iOS physical link are open. |
 
 ## Replay the evidence
 
