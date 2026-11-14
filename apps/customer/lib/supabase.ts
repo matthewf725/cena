@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { kitchens, toMeal, type Kitchen } from './data';
 import { createAuthTimeoutFetch } from './auth-timeout-fetch';
+import { validateCheckoutQuote, type CheckoutQuote } from './checkout-quote';
+export type { CheckoutQuote } from './checkout-quote';
 
 // Public reads work anonymously; order writes require an email OTP session.
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -65,7 +67,6 @@ export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> 
 }
 
 export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[]; promoCode?: string; expectedAmountCents: number };
-export type CheckoutQuote = { restaurant_id:string;slot_id:string;subtotal_cents:number;discount_cents:number;amount_cents:number;currency:'usd';promo_code:string|null;discount_percent:number|null };
 export type CheckoutSession = { order_id: string; checkout_url: string; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null } | { order_id: string; status: 'paid'; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null };
 export function isTrustedCheckoutURL(value: string) {
   try {
@@ -94,8 +95,7 @@ export async function quoteCheckout(input: Omit<CheckoutInput,'idempotencyKey'|'
   const data = await checkoutRequest('/v1/checkout/quote', { method:'POST', body:JSON.stringify({
     p_restaurant_id:input.restaurantId,p_slot_id:input.slotId,p_items:input.items,promo_code:input.promoCode?.trim()||undefined,
   }) });
-  if(data.restaurant_id!==input.restaurantId||data.slot_id!==input.slotId||!Number.isInteger(data.subtotal_cents)||!Number.isInteger(data.discount_cents)||!Number.isInteger(data.amount_cents)||data.currency!=='usd'||data.subtotal_cents<0||data.discount_cents<0||data.amount_cents<0) throw new Error('Checkout quote was incomplete. Please check the total again.');
-  return data as CheckoutQuote;
+  return validateCheckoutQuote(data, input);
 }
 export async function createCheckout(input: CheckoutInput): Promise<CheckoutSession> {
   const data = await checkoutRequest('/v1/checkout', { method: 'POST', body: JSON.stringify({
