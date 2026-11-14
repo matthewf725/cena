@@ -4,7 +4,7 @@ HTTP service for Supabase-backed discovery, restaurant operations, and Stripe-ho
 
 ## Run
 
-Requires Go 1.22+.
+Requires Go 1.22+. Local runs listen on `127.0.0.1` by default. Set `CENA_API_BIND_HOST` explicitly when another device or host must reach the API. The deployment container sets `0.0.0.0` inside the container.
 
 ```sh
 cd backend/go

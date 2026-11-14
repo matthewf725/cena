@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,10 @@ func main() {
 	port := strings.TrimSpace(os.Getenv("PORT"))
 	if port == "" {
 		port = "8080"
+	}
+	bindHost := strings.TrimSpace(os.Getenv("CENA_API_BIND_HOST"))
+	if bindHost == "" {
+		bindHost = "127.0.0.1"
 	}
 	var allowedOrigins []string
 	for _, origin := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
@@ -49,7 +54,7 @@ func main() {
 		strings.TrimSpace(cfg.StripeWebhookSecret) != "" && strings.TrimSpace(cfg.WebBaseURL) != "" {
 		go server.RunCheckoutReconciler(ctx)
 	}
-	srv := &http.Server{Addr: ":" + port, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	srv := &http.Server{Addr: net.JoinHostPort(bindHost, port), Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
@@ -58,7 +63,7 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	log.Printf("Cena API listening on :%s", port)
+	log.Printf("Cena API listening on %s", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

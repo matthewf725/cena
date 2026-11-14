@@ -94,21 +94,31 @@ async function main() {
   const apiOrigin = `http://127.0.0.1:${apiPort}`;
   loopback(apiOrigin, 'Go API URL');
   if (!await portAvailable(apiPort)) throw new Error(`Port ${apiPort} is occupied. Stop the conflicting process or set CENA_E2E_API_PORT; existing services are never killed.`);
+  const goDir = path.join(root, 'backend', 'go');
+  const buildDir = path.join(artifactsDir, 'bin');
+  await mkdir(buildDir, { recursive: true });
+  const apiBinary = path.join(buildDir, process.platform === 'win32' ? 'cena-api.exe' : 'cena-api');
+  const build = command(process.env.CENA_E2E_GO_BIN || 'go', ['build', '-o', apiBinary, './cmd/cena-api'], {
+    cwd: goDir,
+    stdio: 'inherit',
+  });
+  if (build.error) throw build.error;
+  if (build.status !== 0) throw new Error('The local Go API failed to build');
   const webhookSecret = `whsec_cena_e2e_${runId}`;
   const fake = createFakeStripe({ webhookUrl: `${apiOrigin}/v1/stripe/webhook`, webhookSecret, runId });
   activeFake = fake;
   lastFakeAudit = fake.audit;
   const fakeOrigin = await fake.listen();
-  const goBin = process.env.CENA_E2E_GO_BIN || 'go';
-  const go = start(goBin, ['run', './cmd/cena-api'], {
-    PORT: String(apiPort), SUPABASE_URL: supabase.apiUrl, SUPABASE_ANON_KEY: supabase.anonKey,
+  const go = start(apiBinary, [], {
+    PORT: String(apiPort), CENA_API_BIND_HOST: '127.0.0.1',
+    SUPABASE_URL: supabase.apiUrl, SUPABASE_ANON_KEY: supabase.anonKey,
     SUPABASE_SERVICE_ROLE_KEY: supabase.SERVICE_ROLE_KEY,
     STRIPE_SECRET_KEY: `sk_test_cena_e2e_${runId}`, STRIPE_WEBHOOK_SECRET: webhookSecret,
     STRIPE_API_BASE_URL: fakeOrigin, STRIPE_APPLICATION_FEE_CENTS: '175',
     CENA_WEB_BASE_URL: 'https://cena.local.test',
     CORS_ALLOWED_ORIGINS: [...new Set([customerOrigin, restaurantOrigin, customerOrigin.replace('localhost', '127.0.0.1'), restaurantOrigin.replace('localhost', '127.0.0.1')])].join(','),
-  }, path.join(root, 'backend', 'go'), true);
-  await waitHttp(`${apiOrigin}/healthz`, 90000, go);
+  }, goDir, true);
+  await waitHttp(`${apiOrigin}/healthz`, 15000, go);
   await new Promise(resolve => setTimeout(resolve, 250));
   if (go.cenaExitCode !== undefined || go.exitCode !== null) throw new Error(`The test Go API exited with code ${go.cenaExitCode ?? go.exitCode}`);
 

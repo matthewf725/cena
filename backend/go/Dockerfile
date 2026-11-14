@@ -9,5 +9,6 @@ FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /cena-api /cena-api
 USER 65532:65532
+ENV CENA_API_BIND_HOST=0.0.0.0
 EXPOSE 8080
 ENTRYPOINT ["/cena-api"]
