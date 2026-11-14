@@ -83,6 +83,7 @@ val distributionSigning = if (distributionRequested) {
 
 android { namespace = "com.cena.customer"; compileSdk = 36
  defaultConfig { applicationId = "com.cena.customer"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "1.0"; buildConfigField("String", "SUPABASE_URL", javaStringLiteral(supabaseUrl)); buildConfigField("String", "SUPABASE_KEY", javaStringLiteral(supabaseKey)); buildConfigField("String", "CENA_API_URL", javaStringLiteral(cenaApiUrl)) }
+ sourceSets.getByName("main").java.srcDir("../common/src/main/java")
  signingConfigs { distributionSigning?.let { signing -> create("cenaDistribution") { storeFile = signing.keystore; storePassword = signing.storePassword; keyAlias = signing.keyAlias; keyPassword = signing.keyPassword } } }
  buildTypes { getByName("release") { distributionSigning?.let { signingConfig = signingConfigs.getByName("cenaDistribution") } } }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
