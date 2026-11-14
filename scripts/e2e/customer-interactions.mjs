@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const origin = process.env.CENA_CUSTOMER_URL ?? 'http://127.0.0.1:8081';
 const parsedOrigin = new URL(origin);
 const loopback = ['127.0.0.1', 'localhost', '[::1]'];
 assert.ok(['http:', 'https:'].includes(parsedOrigin.protocol) && loopback.includes(parsedOrigin.hostname), 'Customer UI test only accepts loopback URLs');
 
-const browser = await chromium.launch({ headless: true });
+const engine = process.env.CENA_CUSTOMER_BROWSER ?? 'chromium';
+const browserType = { chromium, webkit }[engine];
+assert.ok(browserType, 'Choose chromium or webkit for CENA_CUSTOMER_BROWSER');
+const browser = await browserType.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', deviceScaleFactor: 2 });
 const page = await context.newPage();
 const blocked = [];
@@ -169,7 +172,7 @@ try {
   assert.deepEqual(blocked, [], `Unexpected non-loopback requests: ${blocked.join(', ')}`);
 
   console.log(JSON.stringify({
-    result: 'PASS', viewport: '390x844 CSS px, DPR 2', reducedMotion: mediaReduced,
+    result: 'PASS', engine, viewport: '390x844 CSS px, DPR 2', reducedMotion: mediaReduced,
     noHorizontalOverflow: layout.document <= layout.viewport + 1,
     recentSectionOrder: 'Recents -> Recent meal kits -> Near you',
     recentKitchenPresent: hasRecentKitchen,
