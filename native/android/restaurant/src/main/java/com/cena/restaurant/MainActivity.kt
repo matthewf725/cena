@@ -605,8 +605,8 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
     title(titleText, 17f, target)
     if (refunded) text("Refund confirmed by Stripe", target)
 
-    val start = order.optString("pickup_starts_at")
-    val end = order.optString("pickup_ends_at")
+    val start = order.optString("pickup_starts_at").takeUnless { it == "null" }.orEmpty()
+    val end = order.optString("pickup_ends_at").takeUnless { it == "null" }.orEmpty()
     val timezone = order.optString("restaurant_timezone", rtimezone)
     val amountCents = order.optInt("total_cents", order.optInt("subtotal_cents"))
     val vehicle = order.optJSONObject("vehicle")
@@ -615,7 +615,9 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
       .filter { !it.isNullOrBlank() && it != "null" }
       .joinToString(" ")
     } else "Counter pickup"
-    val pickupText = if (start.isNotBlank() && end.isNotBlank()) pickupRange(start, end, timezone) else "Pickup time unavailable"
+    val pickupText = if (start.isNotBlank() && end.isNotBlank()) {
+     runCatching { pickupRange(start, end, timezone) }.getOrDefault("Pickup time unavailable")
+    } else "Pickup time unavailable"
     val amountText = String.format(java.util.Locale.ROOT, "$%.2f", amountCents / 100.0)
     text("$pickupText\n${order.optString("pickup_mode")} · $amountText\n$vehicleLabel", target)
 
