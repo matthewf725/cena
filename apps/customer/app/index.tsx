@@ -200,6 +200,24 @@ export default function Home() {
     const sub=AppState.addEventListener('change',state=>{if(state==='active')void refreshPaymentStatus(checkout);});
     return()=>{clearInterval(timer);sub.remove();};
   },[checkout,hydrated]);
+  useEffect(()=>{
+    if(!supabase||!authUserId||tab!=='Orders'||active)return;
+    let disposed=false;
+    let requesting=false;
+    const refresh=async()=>{
+      if(requesting||currentAuthUserId.current!==authUserId)return;
+      requesting=true;
+      try{
+        const {data}=await fetchOrderHistory();
+        if(!disposed&&currentAuthUserId.current===authUserId&&data)setBackendOrders(data);
+      }catch{ /* Keep the most recent history while the connection recovers. */ }
+      finally{requesting=false;}
+    };
+    void refresh();
+    const timer=setInterval(()=>{if(AppState.currentState==='active')void refresh();},30_000);
+    const subscription=AppState.addEventListener('change',state=>{if(state==='active')void refresh();});
+    return()=>{disposed=true;clearInterval(timer);subscription.remove();};
+  },[authUserId,tab,active]);
   useEffect(()=>{if(supabase&&analyticsConsented&&query.trim()){const timer=setTimeout(()=>void trackEvent('search',undefined,{query_length:query.trim().length}),700);return ()=>clearTimeout(timer);}},[query,analyticsConsented]);
   const cartCount=Object.values(cart).reduce((n,x)=>n+x.qty,0), subtotal=Object.values(cart).reduce((n,x)=>n+x.qty*x.meal.price,0);
   const visibleOrders=useMemo(()=>backendOrders.filter(order=>
