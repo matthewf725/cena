@@ -23,6 +23,34 @@ SUPABASE_KEY=your-public-anon-key
 CENA_API_URL=http://10.0.2.2:8080
 ```
 
+These local defaults are for development and are never accepted for a distribution build. Ordinary `assembleRelease` remains available as an unsigned local artifact. A `bundleRelease` task, or any release build invoked with `-PcenaDistribution=true`, requires production endpoints and a locally owned release keystore. Distribution configuration is read from the current process environment:
+
+```text
+CENA_SUPABASE_URL                 Production Supabase HTTPS URL
+CENA_SUPABASE_ANON_KEY            Public/publishable anon key only (service-role keys are rejected)
+CENA_API_URL                      Production Cena API HTTPS URL
+CENA_ANDROID_KEYSTORE_FILE        Absolute path to your existing release keystore
+CENA_ANDROID_KEYSTORE_PASSWORD    Keystore password
+CENA_ANDROID_KEY_ALIAS            Existing release key alias
+CENA_ANDROID_KEY_PASSWORD         Key password
+```
+
+The production URLs must use HTTPS and a public hostname; localhost, emulator, private IP, `.local`, `.internal`, and `.test` hosts are rejected. Signing credentials are passed to Gradle from the process environment, are not printed by the build, and must never be committed or placed in `gradle.properties`. Read passwords into environment variables interactively in the current PowerShell session rather than typing them into a command or saving them in a script. The key must be the existing key owned by the app publisher; do not use the Android debug key or create a replacement for an app already published.
+
+Build Android App Bundles for local review (this does not submit them):
+
+```powershell
+.\gradlew.bat :customer:bundleRelease :restaurant:bundleRelease
+```
+
+Or build signed APKs for local installation with the same validation:
+
+```powershell
+.\gradlew.bat -PcenaDistribution=true :customer:assembleRelease :restaurant:assembleRelease
+```
+
+The first distribution build fails before compilation if a required endpoint, public key, keystore, alias, or password is missing. Bump each app's `versionCode` before preparing a subsequent store release. These commands only create local artifacts; store enrollment, store credentials, review, and publication are separate actions.
+
 For local development, the Supabase CLI API is exposed on port `54323` and the Cena Go API on port `8080`; `10.0.2.2` reaches the host machine from the Android emulator. The checked-in sample URL is for local development only. Use the project's HTTPS Supabase and API origins for production, and never package service-role credentials. Debug builds allow cleartext only to `10.0.2.2`, `127.0.0.1`, and `localhost`; release builds retain Android's default cleartext blocking. For a physical device, use reachable HTTPS service origins. Debug APKs are written to each module's `build/outputs/apk/debug/` directory.
 
 ## Customer app
