@@ -8,6 +8,7 @@
     };
     const form = requiredElement("#signup-form");
     const emailInput = requiredElement("#email");
+    const clarificationInput = requiredElement("#clarification");
     const status = requiredElement("#form-status");
     const previewNote = requiredElement("#preview-note");
     const submit = requiredElement('#signup-form button[type="submit"]');
@@ -15,8 +16,12 @@
     const supabaseUrl = (config.SUPABASE_URL ?? config.VITE_SUPABASE_URL ?? "").replace(/\/$/, "");
     const supabaseKey = config.SUPABASE_ANON_KEY ?? config.VITE_SUPABASE_ANON_KEY ?? "";
     const live = Boolean(supabaseUrl && supabaseKey);
+    const localPreview = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
     requiredElement("#year").textContent = String(new Date().getFullYear());
     previewNote.hidden = live;
+    if (!live && !localPreview) {
+        previewNote.textContent = "Signups are temporarily unavailable while this site is configured.";
+    }
     const setStatus = (message, kind = "") => {
         status.textContent = message;
         status.dataset.state = kind;
@@ -40,6 +45,7 @@
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const email = emailInput.value.trim();
+        const clarification = clarificationInput.value.trim().slice(0, 500) || null;
         const role = selectedRole();
         if (!emailInput.checkValidity()) {
             emailInput.setAttribute("aria-invalid", "true");
@@ -61,7 +67,7 @@
                         apikey: supabaseKey,
                         ...(supabaseKey.startsWith("eyJ") ? { Authorization: `Bearer ${supabaseKey}` } : {}),
                     },
-                    body: JSON.stringify({ p_email: email, p_role: waitlistRole }),
+                    body: JSON.stringify({ p_email: email, p_role: waitlistRole, p_clarification: clarification }),
                 });
                 if (!response.ok) {
                     const detail = await response.text().catch(() => "");
@@ -69,18 +75,21 @@
                 }
                 setStatus("You’re on the list. We’ll be in touch when Cena is ready.", "success");
             }
-            else {
+            else if (localPreview) {
                 const storageKey = "cena_waitlist_preview";
                 const entries = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
                 const normalizedEmail = email.toLowerCase();
                 const existingIndex = entries.findIndex((entry) => entry.email.toLowerCase() === normalizedEmail);
-                const entry = { email, role, createdAt: new Date().toISOString() };
+                const entry = { email, role, clarification, createdAt: new Date().toISOString() };
                 if (existingIndex >= 0)
                     entries[existingIndex] = entry;
                 else
                     entries.push(entry);
                 localStorage.setItem(storageKey, JSON.stringify(entries));
                 setStatus("Preview signup saved in this browser.", "success");
+            }
+            else {
+                throw new Error("Waitlist configuration is missing outside local preview.");
             }
             form.reset();
             emailInput.removeAttribute("aria-invalid");
@@ -89,7 +98,9 @@
             console.error("Cena waitlist signup failed:", error);
             setStatus(live
                 ? "We couldn’t add you just now. Please try again in a moment."
-                : "This browser could not save your signup. Check local storage and try again.", "error");
+                : localPreview
+                    ? "This browser could not save your signup. Check local storage and try again."
+                    : "Signups are temporarily unavailable. Please try again later.", "error");
         }
         finally {
             submit.disabled = false;

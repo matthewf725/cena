@@ -65,13 +65,17 @@ function order(tx, key, overrides = {}) {
 
 test('anonymous waitlist is idempotent and catalog is readable', async () => {
   await withRole('anon', null, async (tx) => {
-    await tx.query(`select join_waitlist('Diner@example.com','customer')`);
-    await tx.query(`select join_waitlist('diner@example.com','customer')`);
+    await tx.query(`select join_waitlist('Diner@example.com','customer','Would love more pickup windows')`);
+    await tx.query(`select join_waitlist('diner@example.com','customer','This retry must not overwrite feedback')`);
+    await tx.query(`select join_waitlist('Legacy@example.com','customer')`);
     const { rows } = await tx.query('select id from catalog_items');
     assert.ok(rows.length > 0);
   });
-  const { rows } = await database.query(`select email from waitlist_entries where lower(email) = 'diner@example.com'`);
-  assert.deepEqual(rows, [{ email: 'diner@example.com' }]);
+  const { rows } = await database.query(`select email,clarification from waitlist_entries where lower(email) = 'diner@example.com'`);
+  assert.deepEqual(rows, [{ email: 'diner@example.com',clarification:'Would love more pickup windows' }]);
+  const { rows: [legacy] } = await database.query(`select email,clarification from waitlist_entries where lower(email)='legacy@example.com'`);
+  assert.deepEqual(legacy, { email: 'legacy@example.com',clarification:null });
+  await assert.rejects(withRole('anon', null, (tx) => tx.query('select join_waitlist($1,$2,$3)', ['long@example.com','customer','x'.repeat(501)])), /too long/);
   await assert.rejects(withRole('anon', null, (tx) => tx.query('select * from waitlist_entries')), /permission denied/);
 });
 

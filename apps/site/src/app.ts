@@ -13,6 +13,7 @@ interface CenaConfig {
 interface PreviewSignup {
   email: string;
   role: SignupRole;
+  clarification: string | null;
   createdAt: string;
 }
 
@@ -24,6 +25,7 @@ const requiredElement = <T extends Element>(selector: string): T => {
 
 const form = requiredElement<HTMLFormElement>("#signup-form");
 const emailInput = requiredElement<HTMLInputElement>("#email");
+const clarificationInput = requiredElement<HTMLInputElement>("#clarification");
 const status = requiredElement<HTMLParagraphElement>("#form-status");
 const previewNote = requiredElement<HTMLParagraphElement>("#preview-note");
 const submit = requiredElement<HTMLButtonElement>('#signup-form button[type="submit"]');
@@ -31,9 +33,13 @@ const config = (window as Window & { CENA_CONFIG?: CenaConfig }).CENA_CONFIG ?? 
 const supabaseUrl = (config.SUPABASE_URL ?? config.VITE_SUPABASE_URL ?? "").replace(/\/$/, "");
 const supabaseKey = config.SUPABASE_ANON_KEY ?? config.VITE_SUPABASE_ANON_KEY ?? "";
 const live = Boolean(supabaseUrl && supabaseKey);
+const localPreview = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 requiredElement<HTMLElement>("#year").textContent = String(new Date().getFullYear());
 previewNote.hidden = live;
+if (!live && !localPreview) {
+  previewNote.textContent = "Signups are temporarily unavailable while this site is configured.";
+}
 
 const setStatus = (message: string, kind: "" | "error" | "success" = ""): void => {
   status.textContent = message;
@@ -60,6 +66,7 @@ emailInput.addEventListener("input", () => {
 form.addEventListener("submit", async (event: SubmitEvent) => {
   event.preventDefault();
   const email = emailInput.value.trim();
+  const clarification = clarificationInput.value.trim().slice(0, 500) || null;
   const role = selectedRole();
 
   if (!emailInput.checkValidity()) {
@@ -84,7 +91,7 @@ form.addEventListener("submit", async (event: SubmitEvent) => {
           apikey: supabaseKey,
           ...(supabaseKey.startsWith("eyJ") ? { Authorization: `Bearer ${supabaseKey}` } : {}),
         },
-        body: JSON.stringify({ p_email: email, p_role: waitlistRole }),
+          body: JSON.stringify({ p_email: email, p_role: waitlistRole, p_clarification: clarification }),
       });
 
       if (!response.ok) {
@@ -93,18 +100,20 @@ form.addEventListener("submit", async (event: SubmitEvent) => {
       }
 
       setStatus("You’re on the list. We’ll be in touch when Cena is ready.", "success");
-    } else {
+    } else if (localPreview) {
       const storageKey = "cena_waitlist_preview";
       const entries = JSON.parse(localStorage.getItem(storageKey) ?? "[]") as PreviewSignup[];
       const normalizedEmail = email.toLowerCase();
       const existingIndex = entries.findIndex((entry) => entry.email.toLowerCase() === normalizedEmail);
-      const entry: PreviewSignup = { email, role, createdAt: new Date().toISOString() };
+      const entry: PreviewSignup = { email, role, clarification, createdAt: new Date().toISOString() };
 
       if (existingIndex >= 0) entries[existingIndex] = entry;
       else entries.push(entry);
 
       localStorage.setItem(storageKey, JSON.stringify(entries));
       setStatus("Preview signup saved in this browser.", "success");
+    } else {
+      throw new Error("Waitlist configuration is missing outside local preview.");
     }
 
     form.reset();
@@ -114,7 +123,9 @@ form.addEventListener("submit", async (event: SubmitEvent) => {
     setStatus(
       live
         ? "We couldn’t add you just now. Please try again in a moment."
-        : "This browser could not save your signup. Check local storage and try again.",
+        : localPreview
+          ? "This browser could not save your signup. Check local storage and try again."
+          : "Signups are temporarily unavailable. Please try again later.",
       "error",
     );
   } finally {
