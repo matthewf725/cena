@@ -531,6 +531,11 @@ export default function Home() {
           setNotice({title:'Payment session ended',message:'Your bag is saved. Choose another pickup time or start a new secure checkout.'});return;
         }
         if(error instanceof CheckoutRequestError&&error.status===409){setQuote(null);setQuoteError(error.message||'Your total changed. Check the updated total before continuing.');return;}
+        if(error instanceof CheckoutRequestError&&error.reason==='promo_unavailable'){
+          setQuote(current=>current?.fingerprint===fingerprint?null:current);
+          setQuoteError(error.message);
+          return;
+        }
         throw error;
       }
       if('status' in session){

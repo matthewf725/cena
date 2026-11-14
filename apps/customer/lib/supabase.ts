@@ -72,7 +72,7 @@ export function isTrustedCheckoutURL(value: string) {
   } catch { return false; }
 }
 export class CheckoutRequestError extends Error {
-  constructor(message: string, public readonly status: number, public readonly checkoutStatus?: string, public readonly orderId?: string) { super(message); this.name = 'CheckoutRequestError'; }
+  constructor(message: string, public readonly status: number, public readonly checkoutStatus?: string, public readonly orderId?: string, public readonly reason?: string) { super(message); this.name = 'CheckoutRequestError'; }
 }
 async function checkoutRequest(path: string, init: RequestInit = {}) {
   if (!supabase) throw new Error('Payments require a configured Cena account.');
@@ -85,7 +85,7 @@ async function checkoutRequest(path: string, init: RequestInit = {}) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, ...(init.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new CheckoutRequestError(data?.error || data?.message || 'Secure checkout could not be started.', response.status, data?.status, data?.order_id);
+  if (!response.ok) throw new CheckoutRequestError(data?.error || data?.message || 'Secure checkout could not be started.', response.status, data?.status, data?.order_id, data?.code);
   return data;
 }
 export async function quoteCheckout(input: Omit<CheckoutInput,'idempotencyKey'|'pickupMode'|'vehicle'|'promoCode'|'expectedAmountCents'> & {promoCode?:string}): Promise<CheckoutQuote> {
