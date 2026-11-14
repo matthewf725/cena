@@ -90,3 +90,7 @@ android { namespace = "com.cena.customer"; compileSdk = 36
  kotlinOptions { jvmTarget = "17" }
  buildFeatures { buildConfig = true }
 }
+
+dependencies {
+    implementation("androidx.browser:browser:1.10.0")
+}
