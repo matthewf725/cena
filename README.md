@@ -53,7 +53,7 @@ Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`.
 
 The public signup page is at [cena-xi.vercel.app](https://cena-xi.vercel.app). Signups are stored in `public.waitlist_entries` in the hosted Cena Supabase project. The optional note is stored in `clarification`. Review rows in Supabase Table Editor. Visitors can submit the form through `join_waitlist` and cannot read the list.
 
-The hosted project contains the waitlist, privacy-request, account, and ordering tables. The initial schema was applied through the dashboard, with existing waitlist rows preserved. Reconcile migration history before using the CLI to apply future migrations. Keep demo data in the sandbox.
+The hosted project contains the waitlist, privacy-request, account, and ordering tables. Migrations through `20261114000013` were applied through the dashboard, with existing waitlist rows preserved. Before a future CLI migration push, compare the live schema and reconcile migration history. Load demo data only in a sandbox.
 
 ## Before launching the apps
 
