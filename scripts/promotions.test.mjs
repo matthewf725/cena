@@ -27,7 +27,7 @@ before(async () => {
     select r.id as restaurant,s.id as slot,c.id as item,c.price_cents
     from restaurants r join pickup_slots s on s.restaurant_id=r.id
     join slot_item_inventory i on i.slot_id=s.id join catalog_items c on c.id=i.item_id
-    where r.active and s.active and s.cutoff_at>now() order by s.starts_at limit 1
+    where r.active and s.active and s.starts_at>now()+interval '40 minutes' and s.cutoff_at>now() order by s.starts_at limit 1
   `);
   assert.ok(row);
   fixture = row;
@@ -124,4 +124,35 @@ test('restaurant promotions are private, scheduled, scoped, capped, and snapshot
   assert.deepEqual(order,{subtotal_cents:fixture.price_cents,discount_cents:refreshedQuote.discount_cents,total_cents:refreshedQuote.amount_cents,promo_code_snapshot:'SUNDAY25',discount_percent:30});
   const listed=await as('authenticated',merchant,(tx)=>tx.query('select list_restaurant_promotions($1) as promos',[fixture.restaurant]));
   assert.equal(listed.rows[0].promos[0].redemption_count,1);
+});
+
+test('checkout quote rejects slots inside the reservation cutoff', async () => {
+  const nearStart = new Date(Date.now()+20*60*1000).toISOString();
+  const { rows: [slot] } = await db.query(`insert into pickup_slots(restaurant_id,starts_at,ends_at,cutoff_at,capacity)
+    values($1,$2::timestamptz,$2::timestamptz+interval '30 minutes',$2::timestamptz-interval '15 minutes',12) returning id`,
+    [fixture.restaurant,nearStart]);
+  try {
+    await service((tx)=>tx.query(`select quote_checkout_order($1,$2,$3,$4,$5::text)`,[
+      customer,fixture.restaurant,slot.id,JSON.stringify([{item_id:fixture.item,quantity:1}]),'sunday25',
+    ]));
+    assert.fail('near-term slot was quoteable');
+  } catch (error) {
+    assert.match(String(error),/pickup slot closed/);
+  } finally {
+    await db.query('delete from pickup_slots where id=$1',[slot.id]);
+  }
+});
+
+test('reservation release locks pickup slot before UUID-ordered inventory like create_order', async () => {
+  const initial = await readFile(new URL('../supabase/migrations/20261114000000_initial.sql',import.meta.url),'utf8');
+  const checkout = await readFile(new URL('../supabase/migrations/20261114000008_checkout_cutoff_and_lock_order.sql',import.meta.url),'utf8');
+  const createOrder = initial.slice(initial.indexOf('create or replace function public.create_order('),initial.indexOf('create or replace function public.update_order_status('));
+  const release = checkout.slice(checkout.indexOf('create or replace function public.release_checkout_reservation('));
+  const createSlot = createOrder.indexOf('where id=p_slot_id and restaurant_id=p_restaurant_id for update');
+  const createInventory = createOrder.indexOf('from public.slot_item_inventory where slot_id=p_slot_id and item_id=v_item.id for update');
+  const releaseSlot = release.indexOf('perform 1 from public.pickup_slots where id=o.slot_id for update');
+  const releaseInventory = release.indexOf('perform 1 from public.slot_item_inventory where slot_id=o.slot_id and item_id=v_item for update');
+  assert.ok(createSlot >= 0 && createInventory > createSlot,'create_order locks slot before inventory');
+  assert.ok(releaseSlot >= 0 && releaseInventory > releaseSlot,'release locks slot before inventory');
+  assert.match(release,/where i\.slot_id=o\.slot_id order by i\.item_id/,'release inventory locks are UUID ordered');
 });
