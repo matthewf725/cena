@@ -25,7 +25,19 @@ struct RestaurantHome: View {
     @State private var refundOrderID: String?
     @State private var refundBusy = false
     @State private var updatingOrderID: String?
+    @State private var membershipRequestID = UUID()
+    @State private var workspaceRequestID = UUID()
     private var restaurantID: String { selectedRestaurant?["id"] as? String ?? "" }
+    private var merchantUserID: String? {
+        guard let token = api.accessToken else { return nil }
+        let segments = token.split(separator: ".")
+        guard segments.count > 1 else { return nil }
+        var payload = String(segments[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while payload.count % 4 != 0 { payload.append("=") }
+        guard let data = Data(base64Encoded: payload),
+              let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return claims["sub"] as? String
+    }
     private var activeOrders: [[String: Any]] { orders.filter { !["completed", "cancelled"].contains(($0["status"] as? String ?? "").lowercased()) } }
     private var canManageMenu: Bool { ["owner", "manager"].contains((selectedRestaurant?["membership_role"] as? String ?? "").lowercased()) }
 
@@ -42,7 +54,7 @@ struct RestaurantHome: View {
             .navigationTitle(selectedRestaurant?["name"] as? String ?? "Cena for Restaurants")
             .toolbar {
                 if api.signedIn {
-                    ToolbarItem(placement: .topBarTrailing) { Button("Sign out") { api.signOut(); restaurants = []; selectedRestaurant = nil } }
+                    ToolbarItem(placement: .topBarTrailing) { Button("Sign out") { signOut() } }
                 }
             }
             .background(CenaStyle.cream)
@@ -78,7 +90,7 @@ struct RestaurantHome: View {
     }
     private var noRestaurant: some View { VStack(spacing: 12) { Image(systemName: "storefront").font(.largeTitle).foregroundStyle(CenaStyle.maroon); Text("No restaurant access").font(.title2.bold()).foregroundStyle(CenaStyle.ink); Text("This account is not assigned to a restaurant. Ask an owner to add your membership.").multilineTextAlignment(.center).foregroundStyle(CenaStyle.clay); Button("Try again") { Task { await loadRestaurants() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity).background(CenaStyle.cream) }
     private var restaurantPicker: some View {
-        List { Section("Your locations") { ForEach(Array(restaurants.enumerated()), id: \.offset) { _, r in Button { selectedRestaurant = r; Task { await loadWorkspace() } } label: { VStack(alignment: .leading) { Text(r["name"] as? String ?? "Restaurant").font(.headline).foregroundStyle(CenaStyle.ink); Text(r["address"] as? String ?? "").font(.subheadline).foregroundStyle(CenaStyle.clay) }.padding(.vertical, 6) } } } }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
+        List { Section("Your locations") { ForEach(Array(restaurants.enumerated()), id: \.offset) { _, r in Button { selectRestaurant(r) } label: { VStack(alignment: .leading) { Text(r["name"] as? String ?? "Restaurant").font(.headline).foregroundStyle(CenaStyle.ink); Text(r["address"] as? String ?? "").font(.subheadline).foregroundStyle(CenaStyle.clay) }.padding(.vertical, 6) } } } }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
     private func workspace(_ restaurant: [String: Any]) -> some View {
         VStack(spacing: 0) {
@@ -207,45 +219,106 @@ struct RestaurantHome: View {
                     CenaPickupManagementView(restaurantID: restaurantID, restaurantTimezone: r["timezone"] as? String, catalogItems: catalog)
                 }
             }
-            Section("Location selection") { Button("Switch location") { selectedRestaurant = nil } }
+            Section("Location selection") { Button("Switch location") { resetWorkspaceData(); selectedRestaurant = nil } }
         }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
     private func tab(_ title: String, icon: String) -> some View { Button { selectedTab = title } label: { Label(title, systemImage: icon).frame(maxWidth: .infinity).foregroundStyle(selectedTab == title ? CenaStyle.maroon : .secondary) } }
     private func signIn() async {
         busy = true; defer { busy = false }
-        do { try await api.signIn(email: email, password: password); await loadRestaurants() } catch { notice = error.localizedDescription }
+        do {
+            try await api.signIn(email: email, password: password)
+            restaurants = []; selectedRestaurant = nil; resetWorkspaceData()
+            await loadRestaurants()
+        } catch { notice = error.localizedDescription }
+    }
+    private func signOut() {
+        api.signOut()
+        restaurants = []; selectedRestaurant = nil
+        email = ""; password = ""
+        membershipRequestID = UUID()
+        resetWorkspaceData()
+        notice = nil
+    }
+    private func resetWorkspaceData() {
+        workspaceRequestID = UUID()
+        orders = []; catalog = []
+        paymentStatus = "not_connected"; applicationFeeCents = 0
+        refundOrderID = nil
+        selectedTab = "Orders"
+    }
+    private func isCurrentWorkspace(userID: String, restaurantID: String) -> Bool {
+        api.signedIn && merchantUserID == userID && self.restaurantID == restaurantID
+    }
+    private func selectRestaurant(_ restaurant: [String: Any]) {
+        resetWorkspaceData()
+        selectedRestaurant = restaurant
+        Task { await loadWorkspace() }
     }
     private func loadRestaurants() async {
-        guard api.configured, api.signedIn else { return }
+        guard api.configured, api.signedIn, let userID = merchantUserID else { return }
+        let requestID = UUID()
+        membershipRequestID = requestID
         do {
             let rows = try await api.rows("merchant_memberships", query: "select=role,restaurant:restaurants(id,name,address,timezone,curbside_enabled)&order=created_at.asc", authenticated: true)
-            restaurants = rows.compactMap { row in
+            guard membershipRequestID == requestID, userID == merchantUserID, api.signedIn else { return }
+            let loadedRestaurants = rows.compactMap { row -> [String: Any]? in
                 guard var restaurant = row["restaurant"] as? [String: Any] else { return nil }
                 restaurant["membership_role"] = row["role"]
                 return restaurant
             }
-            if selectedRestaurant == nil { selectedRestaurant = restaurants.first }
+            restaurants = loadedRestaurants
+            if let selectedRestaurant, !loadedRestaurants.contains(where: { ($0["id"] as? String) == (selectedRestaurant["id"] as? String) }) {
+                resetWorkspaceData()
+                self.selectedRestaurant = nil
+            } else if let selectedID = selectedRestaurant?["id"] as? String,
+                      let currentSelection = loadedRestaurants.first(where: { ($0["id"] as? String) == selectedID }) {
+                self.selectedRestaurant = currentSelection
+            }
+            if selectedRestaurant == nil, let first = loadedRestaurants.first { selectRestaurant(first); return }
             if selectedRestaurant != nil { await loadWorkspace() }
-        } catch { notice = error.localizedDescription }
+        } catch {
+            guard membershipRequestID == requestID, userID == merchantUserID, api.signedIn else { return }
+            notice = error.localizedDescription
+        }
     }
     private func loadWorkspace() async {
-        guard !restaurantID.isEmpty else { return }
+        guard api.signedIn, let userID = merchantUserID, !restaurantID.isEmpty else { return }
+        let requestedRestaurantID = restaurantID
+        let requestID = UUID()
+        workspaceRequestID = requestID
         do {
-            async let o = api.rows("orders", query: "select=id,status,payment_method,payment_status,pickup_mode,subtotal_cents,total_cents,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.\(restaurantID)&or=(status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.\(recentPickupThreshold))&order=pickup_starts_at.asc", authenticated: true)
-            async let c = api.rows("catalog_items", query: "select=id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,category,active,published_at&restaurant_id=eq.\(restaurantID)&order=category.asc,name.asc", authenticated: true)
-            orders = try await o; catalog = try await c
-            if let selectedRestaurant, let ix = restaurants.firstIndex(where: { ($0["id"] as? String) == (selectedRestaurant["id"] as? String) }) { restaurants[ix] = selectedRestaurant }
-            await loadPaymentStatus()
-        } catch { notice = error.localizedDescription }
+            async let fetchedOrders = api.rows("orders", query: "select=id,status,payment_method,payment_status,pickup_mode,subtotal_cents,total_cents,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,items:order_items(name_snapshot,quantity)&restaurant_id=eq.\(requestedRestaurantID)&or=(status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.\(recentPickupThreshold))&order=pickup_starts_at.asc", authenticated: true)
+            async let fetchedCatalog = api.rows("catalog_items", query: "select=id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,category,active,published_at&restaurant_id=eq.\(requestedRestaurantID)&order=category.asc,name.asc", authenticated: true)
+            let loadedOrders = try await fetchedOrders
+            let loadedCatalog = try await fetchedCatalog
+            guard workspaceRequestID == requestID, userID == merchantUserID, api.signedIn, requestedRestaurantID == restaurantID else { return }
+            orders = loadedOrders; catalog = loadedCatalog
+            if let selectedRestaurant, let ix = restaurants.firstIndex(where: { ($0["id"] as? String) == requestedRestaurantID }) { restaurants[ix] = selectedRestaurant }
+            await loadPaymentStatus(expectedRestaurantID: requestedRestaurantID, expectedUserID: userID, expectedWorkspaceRequestID: requestID)
+        } catch {
+            guard workspaceRequestID == requestID, userID == merchantUserID, api.signedIn, requestedRestaurantID == restaurantID else { return }
+            notice = error.localizedDescription
+        }
     }
     private func update(_ id: String, _ status: String) async {
         guard updatingOrderID == nil, !refundBusy else { return }
+        guard let userID = merchantUserID, !restaurantID.isEmpty else { return }
+        let requestedRestaurantID = restaurantID
         updatingOrderID = id
         defer { updatingOrderID = nil }
-        do { try await api.updateOrder(id, status: status); await loadWorkspace() } catch { notice = error.localizedDescription }
+        do {
+            try await api.updateOrder(id, status: status)
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
+            await loadWorkspace()
+        } catch {
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
+            notice = error.localizedDescription
+        }
     }
     private func refundPaidOrder(_ id: String) async {
         guard !refundBusy, updatingOrderID == nil else { return }
+        guard let userID = merchantUserID, !restaurantID.isEmpty else { return }
+        let requestedRestaurantID = restaurantID
         guard let order = orders.first(where: { ($0["id"] as? String) == id }),
               order["payment_method"] as? String == "stripe_checkout",
               order["payment_status"] as? String == "paid",
@@ -257,6 +330,7 @@ struct RestaurantHome: View {
         refundBusy = true; defer { refundBusy = false; refundOrderID = nil }
         do {
             let response = try await api.apiRequest("/v1/orders/\(id)/refund", method: "POST", body: [:], authenticated: true)
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
             guard let status = (response as? [String: Any])?["status"] as? String else { throw CenaBackendError.invalidResponse }
             switch status.lowercased() {
             case "refunded": notice = "Stripe confirmed the refund. The order is cancelled."; await loadWorkspace()
@@ -264,35 +338,56 @@ struct RestaurantHome: View {
             case "failed": notice = "Stripe did not complete the refund. The order remains active; retry here or use your Stripe dashboard."; await loadWorkspace()
             default: notice = "The refund status is unclear. Refresh Orders before taking further action."; await loadWorkspace()
             }
-        } catch { notice = "Couldn’t confirm the refund: \(error.localizedDescription). The order remains active unless Stripe confirms it." }
+        } catch {
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
+            notice = "Couldn’t confirm the refund: \(error.localizedDescription). The order remains active unless Stripe confirms it."
+        }
     }
     private func setCurbside(_ value: Bool) async {
-        guard let r = selectedRestaurant, let id = r["id"] as? String else { return }
+        guard let r = selectedRestaurant, let id = r["id"] as? String, let userID = merchantUserID else { return }
         do {
             _ = try await api.patch("restaurants", query: "id=eq.\(id)", body: ["curbside_enabled": value], authenticated: true)
+            guard isCurrentWorkspace(userID: userID, restaurantID: id) else { return }
             var changed = r; changed["curbside_enabled"] = value; selectedRestaurant = changed
-        } catch { notice = error.localizedDescription }
+        } catch {
+            guard isCurrentWorkspace(userID: userID, restaurantID: id) else { return }
+            notice = error.localizedDescription
+        }
     }
-    private func loadPaymentStatus() async {
-        guard api.paymentGatewayConfigured, api.signedIn, !restaurantID.isEmpty else { return }
+    private func loadPaymentStatus(expectedRestaurantID: String? = nil, expectedUserID: String? = nil, expectedWorkspaceRequestID: UUID? = nil) async {
+        guard api.paymentGatewayConfigured, api.signedIn, let userID = merchantUserID, !restaurantID.isEmpty else { return }
+        let requestedRestaurantID = expectedRestaurantID ?? restaurantID
+        guard requestedRestaurantID == restaurantID, expectedUserID == nil || expectedUserID == userID else { return }
         do {
-            let response = try await api.apiRequest("/v1/restaurants/\(restaurantID)/payments", authenticated: true)
+            let response = try await api.apiRequest("/v1/restaurants/\(requestedRestaurantID)/payments", authenticated: true)
+            guard userID == merchantUserID, api.signedIn, requestedRestaurantID == restaurantID,
+                  expectedWorkspaceRequestID == nil || expectedWorkspaceRequestID == workspaceRequestID else { return }
             guard let body = response as? [String: Any], let status = body["status"] as? String else { throw CenaBackendError.invalidResponse }
             paymentStatus = status; applicationFeeCents = body["application_fee_cents"] as? Int ?? 0
-        } catch { notice = "Couldn’t load Stripe status: \(error.localizedDescription)" }
+        } catch {
+            guard userID == merchantUserID, api.signedIn, requestedRestaurantID == restaurantID,
+                  expectedWorkspaceRequestID == nil || expectedWorkspaceRequestID == workspaceRequestID else { return }
+            notice = "Couldn’t load Stripe status: \(error.localizedDescription)"
+        }
     }
     private func startStripeOnboarding() async {
         guard api.paymentGatewayConfigured, !restaurantID.isEmpty else { notice = "Cena’s payment API is not configured."; return }
+        guard let userID = merchantUserID else { return }
+        let requestedRestaurantID = restaurantID
         onboardingBusy = true; defer { onboardingBusy = false }
         do {
-            let response = try await api.apiRequest("/v1/restaurants/\(restaurantID)/stripe-onboarding", method: "POST", body: [:], authenticated: true)
+            let response = try await api.apiRequest("/v1/restaurants/\(requestedRestaurantID)/stripe-onboarding", method: "POST", body: [:], authenticated: true)
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
             guard let body = response as? [String: Any], let rawURL = body["url"] as? String,
                   let url = URL(string: rawURL), url.scheme?.lowercased() == "https", url.host?.lowercased() == "connect.stripe.com" else {
                 throw CenaBackendError.server("Stripe returned an invalid onboarding URL.")
             }
             let opened = await UIApplication.shared.open(url)
             if !opened { notice = "Couldn’t open Stripe onboarding. Try again." }
-        } catch { notice = error.localizedDescription }
+        } catch {
+            guard isCurrentWorkspace(userID: userID, restaurantID: requestedRestaurantID) else { return }
+            notice = error.localizedDescription
+        }
     }
     private func handleConnectReturnURL(_ url: URL) {
         guard url.scheme?.lowercased() == "cena-restaurant", url.host?.lowercased() == "connect", url.path == "/return",
