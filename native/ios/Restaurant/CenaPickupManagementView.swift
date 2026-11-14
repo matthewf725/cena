@@ -90,6 +90,9 @@ struct CenaPickupManagementView: View {
         let slotID = pickupString(slot["id"])
         let inventory = slot["slot_item_inventory"] as? [[String: Any]] ?? []
         let cutoff = parseDate(slot["cutoff_at"])
+        let starts = parseDate(slot["starts_at"])
+        let now = Date()
+        let canPublish = (starts ?? .distantPast) > now.addingTimeInterval(32 * 60) && (cutoff ?? .distantPast) > now
         VStack(alignment: .leading, spacing: 10) {
             Text(dateRange(slot)).font(.headline)
             Text("Capacity \(pickupInt(slot["capacity"])) · \(pickupInt(slot["reserved_count"])) orders reserved")
@@ -100,7 +103,8 @@ struct CenaPickupManagementView: View {
                     Task { await publishWindow(slotID) }
                 }
                 .buttonStyle(.bordered)
-                .disabled(publishingSlotID != nil || !inventory.contains { pickupInt($0["available_qty"]) > 0 })
+                .disabled(publishingSlotID != nil || !canPublish || !inventory.contains { pickupInt($0["available_qty"]) > 0 })
+                if !canPublish { Text("The cutoff has passed or pickup is less than 32 minutes away. This window cannot be published.").font(.caption).foregroundStyle(CenaStyle.coral) }
             }
             if let cutoff {
                 Label(cutoff > Date() ? "Order cutoff \(formatted(cutoff))" : "Order cutoff passed · ordering closed", systemImage: "clock")
