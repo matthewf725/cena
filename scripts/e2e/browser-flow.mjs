@@ -285,8 +285,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
   async function startPickupFlow(page) {
     const bagTab = page.getByRole('tab', { name: /Bag, 2 items/ });
-    await bagTab.waitFor();
-    await bagTab.click();
+    if (await bagTab.count()) await bagTab.click();
+    else await page.getByRole('button', { name: 'View bag', exact: true }).click();
     await page.getByText('Continue to pickup', { exact: true }).click();
     await page.getByText('Choose pickup time', { exact: true }).click();
     await page.getByText('Continue to details', { exact: true }).click();
@@ -618,7 +618,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.equal((await refreshedStockQuote.json()).amount_cents, expectedAmountCents, 'The unchanged two-item bag should quote at its exact prior total');
     mark('late stock rejection returned 422, preserved the two-item bag, refreshed availability, and recovered with a fresh quote');
 
-    async function createCheckout() {
+    async function createCheckout({ amountCents = expectedAmountCents, expectedPromoCode = promoCode } = {}) {
       const responsePromise = customerPage.waitForResponse(response => {
         const url = new URL(response.url());
         return url.pathname === '/v1/checkout' && response.request().method() === 'POST';
@@ -631,8 +631,9 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       const token = requestHeaders.authorization?.replace(/^Bearer\s+/i, '');
       assert.ok(response.ok(), `Checkout creation failed (${response.status()})`);
       assert.ok(body.order_id && body.checkout_url, 'Checkout must return a pending order and trusted fake Stripe URL');
-      assert.equal(requestBody.expected_amount_cents, expectedAmountCents);
-      assert.equal(requestBody.promo_code, promoCode);
+      assert.equal(requestBody.expected_amount_cents, amountCents);
+      if (expectedPromoCode === null) assert.ok(requestBody.promo_code == null || requestBody.promo_code === '', 'Second paid order should not reuse the redeemed promo');
+      else assert.equal(requestBody.promo_code, expectedPromoCode);
       return { body, requestBody, token };
     }
 
@@ -759,6 +760,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.ok(!badCancel.ok(), 'Paid orders must reject cancellation without a refund');
     assert.equal((await queryOrder(paidOrderId)).payment_status, 'paid');
 
+    await merchantPage.getByText('Manage', { exact: true }).click();
     await reloadRestaurantData();
     const ordersTab = merchantPage.getByText('Orders', { exact: true });
     await ordersTab.click();
@@ -800,6 +802,106 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-customer-refunded.png`, fullPage: true });
     await merchantPage.screenshot({ path: `${artifactsDir}/${browserName}-restaurant-refunded.png`, fullPage: true });
 
+    let secondCompletedOrderId = '';
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
+    const bagTab = customerPage.getByRole('tab', { name: /^Bag(?:, \d+ items?)?$/ });
+    let bagLabel = await bagTab.getAttribute('aria-label');
+    let bagCount = Number(bagLabel?.match(/^Bag, (\d+)/)?.[1] || 0);
+    assert.ok(bagCount <= 2, `Second paid-order setup expected an empty or two-item bag, got ${bagLabel || 'no label'}`);
+    if (bagCount < 2) {
+      await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
+      await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first().click();
+      const addItem = customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true });
+      await addItem.waitFor({ timeout: 30000 });
+      for (let i = bagCount; i < 2; i += 1) await addItem.click();
+      bagCount = 2;
+    }
+    await startPickupFlow(customerPage);
+    const secondNoCodeQuotePromise = customerPage.waitForResponse(response => {
+      const url = new URL(response.url());
+      if (url.pathname !== '/v1/checkout/quote' || response.request().method() !== 'POST') return false;
+      const body = response.request().postDataJSON();
+      return body.promo_code == null || body.promo_code === '';
+    }, { timeout: 10000 }).catch(() => null);
+    await customerPage.getByLabel('Restaurant discount code').fill('');
+    let secondNoCodeQuote = await secondNoCodeQuotePromise;
+    if (!secondNoCodeQuote) {
+      const reviewTotal = customerPage.getByRole('button', { name: 'Review total', exact: true });
+      await reviewTotal.waitFor({ timeout: 15000 });
+      const explicitQuote = customerPage.waitForResponse(response => {
+        const url = new URL(response.url());
+        if (url.pathname !== '/v1/checkout/quote' || response.request().method() !== 'POST') return false;
+        const body = response.request().postDataJSON();
+        return body.promo_code == null || body.promo_code === '';
+      }, { timeout: 30000 });
+      await reviewTotal.click();
+      secondNoCodeQuote = await explicitQuote;
+    }
+    assert.ok(secondNoCodeQuote.ok(), `Second-order no-code quote failed (${secondNoCodeQuote.status()})`);
+    assert.equal((await secondNoCodeQuote.json()).amount_cents, expectedSubtotalCents);
+    await customerPage.getByText('$33.90', { exact: true }).last().waitFor();
+    const secondTerms = customerPage.getByRole('checkbox', { name: 'Agree to the Consumer Terms and Privacy Policy' });
+    if ((await secondTerms.getAttribute('aria-checked')) === 'false') await secondTerms.click();
+    const secondCheckout = await createCheckout({ amountCents: expectedSubtotalCents, expectedPromoCode: null });
+    secondCompletedOrderId = secondCheckout.body.order_id;
+    assert.notEqual(secondCompletedOrderId, paidOrderId);
+    assert.notEqual(secondCompletedOrderId, orderId);
+    mark('second paid order created with a fresh no-code quote after the first order was refunded');
+
+    const secondSessionId = new URL(secondCheckout.body.checkout_url).pathname.split('/').filter(Boolean).at(-1);
+    let secondCheckoutPage = context.pages().find(candidate => candidate.url().includes(secondSessionId));
+    if (!secondCheckoutPage) secondCheckoutPage = await waitForExternalPage(context, 'checkout.stripe.com', 5000);
+    if (secondCheckoutPage && !secondCheckoutPage.url().includes(secondSessionId)) secondCheckoutPage = null;
+    if (!secondCheckoutPage) {
+      secondCheckoutPage = await context.newPage();
+      await createRoutes(secondCheckoutPage);
+      await secondCheckoutPage.goto(secondCheckout.body.checkout_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    }
+    await secondCheckoutPage.getByRole('button', { name: 'Pay with fake test card', exact: true }).click({ timeout: 30000 });
+    await waitUntil(async () => fake.audit.some(entry => entry.kind === 'webhook' && entry.orderId === secondCompletedOrderId && entry.status === 200));
+    await waitUntil(async () => {
+      const order = await queryOrder(secondCompletedOrderId);
+      return order.payment_status === 'paid' && order.status === 'placed';
+    });
+    const secondSessionAudit = fake.audit.find(entry => entry.kind === 'checkout_session' && entry.orderId === secondCompletedOrderId);
+    const secondWebhookAudit = fake.audit.find(entry => entry.kind === 'webhook' && entry.orderId === secondCompletedOrderId && entry.status === 200);
+    assert.ok(secondSessionAudit && secondWebhookAudit);
+    assert.equal(secondSessionAudit.amountCents, expectedSubtotalCents);
+    customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
+    await customerPage.getByRole('button', { name: 'View order progress', exact: true }).waitFor({ timeout: 30000 });
+    mark('second no-code order paid through fake Checkout and signed webhook');
+
+    await merchantPage.getByText('Manage', { exact: true }).click();
+    await reloadRestaurantData();
+    await merchantPage.getByText('Orders', { exact: true }).click();
+    const completedPrefix = secondCompletedOrderId.slice(0, 8).toUpperCase();
+    await merchantPage.getByText(completedPrefix, { exact: false }).waitFor({ timeout: 30000 });
+    await merchantPage.getByText(completedPrefix, { exact: false }).first().click();
+    await merchantPage.getByText('Paid online · Cena flat fee $1.75', { exact: true }).waitFor();
+    await merchantPage.getByRole('button', { name: 'Accept order', exact: true }).click();
+    await merchantPage.getByText(completedPrefix, { exact: false }).first().click();
+    await merchantPage.getByRole('button', { name: 'Start preparing', exact: true }).click();
+    await merchantPage.getByText(completedPrefix, { exact: false }).first().click();
+    await merchantPage.getByRole('button', { name: 'Mark ready', exact: true }).click();
+    await merchantPage.getByText(completedPrefix, { exact: false }).first().click();
+    await merchantPage.getByRole('button', { name: 'Complete pickup', exact: true }).click();
+    await merchantPage.getByText('Pickup completed', { exact: true }).waitFor({ timeout: 15000 });
+    await merchantPage.getByText('Order marked as picked up. Find it in Completed orders.', { exact: true }).waitFor({ timeout: 15000 });
+    await waitUntil(async () => {
+      const order = await queryOrder(secondCompletedOrderId);
+      return order.payment_status === 'paid' && order.status === 'completed';
+    });
+    mark('merchant accepted/prepared/readied and completed pickup for second paid order');
+
+    await customerPage.getByRole('button', { name: 'View order progress', exact: true }).click();
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
+    await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click();
+    await customerPage.getByText('Picked up', { exact: true }).waitFor({ timeout: 30000 });
+    const completedHistory = await queryRows('orders', 'id,payment_status,status', { id: `eq.${secondCompletedOrderId}`, user_id: `eq.${customerUserId}` });
+    assert.deepEqual(completedHistory, [{ id: secondCompletedOrderId, payment_status: 'paid', status: 'completed' }]);
+    await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-customer-completed.png`, fullPage: true });
+    mark('customer Orders refreshed and showed Picked up for the completed paid order');
+
     await customerPage.getByRole('button', { name: 'Open account', exact: true }).click();
     await customerPage.getByRole('button', { name: 'Sign out', exact: true }).click();
     mark('checkout customer signed out before separate profile persistence scenario');
@@ -820,6 +922,10 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor({ timeout: 15000 });
     mark('customer remains authenticated after profile reload');
     assert.equal(await customerPage.getByPlaceholder('Add your name').inputValue(), `E2E ${browserName} Customer`);
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
+    await customerPage.getByText(`Welcome back, E2E ${browserName} Customer`, { exact: true }).waitFor({ timeout: 15000 });
+    assert.equal((await customerPage.locator('[aria-label="Open account"]').innerText()).trim(), 'E');
+    mark('saved profile name drives the Home greeting and account initial');
     const profileRows = await queryRows('profiles', 'display_name,phone', { display_name: `eq.E2E ${browserName} Customer`, phone: 'eq.5105550147' });
     assert.ok(profileRows.length > 0, 'Saved profile should be backed by local Supabase');
     mark('customer OTP profile save and reload persistence passed');
@@ -839,6 +945,10 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     report.connectedAccount = checkoutAudit.account;
     report.webhookStatus = webhookAudit.status;
     report.finalStatus = 'refunded';
+    report.completedOrderId = secondCompletedOrderId;
+    report.completedOrderPaymentStatus = 'paid';
+    report.completedOrderStatus = 'completed';
+    report.completedOrderAmountCents = expectedSubtotalCents;
     report.browserDiagnostics = Array.from(new Set(browserDiagnostics)).slice(0, 8);
     return report;
   } catch (error) {
