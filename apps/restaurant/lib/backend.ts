@@ -6,7 +6,7 @@ const cenaApiUrl = process.env.EXPO_PUBLIC_CENA_API_URL?.replace(/\/$/, '');
 export const supabase: SupabaseClient | null = url && key ? createClient(url,key,{auth:{storage:AsyncStorage,autoRefreshToken:true,persistSession:true,detectSessionInUrl:false}}) : null;
 export const hasBackend = !!supabase;
 
-export type Restaurant = { id:string; name:string; address:string; curbside_enabled:boolean };
+export type Restaurant = { id:string; name:string; address:string; curbside_enabled:boolean; role:string };
 export async function signIn(email:string,password:string) {
   if (!supabase) return { error: null };
   const {error}=await supabase.auth.signInWithPassword({email,password}); return {error};
@@ -14,9 +14,9 @@ export async function signIn(email:string,password:string) {
 export async function signOut() { if (supabase) await supabase.auth.signOut(); }
 export async function fetchRestaurants():Promise<Restaurant[]> {
   if (!supabase) return [];
-  const {data,error}=await supabase.from('merchant_memberships').select('restaurant:restaurants(id,name,address,curbside_enabled)');
+  const {data,error}=await supabase.from('merchant_memberships').select('role,restaurant:restaurants(id,name,address,curbside_enabled)');
   if(error) throw error;
-  return (data||[]).map((x:any)=>x.restaurant).filter(Boolean);
+  return (data||[]).map((x:any)=>x.restaurant?{...x.restaurant,role:x.role}:null).filter(Boolean);
 }
 export async function updateCurbside(restaurantId:string,enabled:boolean) {
   if(!supabase)return enabled;

@@ -112,6 +112,7 @@ struct CustomerHome: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { locationQuery = pickupAreaLabel; showLocationEditor = true } label: { Image(systemName: "mappin.and.ellipse").font(.title3).accessibilityLabel("Set pickup area") }
                     Button { tab = 3 } label: { Image(systemName: "person.crop.circle").font(.title3).accessibilityLabel("Profile") }
+                        .accessibilityIdentifier("customer.profile")
                 }
             }
             .safeAreaInset(edge: .bottom) {

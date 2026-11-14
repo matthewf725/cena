@@ -7,9 +7,20 @@ final class RestaurantSmokeTests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Restaurant team access uses your Cena account."].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.textFields["Email"].exists)
-        XCTAssertTrue(app.secureTextFields["Password"].exists)
-        XCTAssertTrue(app.buttons["Sign in"].exists)
+        let email = app.textFields["Email"]
+        let password = app.secureTextFields["Password"]
+        let signIn = app.buttons["Sign in"]
+        XCTAssertTrue(email.exists)
+        XCTAssertTrue(password.exists)
+        XCTAssertTrue(signIn.exists)
+        XCTAssertFalse(signIn.isEnabled)
         XCTAssertTrue(app.staticTexts["Supabase backend is not configured"].exists)
+
+        email.tap()
+        email.typeText("staff@example.com")
+        password.tap()
+        password.typeText("not-a-real-password")
+        XCTAssertEqual(email.value as? String, "staff@example.com")
+        XCTAssertFalse(signIn.isEnabled)
     }
 }
