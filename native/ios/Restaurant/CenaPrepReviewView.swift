@@ -12,13 +12,25 @@ struct CenaPrepReviewView: View {
     @State private var manualSourceConfirmed = false
     @State private var loading = true
     @State private var saving = false
+    @State private var generating = false
     @State private var publishing = false
     @State private var reviewConfirmed = false
     @State private var notice: String?
+    @State private var draftLoadID = UUID()
 
     private var itemID: String { prepString(item["id"]) }
+    @MainActor private var currentUserID: String? {
+        guard let token = CenaBackend.shared.accessToken else { return nil }
+        let segments = token.split(separator: ".")
+        guard segments.count > 1 else { return nil }
+        var payload = String(segments[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while payload.count % 4 != 0 { payload.append("=") }
+        guard let data = Data(base64Encoded: payload),
+              let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return claims["sub"] as? String
+    }
     private var validSteps: Bool {
-        !steps.isEmpty && steps.count <= 80 && steps.allSatisfy {
+        !steps.isEmpty && steps.count <= 80 && steps.reduce(0, { $0 + $1.count }) <= 12_000 && steps.allSatisfy {
             let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
             return !trimmed.isEmpty && trimmed.count <= 2_000
         }
@@ -40,7 +52,7 @@ struct CenaPrepReviewView: View {
                 if loading {
                     ProgressView("Loading saved chef steps…")
                 } else if steps.isEmpty {
-                    Text("No saved or generated steps yet. Add a first step below, or generate steps in the Expo restaurant console.")
+                    Text("No saved or generated steps yet. Add a first step below, then confirm it as the private source before generating.")
                         .font(.subheadline).foregroundStyle(CenaStyle.clay)
                 } else {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, _ in
@@ -68,8 +80,26 @@ struct CenaPrepReviewView: View {
                 .disabled(loading || steps.count >= 80)
 
                 if !steps.isEmpty && !validSteps {
-                    Text("Add 1–80 non-empty steps. Each step must be 2,000 characters or fewer.")
+                    Text("Add 1–80 non-empty steps, each 2,000 characters or fewer and 12,000 characters total.")
                         .font(.caption).foregroundStyle(CenaStyle.coral)
+                }
+            }
+
+            Section("AI preparation draft") {
+                Text("Generation sends only this menu item’s ID. Cena uses the saved private chef source to create an editable draft; it never publishes automatically.")
+                    .font(.caption).foregroundStyle(CenaStyle.clay)
+                if draftID == nil {
+                    Button(generating ? "Saving source and generating…" : "Save source and generate private draft") {
+                        Task { await generatePrivateDraft() }
+                    }
+                    .disabled(loading || saving || generating || publishing || !validSteps || !manualSourceConfirmed)
+                } else {
+                    Button(generating ? "Generating private draft…" : "Generate private AI draft") {
+                        Task { await generatePrivateDraft() }
+                    }
+                    .disabled(loading || saving || generating || publishing || !validSteps)
+                    Text("Generation uses the saved chef source and replaces generated draft text. Unsaved edits in this review field are not used as its source.")
+                        .font(.caption).foregroundStyle(CenaStyle.clay)
                 }
             }
 
@@ -115,7 +145,7 @@ struct CenaPrepReviewView: View {
                 Section { Text(notice).font(.subheadline).foregroundStyle(notice.hasPrefix("Couldn’t") ? CenaStyle.maroon : CenaStyle.clay) }
             }
         }
-        .disabled(loading || saving || publishing)
+        .disabled(loading || saving || generating || publishing)
         .scrollContentBackground(.hidden)
         .scrollIndicators(.hidden)
         .background(CenaStyle.cream)
@@ -123,7 +153,7 @@ struct CenaPrepReviewView: View {
         .navigationTitle("Chef step review")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: "\(restaurantID):\(itemID)") { await loadDraft() }
-        .refreshable { await loadDraft() }
+        .refreshable { if !saving && !generating && !publishing { await loadDraft() } }
         .overlay(alignment: .top) {
             if let notice, notice.hasPrefix("Couldn’t") {
                 CenaNotice(message: notice) { self.notice = nil }.padding(.horizontal, 14).padding(.top, 8)
@@ -143,17 +173,24 @@ struct CenaPrepReviewView: View {
     }
 
     @MainActor private func loadDraft() async {
-        guard !restaurantID.isEmpty, !itemID.isEmpty else {
+        let requestedRestaurantID = restaurantID
+        let requestedItemID = itemID
+        guard !requestedRestaurantID.isEmpty, !requestedItemID.isEmpty,
+              CenaBackend.shared.signedIn, let userID = currentUserID else {
             loading = false
             notice = "Couldn’t open this menu item. Refresh Menu and try again."
             return
         }
+        let requestID = UUID()
+        draftLoadID = requestID
         loading = true
-        defer { loading = false }
+        defer { if draftLoadID == requestID { loading = false } }
         do {
-            let latestItem = try await loadCatalogItem()
+            let latestItem = try await loadCatalogItem(restaurantID: requestedRestaurantID, itemID: requestedItemID)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             publishedSteps = prepSteps(latestItem["published_steps"])
-            let rows = try await CenaBackend.shared.rows("prep_drafts", query: "select=id,source_steps,generated_steps,updated_at&restaurant_id=eq.\(restaurantID)&catalog_item_id=eq.\(itemID)&limit=1", authenticated: true)
+            let rows = try await CenaBackend.shared.rows("prep_drafts", query: "select=id,source_steps,generated_steps,updated_at&restaurant_id=eq.\(requestedRestaurantID)&catalog_item_id=eq.\(requestedItemID)&limit=1", authenticated: true)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             if let draft = rows.first {
                 draftID = prepString(draft["id"])
                 updatedAt = prepString(draft["updated_at"])
@@ -169,19 +206,87 @@ struct CenaPrepReviewView: View {
             reviewConfirmed = false
             notice = nil
         } catch {
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             notice = "Couldn’t load chef steps: \(error.localizedDescription)"
         }
     }
 
+    @MainActor private func generatePrivateDraft() async {
+        guard !loading, !saving, !generating, !publishing,
+              CenaBackend.shared.signedIn, let userID = currentUserID else {
+            notice = "Couldn’t generate steps: sign in again and reload this draft."
+            return
+        }
+        let requestedRestaurantID = restaurantID
+        let requestedItemID = itemID
+        let requestID = draftLoadID
+        guard !requestedRestaurantID.isEmpty, !requestedItemID.isEmpty else { return }
+        if draftID == nil && (!manualSourceConfirmed || !validSteps) {
+            notice = "Couldn’t generate steps: add and confirm the first private chef source first."
+            return
+        }
+        generating = true
+        notice = nil
+        defer { generating = false }
+        do {
+            if draftID == nil {
+                await saveManualSource()
+                guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
+                guard draftID != nil, updatedAt != nil else { return }
+            }
+            guard let expectedDraftID = draftID, let expectedUpdatedAt = updatedAt else {
+                throw CenaBackendError.server("Save a private chef source draft before generating steps.")
+            }
+            try await verifyDraftRevision(expectedID: expectedDraftID, expectedUpdatedAt: expectedUpdatedAt, restaurantID: requestedRestaurantID, itemID: requestedItemID)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID),
+                  draftID == expectedDraftID, updatedAt == expectedUpdatedAt else { return }
+            let generated = try await CenaBackend.shared.generatePrep(itemID: requestedItemID)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID),
+                  draftID == expectedDraftID, updatedAt == expectedUpdatedAt else { return }
+            let rows = try await CenaBackend.shared.rows("prep_drafts", query: "select=id,generated_steps,updated_at&restaurant_id=eq.\(requestedRestaurantID)&catalog_item_id=eq.\(requestedItemID)&id=eq.\(expectedDraftID)&limit=1", authenticated: true)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID),
+                  draftID == expectedDraftID, updatedAt == expectedUpdatedAt else { return }
+            guard let saved = rows.first, prepString(saved["id"]) == expectedDraftID,
+                  prepString(saved["updated_at"]) == generated.updatedAt,
+                  let savedSteps = saved["generated_steps"] as? [String], savedSteps == generated.steps else {
+                throw CenaBackendError.conflict("The private draft changed after generation. Reload it before reviewing or publishing.")
+            }
+            steps = savedSteps
+            updatedAt = prepString(saved["updated_at"])
+            manualSourceConfirmed = false
+            reviewConfirmed = false
+            notice = "Private AI draft generated. Review every step before publishing."
+        } catch {
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
+            notice = "Couldn’t generate a private draft: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor private func isCurrentDraft(_ requestID: UUID, _ userID: String, _ expectedRestaurantID: String, _ expectedItemID: String) -> Bool {
+        draftLoadID == requestID && currentUserID == userID && CenaBackend.shared.signedIn &&
+            restaurantID == expectedRestaurantID && itemID == expectedItemID
+    }
+
     @MainActor private func saveManualSource() async {
         guard !saving, draftID == nil, manualSourceConfirmed, validSteps else { return }
+        guard CenaBackend.shared.signedIn, let userID = currentUserID else {
+            notice = "Couldn’t save the private source: sign in again and reload this draft."
+            return
+        }
+        let requestedRestaurantID = restaurantID
+        let requestedItemID = itemID
+        let requestID = draftLoadID
+        let sourceSteps = steps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         saving = true
         defer { saving = false }
         do {
-            let latestItem = try await loadCatalogItem()
-            let existingDraft = try await loadDraftRevision()
+            let latestItem = try await loadCatalogItem(restaurantID: requestedRestaurantID, itemID: requestedItemID)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
+            let existingDraft = try await loadDraftRevision(restaurantID: requestedRestaurantID, itemID: requestedItemID)
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             guard existingDraft == nil else { throw CenaBackendError.server("A chef draft was created elsewhere. Refresh before saving.") }
-            let response = try await CenaBackend.shared.rpc("save_catalog_item_draft", body: saveBody(latestItem))
+            let response = try await CenaBackend.shared.rpc("save_catalog_item_draft", body: saveBody(latestItem, restaurantID: requestedRestaurantID, itemID: requestedItemID, sourceSteps: sourceSteps))
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             guard let row = (response as? [[String: Any]])?.first,
                   let savedID = row["prep_draft_id"] as? String,
                   let savedUpdatedAt = row["draft_updated_at"] as? String else {
@@ -192,12 +297,13 @@ struct CenaPrepReviewView: View {
             manualSourceConfirmed = false
             notice = "Private manual chef-step source saved."
         } catch {
+            guard isCurrentDraft(requestID, userID, requestedRestaurantID, requestedItemID) else { return }
             notice = "Couldn’t save the private source: \(error.localizedDescription)"
         }
     }
 
     @MainActor private func publishReviewedSteps() async {
-        guard !publishing, !saving, reviewConfirmed, validSteps else { return }
+        guard !publishing, !saving, !generating, reviewConfirmed, validSteps else { return }
         publishing = true
         notice = nil
         defer { publishing = false }
@@ -215,7 +321,7 @@ struct CenaPrepReviewView: View {
             return
         }
         do {
-            try await verifyDraftRevision(expectedID: draftID, expectedUpdatedAt: updatedAt)
+            try await verifyDraftRevision(expectedID: draftID, expectedUpdatedAt: updatedAt, restaurantID: restaurantID, itemID: itemID)
             let response = try await CenaBackend.shared.rpc("publish_prep_draft", body: [
                 "p_draft_id": draftID,
                 "p_expected_updated_at": updatedAt,
@@ -237,7 +343,7 @@ struct CenaPrepReviewView: View {
         }
     }
 
-    private func loadCatalogItem() async throws -> [String: Any] {
+    private func loadCatalogItem(restaurantID: String, itemID: String) async throws -> [String: Any] {
         let rows = try await CenaBackend.shared.rows(
             "catalog_items",
             query: "select=id,name,description,price_cents,regular_price_cents,prepared_meal_total_cents,equipment,allergens,active,published_steps&restaurant_id=eq.\(restaurantID)&id=eq.\(itemID)&limit=1",
@@ -247,7 +353,7 @@ struct CenaPrepReviewView: View {
         return latest
     }
 
-    private func loadDraftRevision() async throws -> (id: String, updatedAt: String)? {
+    private func loadDraftRevision(restaurantID: String, itemID: String) async throws -> (id: String, updatedAt: String)? {
         let rows = try await CenaBackend.shared.rows(
             "prep_drafts",
             query: "select=id,updated_at&restaurant_id=eq.\(restaurantID)&catalog_item_id=eq.\(itemID)&limit=1",
@@ -260,15 +366,15 @@ struct CenaPrepReviewView: View {
         return (id, updatedAt)
     }
 
-    private func verifyDraftRevision(expectedID: String, expectedUpdatedAt: String) async throws {
-        guard let latest = try await loadDraftRevision(),
+    private func verifyDraftRevision(expectedID: String, expectedUpdatedAt: String, restaurantID: String, itemID: String) async throws {
+        guard let latest = try await loadDraftRevision(restaurantID: restaurantID, itemID: itemID),
               latest.id == expectedID,
               latest.updatedAt == expectedUpdatedAt else {
             throw CenaBackendError.server("This chef draft changed elsewhere. Refresh it before publishing.")
         }
     }
 
-    private func saveBody(_ item: [String: Any]) -> [String: Any] {
+    private func saveBody(_ item: [String: Any], restaurantID: String, itemID: String, sourceSteps: [String]) -> [String: Any] {
         [
             "p_catalog_item_id": itemID,
             "p_restaurant_id": restaurantID,
@@ -280,7 +386,7 @@ struct CenaPrepReviewView: View {
             "p_equipment": item["equipment"] as? [String] ?? [],
             "p_allergens": item["allergens"] as? [String] ?? [],
             "p_active": item["active"] as? Bool ?? false,
-            "p_source_steps": steps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            "p_source_steps": sourceSteps
         ]
     }
 }

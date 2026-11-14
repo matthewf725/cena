@@ -250,6 +250,23 @@ enum CenaBackendError: LocalizedError {
                 throw CenaBackendError.sessionExpired
             }
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            if path == "/functions/v1/generate-prep", let code = obj?["error"] as? String {
+                switch (http.statusCode, code) {
+                case (503, "service_unavailable"):
+                    throw CenaBackendError.server("AI chef-step generation is not configured on this deployment. Your source remains editable.")
+                case (404, "draft_not_found"):
+                    throw CenaBackendError.server("Save a private chef source draft before generating steps.")
+                case (403, "forbidden"):
+                    throw CenaBackendError.server("Your account cannot generate steps for this restaurant.")
+                case (409, "recipe_changed_retry"):
+                    throw CenaBackendError.conflict("The saved chef source changed during generation. Reload it before trying again.")
+                case (422, "invalid_recipe_steps"):
+                    throw CenaBackendError.server("Review the saved source: include 1–80 non-empty steps, each no longer than 2,000 characters.")
+                case (502, _), (500, _):
+                    throw CenaBackendError.server("AI could not produce a valid private draft. Your saved chef source is unchanged; try again later.")
+                default: break
+                }
+            }
             throw CenaBackendError.server((obj?["msg"] as? String) ?? (obj?["message"] as? String) ?? (obj?["error_description"] as? String) ?? (obj?["hint"] as? String) ?? "Request failed (HTTP \(http.statusCode)).")
         }
         throw CenaBackendError.invalidResponse
@@ -267,6 +284,20 @@ enum CenaBackendError: LocalizedError {
     }
     func insert(_ table: String, body: Any, authenticated: Bool = true) async throws -> Data {
         try await request("/rest/v1/\(table)", method: "POST", body: body, authenticated: authenticated, prefer: "return=representation")
+    }
+    func generatePrep(itemID: String) async throws -> (steps: [String], updatedAt: String) {
+        guard UUID(uuidString: itemID) != nil else { throw CenaBackendError.invalidResponse }
+        let data = try await request("/functions/v1/generate-prep", method: "POST", body: ["item_id": itemID], authenticated: true)
+        guard let response = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              response["item_id"] as? String == itemID,
+              response["status"] as? String == "private_draft",
+              let steps = response["generated_steps"] as? [String],
+              !steps.isEmpty, steps.count <= 80,
+              steps.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 2_000 }),
+              let updatedAt = response["updated_at"] as? String, !updatedAt.isEmpty else {
+            throw CenaBackendError.invalidResponse
+        }
+        return (steps, updatedAt)
     }
     func upsert(_ table: String, query: String, body: [String: Any], authenticated: Bool = true) async throws -> Data {
         try await request("/rest/v1/\(table)?\(query)", method: "POST", body: body, authenticated: authenticated, prefer: "resolution=merge-duplicates,return=minimal")
