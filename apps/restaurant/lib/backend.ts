@@ -42,6 +42,17 @@ export async function createStripeOnboardingLink(restaurantId:string):Promise<st
   return result.url;
 }
 export type OrderRefundResult={status:'refunded'|'pending'|'failed'};
+export type RestaurantPromotion={id:string;restaurant_id:string;code:string;discount_percent:number;starts_at:string;ends_at:string|null;max_redemptions:number|null;reserved_redemptions:number;redeemed_count:number;redemption_count:number;active:boolean;created_at:string;updated_at:string};
+export async function fetchRestaurantPromotions(restaurantId:string):Promise<RestaurantPromotion[]>{
+  if(!supabase)return[];
+  const {data,error}=await supabase.rpc('list_restaurant_promotions',{p_restaurant_id:restaurantId});if(error)throw error;
+  return (data||[]) as RestaurantPromotion[];
+}
+export async function saveRestaurantPromotion(restaurantId:string,promotion:{code:string;discountPercent:number;startsAt:string;endsAt:string|null;maxRedemptions:number|null;active:boolean}):Promise<RestaurantPromotion>{
+  if(!supabase)throw new Error('Sign in to manage restaurant promotions.');
+  const {data,error}=await supabase.rpc('save_restaurant_promotion',{p_restaurant_id:restaurantId,p_code:promotion.code,p_discount_percent:promotion.discountPercent,p_starts_at:promotion.startsAt,p_ends_at:promotion.endsAt,p_max_redemptions:promotion.maxRedemptions,p_active:promotion.active});if(error)throw error;
+  return data as RestaurantPromotion;
+}
 export async function refundOrder(id:string):Promise<OrderRefundResult>{
   if(!cenaApiUrl||!supabase)throw new Error('Cena refund API is not configured.');
   const {data,error}=await supabase.auth.getSession();if(error)throw error;

@@ -62,8 +62,9 @@ export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> 
   } : null;
 }
 
-export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[] };
-export type CheckoutSession = { order_id: string; checkout_url: string } | { order_id: string; status: 'paid' };
+export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[]; promoCode?: string; expectedAmountCents: number };
+export type CheckoutQuote = { restaurant_id:string;slot_id:string;subtotal_cents:number;discount_cents:number;amount_cents:number;currency:'usd';promo_code:string|null;discount_percent:number|null };
+export type CheckoutSession = { order_id: string; checkout_url: string; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null } | { order_id: string; status: 'paid'; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null };
 export function isTrustedCheckoutURL(value: string) {
   try {
     const url = new URL(value);
@@ -87,10 +88,18 @@ async function checkoutRequest(path: string, init: RequestInit = {}) {
   if (!response.ok) throw new CheckoutRequestError(data?.error || data?.message || 'Secure checkout could not be started.', response.status, data?.status, data?.order_id);
   return data;
 }
+export async function quoteCheckout(input: Omit<CheckoutInput,'idempotencyKey'|'pickupMode'|'vehicle'|'promoCode'|'expectedAmountCents'> & {promoCode?:string}): Promise<CheckoutQuote> {
+  const data = await checkoutRequest('/v1/checkout/quote', { method:'POST', body:JSON.stringify({
+    p_restaurant_id:input.restaurantId,p_slot_id:input.slotId,p_items:input.items,promo_code:input.promoCode?.trim()||undefined,
+  }) });
+  if(data.restaurant_id!==input.restaurantId||data.slot_id!==input.slotId||!Number.isInteger(data.subtotal_cents)||!Number.isInteger(data.discount_cents)||!Number.isInteger(data.amount_cents)||data.currency!=='usd'||data.subtotal_cents<0||data.discount_cents<0||data.amount_cents<0) throw new Error('Checkout quote was incomplete. Please check the total again.');
+  return data as CheckoutQuote;
+}
 export async function createCheckout(input: CheckoutInput): Promise<CheckoutSession> {
   const data = await checkoutRequest('/v1/checkout', { method: 'POST', body: JSON.stringify({
     p_restaurant_id: input.restaurantId, p_slot_id: input.slotId, p_idempotency_key: input.idempotencyKey,
     p_pickup_mode: input.pickupMode, p_vehicle: input.vehicle || {}, p_items: input.items,
+    promo_code: input.promoCode?.trim()||undefined,expected_amount_cents:input.expectedAmountCents,
   }) });
   if (typeof data.order_id !== 'string') throw new Error('Secure checkout returned an incomplete session.');
   if (data.status === 'paid' && typeof data.checkout_url !== 'string') return { order_id: data.order_id, status: 'paid' };
@@ -124,7 +133,7 @@ export async function upsertCustomerProfile(displayName: string, phone: string, 
 }
 export async function fetchOrderHistory() {
   if (!supabase) return { data: null, error: null };
-  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').order('created_at',{ascending:false}).limit(20);
+  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').order('created_at',{ascending:false}).limit(20);
 }
 export async function trackEvent(eventType: string, restaurantId?: string, payload: Record<string, unknown> = {}) {
   if (!supabase) return { error: null };
