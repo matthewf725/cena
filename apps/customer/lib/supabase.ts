@@ -1,11 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { kitchens, toMeal, type Kitchen } from './data';
+import { createAuthTimeoutFetch } from './auth-timeout-fetch';
 
 // Public reads work anonymously; order writes require an email OTP session.
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 export const supabase: SupabaseClient | null = url && key ? createClient(url, key, {
+  global: { fetch: createAuthTimeoutFetch(globalThis.fetch.bind(globalThis)) },
   auth: { storage: AsyncStorage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
 }) : null;
 
