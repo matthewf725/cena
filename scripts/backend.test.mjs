@@ -352,3 +352,32 @@ test('merchant catalog create and save stay atomic and private until manager rev
   ));
   assert.deepEqual(draft,{name:'R07 legacy item repaired',price_cents:1300,source_steps:['Chef instruction']});
 });
+
+test('merchant pickup window and stock creation are atomic under member RLS', async () => {
+  const create=(tx,items,startsAt)=>tx.query(`
+    select create_pickup_slot_with_inventory($1,$2,$3,15,25,8) as slot_id
+  `,[fixture.restaurant,items,startsAt]);
+  const startsAt=new Date(Date.now()+8*60*60_000).toISOString();
+  const {rows:[created]}=await withRole('authenticated',merchant,(tx)=>create(tx,[fixture.item],startsAt));
+  const {rows:[stock]}=await withRole('authenticated',merchant,(tx)=>tx.query(`
+    select available_qty,reserved_qty from slot_item_inventory where slot_id=$1 and item_id=$2
+  `,[created.slot_id,fixture.item]));
+  assert.deepEqual(stock,{available_qty:8,reserved_qty:0});
+
+  const emptyStartsAt=new Date(Date.now()+9*60*60_000).toISOString();
+  const {rows:[empty]}=await withRole('authenticated',merchant,(tx)=>create(tx,[],emptyStartsAt));
+  const {rows:[emptyStock]}=await database.query('select count(*)::int as count from slot_item_inventory where slot_id=$1',[empty.slot_id]);
+  assert.equal(emptyStock.count,0,'empty product selection still creates a pickup window without stock rows');
+
+  const otherItem=(await database.query('select id from catalog_items where restaurant_id<>$1 limit 1',[fixture.restaurant])).rows[0];
+  assert.ok(otherItem,'seed includes a catalog item from a different restaurant');
+  const failedStartsAt=new Date(Date.now()+10*60*60_000).toISOString();
+  await assert.rejects(withRole('authenticated',merchant,(tx)=>create(tx,[otherItem.id],failedStartsAt)),/slot and item must belong to the same restaurant/);
+  const {rows:[failedSlot]}=await database.query('select count(*)::int as count from pickup_slots where starts_at=$1',[failedStartsAt]);
+  assert.equal(failedSlot.count,0,'inventory failure rolls back the just-created pickup window');
+
+  const unauthorizedStartsAt=new Date(Date.now()+11*60*60_000).toISOString();
+  await assert.rejects(withRole('authenticated',customer,(tx)=>create(tx,[],unauthorizedStartsAt)),/not authorized/);
+  const {rows:[unauthorizedSlot]}=await database.query('select count(*)::int as count from pickup_slots where starts_at=$1',[unauthorizedStartsAt]);
+  assert.equal(unauthorizedSlot.count,0,'nonmember cannot create a pickup window');
+});

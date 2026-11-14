@@ -150,10 +150,15 @@ export async function saveSlotInventory(slotId:string,itemId:string,availableQty
 }
 export async function createPickupSlot(restaurantId:string,items:string[],startsAt:Date,windowMinutes:number,cutoffMinutes:number,capacity:number) {
   if(!supabase)return;
-  const start=startsAt;
-  const end=new Date(start.getTime()+windowMinutes*60_000),cutoff=new Date(start.getTime()-cutoffMinutes*60_000);
-  const {data,error}=await supabase.from('pickup_slots').insert({restaurant_id:restaurantId,starts_at:start.toISOString(),ends_at:end.toISOString(),cutoff_at:cutoff.toISOString(),capacity}).select('id').single();if(error)throw error;
-  if(items.length){const {error:stockError}=await supabase.from('slot_item_inventory').insert(items.map(item_id=>({slot_id:data.id,item_id,available_qty:8})));if(stockError)throw stockError;}
+  const {error}=await supabase.rpc('create_pickup_slot_with_inventory',{
+    p_restaurant_id:restaurantId,
+    p_item_ids:items,
+    p_starts_at:startsAt.toISOString(),
+    p_window_minutes:windowMinutes,
+    p_cutoff_minutes:cutoffMinutes,
+    p_capacity:capacity,
+  });
+  if(error)throw error;
 }
 export async function fetchSlots(restaurantId:string) {
   if(!supabase) return null;
