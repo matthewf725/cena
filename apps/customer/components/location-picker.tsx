@@ -5,20 +5,12 @@ import { Text, TextInput } from './type';
 import { PageHeader } from './home-chrome';
 
 type AddressLocation = { latitude: number; longitude: number; label: string };
-type SelectionKind = 'address' | 'recent' | 'suggestion';
+type SelectionKind = 'address' | 'recent';
 
-const publicAreas: AddressLocation[] = [
-  { label: 'San Francisco City Hall', latitude: 37.7793, longitude: -122.4193 },
-  { label: 'Oakland City Hall', latitude: 37.8044, longitude: -122.2712 },
-  { label: 'Downtown Berkeley', latitude: 37.8716, longitude: -122.2727 },
-];
-
-export function LocationPicker({ close, useDevice, useAddress, reset, resetLabel = 'Use San Francisco', locating, currentLabel, recentAddresses, deviceError }: {
+export function LocationPicker({ close, useDevice, useAddress, locating, currentLabel, recentAddresses, deviceError }: {
   close: () => void;
   useDevice: () => void;
   useAddress: (address: AddressLocation) => void;
-  reset: () => void;
-  resetLabel?: string;
   locating: boolean;
   currentLabel: string;
   recentAddresses: AddressLocation[];
@@ -149,7 +141,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, resetLabel
           </View>
         </PageHeader>
         <View style={styles.body}>
-          <Text style={styles.helper}>Choose an area or enter an address to find nearby pickup kitchens.</Text>
+          <Text style={styles.helper}>Enter an address or use your current location to find nearby pickup kitchens.</Text>
           <View accessible accessibilityLabel={`Current pickup area, ${currentLabel}`} style={styles.currentArea}>
             <View style={styles.currentAreaIcon}><MapPin size={18} color={maroon}/></View>
             <View style={{flex:1}}><Text style={styles.currentAreaLabel}>Current pickup area</Text><Text style={styles.currentAreaName}>{currentLabel}</Text></View>
@@ -173,21 +165,11 @@ export function LocationPicker({ close, useDevice, useAddress, reset, resetLabel
             {locating ? <ActivityIndicator color={maroon} /> : <LocateFixed size={18} color={maroon} />}
             <Text style={styles.deviceText}>Use my current location</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={reset} disabled={busy} style={styles.resetButton}>
-            <Text style={styles.resetText}>{resetLabel}</Text>
-          </Pressable>
-
           {!!recentSuggestions.length&&<View style={styles.suggestions}>
             <Text accessibilityRole="header" style={styles.sectionTitle}>Recent places</Text>
             {recentSuggestions.map(item=><Suggestion key={`${item.label}-${item.latitude}-${item.longitude}`} item={item} onPress={()=>chooseLocation(item,'recent')} disabled={busy}/>)
             }
           </View>}
-          <View style={styles.suggestions}>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>Suggested areas</Text>
-            <Text style={styles.suggestionHelp}>Public city landmarks for a quick nearby preview.</Text>
-            {publicAreas.map(item=><Suggestion key={item.label} item={item} onPress={()=>chooseLocation(item,'suggestion')} disabled={busy}/>)
-            }
-          </View>
         </View>
       </ScrollView>
     </View>

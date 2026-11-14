@@ -21,7 +21,7 @@ export function PageHeader({ children, identityHeight, topInset, overlay = false
 }) {
   const tintId = useId();
   const barHeight = identityHeight + topInset;
-  const fadeHeight = barHeight + 32;
+  const fadeHeight = barHeight + 80;
   return <View pointerEvents="box-none" style={[s.header,
     overlay ? s.headerOverlay : { minHeight: identityHeight + headerContentGap },
   ]}>
@@ -31,7 +31,7 @@ export function PageHeader({ children, identityHeight, topInset, overlay = false
           <LinearGradient id={tintId} x1="0%" y1="0%" x2="0%" y2="100%">
             <Stop offset={0} stopColor={headerTint} />
             <Stop offset={(barHeight - 14) / fadeHeight} stopColor={headerTint} />
-            <Stop offset={(barHeight + 7) / fadeHeight} stopColor={headerTint} stopOpacity={0.38} />
+            <Stop offset={(barHeight + 35) / fadeHeight} stopColor={headerTint} stopOpacity={0.38} />
             <Stop offset={1} stopColor={headerTint} stopOpacity={0} />
           </LinearGradient>
         </Defs>
@@ -86,14 +86,15 @@ export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onP
   useEffect(() => {
     const toValue = compact ? 0 : 1;
     if (reduced) { progress.setValue(toValue); return; }
-    const animation = Animated.timing(progress, { toValue, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+    const animation = Animated.timing(progress, { toValue, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' });
     animation.start();
     return () => animation.stop();
   }, [compact, progress, reduced]);
 
-  const pillWidth = progress.interpolate({ inputRange: [0, 1], outputRange: [controlSize, controlSize + width] });
+  const shift = progress.interpolate({ inputRange: [0, 1], outputRange: [width, 0] });
   return <View pointerEvents="box-none" style={[s.pickupTarget, { width: controlSize + width }]}>
-    <Animated.View pointerEvents="box-none" style={[s.pickupPill, { width: pillWidth }]}>
+    <View pointerEvents="none" style={s.pickupEndCap} />
+    <Animated.View pointerEvents="box-none" style={[s.pickupPill, { width: controlSize + width, transform: [{ translateX: shift }] }]}>
       <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={`Change pickup area, ${label}`}
         onPress={onPress} style={({ pressed }) => [s.pickupSurface, pressed && s.pickupPressed]}>
         <View pointerEvents="none" style={s.pickupIcon}><MapPin size={19} color={maroon} aria-hidden /></View>
@@ -129,20 +130,6 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height, redu
   const dockBottom = focused && keyboardInset > 0 ? Math.max(bottom, keyboardInset + searchGap) : bottom;
 
   useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    const toValue = bottom - dockBottom;
-    if (reduced || keyboardDuration.current === 0) {
-      lift.setValue(toValue);
-      return;
-    }
-    const animation = Animated.timing(lift, {
-      toValue, duration: keyboardDuration.current, easing: Easing.inOut(Easing.cubic), useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [bottom, dockBottom, lift, reduced]);
-
-  useEffect(() => {
     if (!focused) {
       keyboardHeight.current = 0;
       setKeyboardInset(0);
@@ -171,7 +158,14 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height, redu
 
     const updateFromKeyboard = () => {
       const layoutResize = Math.max(0, focusHeight.current - latestWindowHeight.current);
-      setKeyboardInset(Math.max(0, keyboardHeight.current - layoutResize));
+      const inset = Math.max(0, keyboardHeight.current - layoutResize);
+      setKeyboardInset(inset);
+      if (Platform.OS === 'ios') {
+        const toValue = bottom - (inset > 0 ? Math.max(bottom, inset + searchGap) : bottom);
+        lift.stopAnimation();
+        if (reduced || keyboardDuration.current === 0) lift.setValue(toValue);
+        else Animated.timing(lift, { toValue, duration: keyboardDuration.current, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      }
     };
     const updateFrame = (event: KeyboardEvent) => {
       keyboardDuration.current = event.duration ?? 230;
@@ -184,14 +178,14 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height, redu
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', event => {
       keyboardDuration.current = event.duration ?? 230;
       keyboardHeight.current = 0;
-      setKeyboardInset(0);
+      updateFromKeyboard();
     });
     updateFromKeyboard();
     return () => {
       show.remove();
       hide.remove();
     };
-  }, [focused, windowHeight]);
+  }, [focused, windowHeight, bottom, lift, reduced]);
 
   return <Animated.View pointerEvents="box-none" style={[s.searchDock, { left: side, right: side },
     Platform.OS === 'ios' ? { bottom, transform: [{ translateY: lift }] } : { bottom: dockBottom }]}>
@@ -200,7 +194,7 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height, redu
       <TextInput accessibilityLabel="Search restaurants" value={query} onChangeText={setQuery}
         placeholder="Search restaurants" placeholderTextColor={muted} style={s.input} maxLength={120}
         onFocus={()=>{focusHeight.current=latestWindowHeight.current;setFocused(true);}}
-        onBlur={()=>{keyboardHeight.current=0;setFocused(false);setKeyboardInset(0);}}
+        onBlur={()=>{setFocused(false);keyboardHeight.current=0;setKeyboardInset(0);if(Platform.OS==='ios'){lift.stopAnimation();if(reduced)lift.setValue(0);else Animated.timing(lift,{toValue:0,duration:keyboardDuration.current,easing:Easing.out(Easing.cubic),useNativeDriver:true}).start();}}}
         autoCorrect={false} returnKeyType="search" clearButtonMode="never" />
       {!!query && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={s.clear}>
         <View pointerEvents="none" style={s.clearCircle}><X size={18} color={maroon} aria-hidden /></View>
@@ -216,7 +210,8 @@ const s = StyleSheet.create({
   wordmark: { marginRight: 'auto' },
   pressTarget: { flexShrink: 0 },
   control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
-  pickupTarget: { height: controlSize, flexShrink: 0, position: 'relative' },
+  pickupTarget: { height: controlSize, flexShrink: 0, position: 'relative', overflow: 'hidden' },
+  pickupEndCap: { position: 'absolute', right: 0, width: controlSize, height: controlSize, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF' },
   pickupPill: { position: 'absolute', right: 0, top: 0, height: controlSize },
   pickupSurface: { flex: 1, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF', overflow: 'hidden' },
   pickupPressed: { backgroundColor: '#F4E8E2' },

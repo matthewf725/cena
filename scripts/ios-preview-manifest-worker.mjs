@@ -135,7 +135,12 @@ async function geocode(request) {
   } finally { clearTimeout(timeout); }
 }
 
-export function createManifestWorker(previews) {
+const traceEvents = new Set(['boot','meal-tap','recent-tap','detail-requested','detail-rendered','detail-layout','detail-frame','detail-close','detail-add','detail-error']);
+
+export function createManifestWorker(previews, diagnostics = {}) {
+  const tracePath = typeof diagnostics.key === 'string' && /^[a-f0-9]{32}$/.test(diagnostics.key)
+    ? `/customer/ios-preview/trace/${diagnostics.key}` : null;
+  const traceActive = () => Boolean(tracePath && Date.now() < diagnostics.expiresAt);
   return {
     async fetch(request) {
       const requestUrl = new URL(request.url);
@@ -143,9 +148,26 @@ export function createManifestWorker(previews) {
         return new Response(null, { status: 204, headers: responseHeaders() });
       }
       if (requestUrl.pathname === '/v1/geocode') return geocode(request);
+      if (requestUrl.pathname === '/v1/ios-trace' && request.method === 'POST') {
+        if (!traceActive()) return jsonError(404, 'Diagnostics are unavailable.');
+        try {
+          const { key, session, sequence, event } = JSON.parse(await readBounded(request.body, 300));
+          if (key !== diagnostics.key || typeof session !== 'string' || !/^[a-z0-9]{8,24}$/.test(session)
+            || !Number.isInteger(sequence) || sequence < 1 || sequence > 1000 || !traceEvents.has(event)) {
+            return jsonError(400, 'Invalid diagnostic marker.');
+          }
+          console.log('Cena iPhone trace', JSON.stringify({ session, sequence, event }));
+          return new Response(null, { status: 204, headers: responseHeaders() });
+        } catch { return jsonError(400, 'Invalid diagnostic marker.'); }
+      }
       if (request.method !== 'GET') return jsonError(405, 'Method not allowed.');
 
-      const config = MANIFESTS.get(requestUrl.pathname);
+      if (traceActive() && requestUrl.pathname === tracePath) {
+        const deepLink = `exps://cena-calpoly-ios.trustworthybasket2.chatgpt.site${tracePath}/manifest.json`;
+        return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cena iPhone diagnostics</title><body style="margin:32px;background:#FAF6F3;color:#46110E;font:17px system-ui"><h1>Cena iPhone diagnostics</h1><p>This link sends screen lifecycle and tap markers for the item issue.</p><a style="display:inline-block;padding:16px;color:#fff;background:#5D100A;border-radius:12px" href="${deepLink}">Open in Expo Go</a></body></html>`, { headers: responseHeaders('text/html; charset=utf-8') });
+      }
+      const isTrace = traceActive() && requestUrl.pathname === `${tracePath}/manifest.json`;
+      const config = isTrace ? customerPreview : MANIFESTS.get(requestUrl.pathname);
       if (!config) return jsonError(404, 'Unknown iOS preview manifest.');
 
       const platform = suppliedValue(request, requestUrl, 'Expo-Platform', 'platform');
@@ -166,7 +188,13 @@ export function createManifestWorker(previews) {
         return jsonError(502, 'The preview manifest did not match the requested Expo SDK.');
       }
 
-      return new Response(JSON.stringify(manifest), {
+      const output = isTrace ? {
+        ...manifest,
+        id: diagnostics.updateIds?.[sdkVersion] ?? manifest.id,
+        extra: { ...manifest.extra, scopeKey: 'cena-customer-diagnostics', expoClient: { ...manifest.extra.expoClient,
+          extra: { ...manifest.extra.expoClient.extra, cenaItemTrace: diagnostics.key } } },
+      } : manifest;
+      return new Response(JSON.stringify(output), {
         status: 200,
         headers: responseHeaders('application/expo+json', protocol === '0' ? '0' : '1'),
       });

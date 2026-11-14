@@ -34,8 +34,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsError, setResultsError] = useState(false);
   const [nextResultsOffset, setNextResultsOffset] = useState<number | null>(null);
-  const [promoIndex, setPromoIndex] = useState(0);
-  const [promoPaused, setPromoPaused] = useState(false);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
   const generation = useRef(0);
@@ -45,9 +43,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   const resultsGeneration = useRef(0);
   const resultsInFlight = useRef(false);
   const resultsOffset = useRef<number | null>(null);
-  const promoScroll = useRef<ScrollView>(null);
-  const promoIndexRef = useRef(0);
-  const promoPauseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPromoAdvance = useRef(0);
   const restaurantRecentKey = recentIds.join(',');
   const resultsMode = Boolean(filter || selectedFilters.maxPriceCents || selectedFilters.offersOnly || selectedFilters.sameDayOnly || selectedFilters.cuisine);
   const nearbyPromoItems = page?.nearby ?? [];
@@ -55,35 +51,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   const promoItems = lunaRedIndex > 0
     ? [nearbyPromoItems[lunaRedIndex], ...nearbyPromoItems.slice(0, lunaRedIndex), ...nearbyPromoItems.slice(lunaRedIndex + 1)]
     : nearbyPromoItems;
-  const promoItemsKey = promoItems.map(kitchen => kitchen.id).join(',');
-  const promoCardWidth = Math.max(1, width - side * 2);
-  const promoStride = promoCardWidth + 10;
-
-  useEffect(() => {
-    promoIndexRef.current = 0;
-    setPromoIndex(0);
-    promoScroll.current?.scrollTo({ x: 0, animated: false });
-  }, [promoItemsKey]);
-
-  useEffect(() => {
-    promoScroll.current?.scrollTo({ x: promoIndexRef.current * promoStride, animated: false });
-  }, [promoStride]);
-
-  useEffect(() => {
-    if (reduced || suspended || resultsMode || promoPaused || promoItems.length < 2) return;
-    const timer = setTimeout(() => {
-      const next = (promoIndexRef.current + 1) % promoItems.length;
-      promoIndexRef.current = next;
-      setPromoIndex(next);
-      promoScroll.current?.scrollTo({ x: next * promoStride, animated: true });
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [promoIndex, promoItems.length, promoItemsKey, promoPaused, promoStride, reduced, resultsMode, suspended]);
-
-  useEffect(() => () => {
-    if (promoPauseTimer.current) clearTimeout(promoPauseTimer.current);
-  }, []);
-
   useEffect(() => {
     const next = normalizeQuery(query);
     if (next === filter) return;
@@ -198,18 +165,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   };
   const chooseCuisine = (cuisine: string) => updateFilters(previous => ({ ...previous, cuisine: previous.cuisine === cuisine ? null : cuisine }));
   const choosePrice = (price: number) => updateFilters(previous => ({ ...previous, maxPriceCents: previous.maxPriceCents === price ? null : price }));
-  const pausePromo = () => {
-    setPromoPaused(true);
-    if (promoPauseTimer.current) clearTimeout(promoPauseTimer.current);
-    promoPauseTimer.current = setTimeout(() => setPromoPaused(false), 8000);
-  };
-  const navigatePromo = (index: number) => {
-    const next = Math.max(0, Math.min(index, promoItems.length - 1));
-    promoIndexRef.current = next;
-    setPromoIndex(next);
-    promoScroll.current?.scrollTo({ x: next * promoStride, animated: !reduced });
-    pausePromo();
-  };
   const clearFilters = () => {
     list.current?.scrollToOffset({ offset: 0, animated: !reduced });
     setSelectedFilters({ maxPriceCents: null, offersOnly: false, sameDayOnly: false, cuisine: null });
@@ -270,36 +225,12 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
       {!resultsLoading && !resultsError && nextResultsOffset !== null && <Pressable accessibilityRole="button" style={styles.moreButton} onPress={loadMore}><Text style={styles.moreText}>Show more restaurants</Text><ArrowRight size={15} color={maroon} aria-hidden/></Pressable>}
     </View>
   );
-  const promoCarousel = !resultsMode && promoItems.length > 0 ? <View style={styles.promoSection}>
-    <ScrollView ref={promoScroll} horizontal snapToInterval={promoStride} decelerationRate="fast" disableIntervalMomentum
-      showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.promoTrack}
-      onScrollBeginDrag={pausePromo}
-      onMomentumScrollEnd={event => {
-        const next = Math.max(0, Math.min(promoItems.length - 1, Math.round(event.nativeEvent.contentOffset.x / promoStride)));
-        promoIndexRef.current = next;
-        setPromoIndex(next);
-      }}>
-      {promoItems.map((restaurant, index) => <Pressable key={restaurant.id} accessibilityRole="button"
-        accessibilityLabel={`Featured restaurant: view ${restaurant.name} menu`} onPressIn={pausePromo}
-        onPress={() => open(restaurant)} style={[styles.featuredPromo, { width: promoCardWidth, borderRadius: radius }] }>
-        <View style={styles.featuredCopy}>
-          <Text style={styles.featuredEyebrow}>{index === 0 ? 'FEATURED NEAR YOU' : 'MORE NEARBY'}</Text>
-          <Text numberOfLines={2} style={styles.featuredName}>{restaurant.name}</Text>
-          <View style={styles.featuredLink}><Text numberOfLines={1} style={styles.featuredLinkText}>{restaurant.cuisine} · View menu</Text><ArrowRight size={14} color="#FAF6F3" aria-hidden /></View>
-        </View>
-        <Image source={restaurantPhoto(restaurant)} resizeMode="contain" aria-hidden style={styles.featuredImage} />
-      </Pressable>)}
-    </ScrollView>
-    {promoItems.length > 1 && <View style={styles.promoDots} accessibilityLabel="Featured restaurant carousel">
-      {promoItems.map((restaurant, index) => <Pressable key={restaurant.id} accessibilityRole="button" accessibilityLabel={`Show featured restaurant ${index + 1}`}
-        accessibilityState={{ selected: promoIndex === index }} onPress={() => navigatePromo(index)} style={styles.promoDotTarget}>
-        <View style={[styles.promoDot, promoIndex === index && styles.promoDotActive]} />
-      </Pressable>)}
-    </View>}
-  </View> : null;
   const content = (
     <>
-      {promoCarousel}
+      {!resultsMode && promoItems.length > 0 && <>
+        <FeaturedCarousel items={promoItems} width={Math.max(1,width-side*2)} radius={radius} reduced={reduced} suspended={suspended} open={open} offset={0} lastAdvance={lastPromoAdvance}/>
+        <FeaturedCarousel items={promoItems.length > 1 ? [...promoItems.slice(1),promoItems[0]] : promoItems} width={Math.max(1,width-side*2)} radius={radius} reduced={reduced} suspended={suspended} open={open} offset={1} lastAdvance={lastPromoAdvance}/>
+      </>}
       {filterControls}
       {resultsMode ? filteredContent : page && (
         <>
@@ -340,6 +271,65 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
       contentContainerStyle={{ paddingHorizontal: side, paddingTop: topSpace, paddingBottom: bottomSpace }}
     />
   );
+}
+
+function FeaturedCarousel({items,width,radius,reduced,suspended,open,offset,lastAdvance}:{items:Kitchen[];width:number;radius:number;reduced:boolean;suspended:boolean;open:(kitchen:Kitchen)=>void;offset:number;lastAdvance:{current:number}}) {
+  const scroll=useRef<ScrollView>(null);
+  const indexRef=useRef(0);
+  const automatic=useRef(false);
+  const [index,setIndex]=useState(0);
+  const [paused,setPaused]=useState(false);
+  const pauseTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const key=items.map(item=>item.id).join(',');
+  const stride=width+10;
+  useEffect(()=>{indexRef.current=0;setIndex(0);scroll.current?.scrollTo({x:0,animated:false});},[key]);
+  useEffect(()=>{scroll.current?.scrollTo({x:indexRef.current*stride,animated:false});},[stride]);
+  useEffect(()=>()=>{if(pauseTimer.current)clearTimeout(pauseTimer.current);},[]);
+  function pause() {
+    automatic.current=false;setPaused(true);
+    if(pauseTimer.current)clearTimeout(pauseTimer.current);
+    pauseTimer.current=setTimeout(()=>setPaused(false),8000);
+  }
+  function navigate(next:number,animated:boolean) {
+    indexRef.current=next;setIndex(next);automatic.current=animated;
+    scroll.current?.scrollTo({x:next*stride,animated});
+  }
+  useEffect(()=>{
+    if(reduced||suspended||paused||items.length<2)return;
+    let timer:ReturnType<typeof setTimeout>;
+    const advance=()=>{
+      const elapsed=Date.now()-lastAdvance.current;
+      if(elapsed<1200){timer=setTimeout(advance,1200-elapsed);return;}
+      lastAdvance.current=Date.now();
+      navigate((indexRef.current+1)%items.length,true);
+      timer=setTimeout(advance,6500);
+    };
+    timer=setTimeout(advance,offset?3250:6500);
+    return()=>clearTimeout(timer);
+  },[reduced,suspended,paused,items.length,key,stride,offset,lastAdvance]);
+  return <View style={styles.promoSection}>
+    <ScrollView ref={scroll} horizontal snapToInterval={stride} decelerationRate="fast" disableIntervalMomentum
+      showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.promoTrack}
+      scrollEventThrottle={16} onScrollBeginDrag={pause} onScroll={event=>{
+        if(automatic.current)return;
+        const next=Math.max(0,Math.min(items.length-1,Math.round(event.nativeEvent.contentOffset.x/stride)));
+        if(next!==indexRef.current){indexRef.current=next;setIndex(next);}
+      }} onMomentumScrollEnd={()=>{automatic.current=false;}}>
+      {items.map((restaurant,i)=><Pressable key={restaurant.id} accessibilityRole="button" accessibilityLabel={`Featured restaurant: view ${restaurant.name} menu`}
+        onPressIn={pause} onPress={()=>open(restaurant)} style={[styles.featuredPromo,{width,borderRadius:radius}]}>
+        <View style={styles.featuredCopy}><Text style={styles.featuredEyebrow}>{i===0?'FEATURED NEAR YOU':'MORE NEARBY'}</Text>
+          <Text numberOfLines={2} style={styles.featuredName}>{restaurant.name}</Text>
+          <View style={styles.featuredLink}><Text numberOfLines={1} style={styles.featuredLinkText}>{restaurant.cuisine} · View menu</Text><ArrowRight size={14} color="#FAF6F3" aria-hidden/></View>
+        </View><Image source={restaurantPhoto(restaurant)} resizeMode="contain" aria-hidden style={styles.featuredImage}/>
+      </Pressable>)}
+    </ScrollView>
+    {items.length>1&&<View style={styles.promoDots} accessibilityLabel={`Featured restaurant carousel ${offset+1}`}>
+      {items.map((restaurant,i)=><Pressable key={restaurant.id} accessibilityRole="button" accessibilityLabel={`Show featured restaurant ${i+1}`}
+        accessibilityState={{selected:index===i}} onPress={()=>{pause();navigate(i,!reduced);}} style={styles.promoDotTarget}>
+        <View style={[styles.promoDot,index===i&&styles.promoDotActive]}/>
+      </Pressable>)}
+    </View>}
+  </View>;
 }
 
 const maroon = '#5D100A';

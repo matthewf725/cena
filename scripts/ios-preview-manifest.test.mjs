@@ -46,3 +46,19 @@ test('supports Expo Go protocol zero but refuses incompatible runtime and platfo
   assert.equal((await open({ 'Expo-Runtime-Version': 'exposdk:55.0.0' })).status, 406);
   assert.equal((await open({ 'Exponent-Platform': 'android' })).status, 400);
 });
+
+test('item diagnostics use a separate update scope and require the temporary key', async () => {
+  const key = 'a'.repeat(32);
+  const diagnostics = createManifestWorker({ 'cena-customer': variants }, { key, expiresAt: Date.now() + 60_000 });
+  const request = path => new Request(`https://demo.example${path}`);
+  const standard = await diagnostics.fetch(request('/customer/ios-preview/menu/manifest.json'));
+  assert.equal((await standard.json()).extra.expoClient.extra, undefined);
+  const trace = await diagnostics.fetch(request(`/customer/ios-preview/trace/${key}/manifest.json`));
+  const manifest = await trace.json();
+  assert.equal(manifest.extra.scopeKey, 'cena-customer-diagnostics');
+  assert.equal(manifest.extra.expoClient.extra.cenaItemTrace, key);
+  const invalid = await diagnostics.fetch(new Request('https://demo.example/v1/ios-trace', {
+    method: 'POST', body: JSON.stringify({ key: 'b'.repeat(32), session: 'session567', sequence: 1, event: 'meal-tap' }),
+  }));
+  assert.equal(invalid.status, 400);
+});

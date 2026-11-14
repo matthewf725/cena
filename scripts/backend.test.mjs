@@ -524,3 +524,31 @@ test('anonymous Cal Poly preview returns only the pinned demo fixture projection
     assert.equal(serialized.includes(secret), false, `preview omits ${secret}`);
   }
 });
+
+test('anonymous demo profile saves only by opaque token and never touches account profiles', async () => {
+  const saved = await withRole('anon', null, (tx) => tx.query(`
+    select save_cal_poly_preview_profile(null,'Jeffrey Preview','+1 (805) 555-0100',array['Oven','Stovetop']) as data
+  `));
+  const first = saved.rows[0].data;
+  assert.match(first.token,/^[0-9a-f]{64}$/);
+  assert.deepEqual(first.profile,{display_name:'Jeffrey Preview',phone:'+1 (805) 555-0100',equipment:['Oven','Stovetop']});
+  await assert.rejects(withRole('anon',null,(tx)=>tx.query('select * from cal_poly_preview_profiles')),/permission denied/);
+  const {rows:[stored]}=await database.query('select token_hash from cal_poly_preview_profiles');
+  assert.notEqual(stored.token_hash.toString('hex'),first.token,'database stores only the token digest');
+
+  const read=await withRole('anon',null,(tx)=>tx.query('select get_cal_poly_preview_profile($1) as data',[first.token]));
+  assert.deepEqual(read.rows[0].data, {profile:first.profile});
+  const updated=await withRole('anon',null,(tx)=>tx.query(`
+    select save_cal_poly_preview_profile($1,'Jeffrey Updated','',array['Microwave']) as data
+  `,[first.token]));
+  assert.equal(updated.rows[0].data.token,first.token,'updates keep the per-install token');
+  assert.deepEqual(updated.rows[0].data.profile,{display_name:'Jeffrey Updated',phone:'',equipment:['Microwave']});
+  await assert.rejects(withRole('anon',null,(tx)=>tx.query(
+    'select get_cal_poly_preview_profile($1) as data',['0'.repeat(64)]
+  )),/preview profile not found/);
+  await assert.rejects(withRole('anon',null,(tx)=>tx.query(`
+    select save_cal_poly_preview_profile(null,'Bad','',array['Custom free text'])
+  `)),/invalid kitchen equipment/);
+  const {rows:[accountProfile]}=await database.query('select phone,equipment from profiles where id=$1',[customer]);
+  assert.deepEqual(accountProfile,{phone:null,equipment:[]},'demo profile editing does not mutate Auth account profile');
+});
