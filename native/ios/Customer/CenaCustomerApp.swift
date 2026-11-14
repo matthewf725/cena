@@ -44,6 +44,10 @@ struct CustomerHome: View {
     @State private var tab = 0
     @State private var email = ""
     @State private var code = ""
+    @State private var codeSentAt: Date?
+    @State private var codeSentForEmail: String?
+    @State private var codeSending = false
+    @State private var codeSendRequestID = UUID()
     @State private var phone = ""
     @State private var pickupAreaLabel = "San Francisco pickup area"
     @State private var pickupLatitude = 37.77
@@ -92,6 +96,8 @@ struct CustomerHome: View {
     private var cartCount: Int { cart.values.reduce(0, +) }
     private var cartFingerprint: String { "\(str(checkoutRestaurant?["id"]))|\(str(checkoutSlot?["id"]))|" + cart.keys.sorted().map { "\($0):\(cart[$0, default: 0])" }.joined(separator: ",") }
     private var currentQuoteFingerprint: String { "\(cartFingerprint)|\(promoCodeInput.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())" }
+    private var normalizedCustomerEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    private var customerEmailBinding: Binding<String> { Binding(get: { email }, set: { setCustomerEmail($0) }) }
     private var quoteTaskKey: String { "\(cartFingerprint)|signed:\(api.signedIn)" }
     private var checkoutRestaurant: [String: Any]? { cartRestaurantInfo ?? restaurant }
     private var checkoutSlot: [String: Any]? { cartPickupSlot ?? slot }
@@ -411,8 +417,9 @@ struct CustomerHome: View {
                         TextField("Vehicle color", text: Binding(get: { vehicleColor }, set: { vehicleColor = $0; idempotencyKey = UUID().uuidString }))
                     }
                 }
-                TextField("Email for your sign-in code", text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress)
+                TextField("Email for your sign-in code", text: customerEmailBinding).textInputAutocapitalization(.never).keyboardType(.emailAddress)
                 if codeSent { TextField("One-time code", text: $code).keyboardType(.numberPad) }
+                if codeSent { resendCodeControl }
                 TextField("Phone (optional)", text: $phone).keyboardType(.phonePad)
             }.listRowBackground(CenaStyle.paper)
             Section("Promo code") {
@@ -438,7 +445,7 @@ struct CustomerHome: View {
             }.listRowBackground(CenaStyle.paper)
             Section {
                 Button(busy ? "Please wait…" : (api.signedIn ? (quoteFingerprint == currentQuoteFingerprint ? "Pay $\(money(int(checkoutQuote?["amount_cents"]))) in Cena" : "Review total") : (codeSent ? "Verify code" : "Email me a sign-in code"))) { Task { await place() } }
-                    .disabled(busy || (!api.signedIn && (email.isEmpty || (codeSent && code.isEmpty))) || !api.paymentGatewayConfigured)
+                    .disabled(busy || codeSending || (!api.signedIn && (email.isEmpty || (codeSent && code.isEmpty))) || !api.paymentGatewayConfigured)
                 if !api.paymentGatewayConfigured { Text("Cena’s payment service is not configured. Checkout is unavailable.").font(.caption).foregroundStyle(.orange) }
             }.listRowBackground(CenaStyle.paper)
         }.scrollContentBackground(.hidden).background(CenaStyle.cream)
@@ -587,9 +594,10 @@ struct CustomerHome: View {
             }
             if !api.signedIn {
                 Section("Email sign in") {
-                    TextField("Email address", text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress)
+                    TextField("Email address", text: customerEmailBinding).textInputAutocapitalization(.never).keyboardType(.emailAddress)
                     if codeSent { TextField("One-time code", text: $code).keyboardType(.numberPad) }
-                    Button(codeSent ? "Verify code" : "Send sign-in code") { Task { await signInFromProfile() } }.disabled(busy || email.isEmpty || (codeSent && code.isEmpty))
+                    if codeSent { resendCodeControl }
+                    Button(codeSent ? "Verify code" : "Send sign-in code") { Task { await signInFromProfile() } }.disabled(busy || codeSending || email.isEmpty || (codeSent && code.isEmpty))
                 }
             } else {
                 Section("Account") { LabeledContent("Email", value: profileUserEmail ?? "Signed-in account") }
@@ -626,7 +634,7 @@ struct CustomerHome: View {
                 if pendingCheckoutID != nil { Section("Pending payment") { Button("Return to payment") { tab = 2 }.foregroundStyle(CenaStyle.maroon) } }
                 Section { Button("Sign out", role: .destructive) {
                     persistBag(); api.signOut(); cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag(); restoreIdempotencyKey()
-                    recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; codeSent = false
+                    recentRestaurants = []; recentRestaurantIDs = []; exploreMeals = []; history = []; recentHistoryUnavailable = false; clearEmailCodeState()
                     profileName = ""; profilePhone = ""; profileEquipment = []; profileNotice = nil; profileEditRevision += 1
                     analyticsConsentRequestID = UUID(); analyticsConsented = false; analyticsConsentLoading = false; analyticsConsentSaving = false; analyticsConsentNotice = nil
                 } }
@@ -641,16 +649,21 @@ struct CustomerHome: View {
     private func signInFromProfile() async {
         busy = true; defer { busy = false }
         do {
-            if !codeSent { try await api.sendCode(email: email); codeSent = true; message = "Check your email for the one-time sign-in code."; return }
-            try await api.verifyCode(email: email, code: code)
+            if !codeSent || codeSentForEmail != normalizedCustomerEmail { await sendCustomerSignInCode(); return }
+            try await api.verifyCode(email: normalizedCustomerEmail, code: code)
             // The signed-in account owns its own saved bag. Preserve the guest bag under
             // its separate key and restore this account's snapshot after authentication.
             cart = [:]; cartItemDetails = [:]; cartQuantityLimit = [:]; cartRestaurantID = nil; cartRestaurantInfo = nil; cartPickupSlot = nil; restoreBag()
             restoreIdempotencyKey()
             restorePendingCheckoutForCurrentIdentity(allowLegacyClaim: false)
-            codeSent = false; code = ""; message = "You’re signed in."; await load(); await loadHistory(); await loadProfile()
+            clearEmailCodeState(); message = "You’re signed in."; await load(); await loadHistory(); await loadProfile()
             if pendingCheckoutID != nil { tab = 2; await refreshPendingCheckout() }
-        } catch { message = error.localizedDescription }
+        } catch {
+            if codeSent && !api.signedIn {
+                code = ""
+                message = "That code wasn’t accepted. Check it or send a new code when available. \(error.localizedDescription)"
+            } else { message = error.localizedDescription }
+        }
     }
 
     private var authClaims: [String: Any] {
@@ -1107,8 +1120,9 @@ struct CustomerHome: View {
         do {
             var justSignedIn = false
             if !api.signedIn {
-                if !codeSent { try await api.sendCode(email: email); codeSent = true; message = "Check your email for the one-time code."; return }
-                try await api.verifyCode(email: email, code: code)
+                if !codeSent || codeSentForEmail != normalizedCustomerEmail { await sendCustomerSignInCode(); return }
+                try await api.verifyCode(email: normalizedCustomerEmail, code: code)
+                clearEmailCodeState()
                 idempotencyKey = UUID().uuidString
                 justSignedIn = true
             }
@@ -1155,7 +1169,12 @@ struct CustomerHome: View {
             idempotencyKey = UUID().uuidString
             UserDefaults.standard.set(idempotencyKey, forKey: idempotencyStorageKey)
             message = checkoutCorrection(for: code, detail: detail)
-        } catch { message = error.localizedDescription }
+        } catch {
+            if codeSent && !api.signedIn {
+                code = ""
+                message = "That code wasn’t accepted. Check it or send a new code when available. \(error.localizedDescription)"
+            } else { message = error.localizedDescription }
+        }
     }
 
     private func checkoutCorrection(for code: String, detail: String) -> String {
@@ -1204,6 +1223,68 @@ struct CustomerHome: View {
             Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true)
         } else {
             ZStack { CenaStyle.cream; Image(systemName: "fork.knife").font(.largeTitle).foregroundStyle(CenaStyle.maroon.opacity(0.55)) }.accessibilityLabel("Food photo unavailable")
+        }
+    }
+
+    @ViewBuilder private var resendCodeControl: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let remaining = resendCodeWait(at: timeline.date)
+            Button(remaining == 0 ? "Send a new code" : "Send a new code in \(remaining)s") {
+                Task { await sendCustomerSignInCode() }
+            }
+            .disabled(busy || codeSending || normalizedCustomerEmail.isEmpty || remaining > 0)
+            .accessibilityIdentifier("customer.auth.resend-code")
+            .accessibilityHint("A new sign-in code can be sent 60 seconds after the previous code.")
+        }
+    }
+
+    private func resendCodeWait(at date: Date) -> Int {
+        guard codeSent, codeSentForEmail == normalizedCustomerEmail, let codeSentAt else { return 0 }
+        return max(0, Int(ceil(60 - date.timeIntervalSince(codeSentAt))))
+    }
+
+    private func setCustomerEmail(_ value: String) {
+        let previous = normalizedCustomerEmail
+        email = value
+        if normalizedCustomerEmail != previous { clearEmailCodeState() }
+    }
+
+    private func clearEmailCodeState() {
+        codeSendRequestID = UUID()
+        codeSent = false
+        code = ""
+        codeSentAt = nil
+        codeSentForEmail = nil
+        codeSending = false
+    }
+
+    private func sendCustomerSignInCode() async {
+        guard !codeSending else { return }
+        let requestedEmail = normalizedCustomerEmail
+        guard !requestedEmail.isEmpty, requestedEmail.contains("@") else {
+            message = "Enter a valid email address before requesting a sign-in code."
+            return
+        }
+        let remaining = resendCodeWait(at: .now)
+        guard remaining == 0 else {
+            message = "You can request another sign-in code in \(remaining) seconds."
+            return
+        }
+        let requestID = UUID()
+        codeSendRequestID = requestID
+        codeSending = true
+        defer { if codeSendRequestID == requestID { codeSending = false } }
+        do {
+            try await api.sendCode(email: requestedEmail)
+            guard codeSendRequestID == requestID, normalizedCustomerEmail == requestedEmail else { return }
+            codeSent = true
+            code = ""
+            codeSentAt = .now
+            codeSentForEmail = requestedEmail
+            message = "Check your email for the one-time sign-in code."
+        } catch {
+            guard codeSendRequestID == requestID, normalizedCustomerEmail == requestedEmail else { return }
+            message = "Couldn’t send a sign-in code: \(error.localizedDescription)"
         }
     }
 }
