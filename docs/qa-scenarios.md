@@ -48,7 +48,7 @@ flowchart TD
 | C16 | Inventory or cutoff changes during payment review. Quote/reservation rejects stale availability; the shopper can choose another time. | Partial · backend rejection tested. Exact recovery UI open. |
 | C17 | Guest checkout OTP. Valid code resumes checkout with the same bag and pickup choice. | Open · browser E2E against local Mailpit; native payment run pending. |
 | C18 | Wrong, expired, reused, or rate-limited OTP. The user can correct their inputs without losing the order. | Open · verify actual auth error, resend behavior, and accessibility. |
-| C19 | Returning session. Stored authentication and profile resume across restart and expiry. | Partial · iOS offline Profile form checks. Keychain refresh, Android expiry, and invalidated sessions open. |
+| C19 | Returning session. Stored authentication and profile resume across restart and expiry. | Partial · Android emulator verified email OTP, saving and reloading name and phone, and returning an unset phone to an empty field. Earlier iOS offline profile form checks passed. Native refresh and invalidated sessions remain open. |
 | C20 | Edit display name, phone, and equipment. Saving persists after reload and ownership is enforced. | Open · browser E2E and cross-account exercise. |
 | C21 | Sign out, switch accounts, then return. Another user cannot view or pay the previous account’s pending checkout. | Partial · Go auth coverage and user-scoped RLS. Device account switching open. |
 | C22 | Terms and privacy controls. Checkout opens policies and analytics follows the user’s consent choice. | Partial · SQL opt-in enforcement. Policy links, consent persistence after account switch, and native UX open. |
@@ -119,8 +119,8 @@ flowchart TD
 | --- | --- | --- |
 | N01 | SwiftUI customer launch, Home, empty Bag, and Profile. | Partial · prior simulator checks passed. Latest source needs local macOS rebuild. |
 | N02 | SwiftUI restaurant launch and staff entry; authenticated settings, promotions, refund, and inventory. | Partial · prior simulator sign-in passed. Latest build and authenticated operations are open. |
-| N03 | Android customer debug and release builds, launch, Home and bag. | Partial · both variants built locally. Latest API 36 cold launch displayed Discover and navigation. An earlier run opened the empty bag. |
-| N04 | Android restaurant debug and release builds, launch, login, return link. | Partial · both variants built locally. Latest API 36 cold launch displayed the sign-in form. An earlier run checked the offline return link. Authenticated replay open. |
+| N03 | Android customer debug and release builds, launch, Home and bag. | Partial · both variants built locally. API 36 emulator loaded the local catalog and mileage and verified authenticated profile persistence. An earlier run opened the empty bag. Full native purchase remains open. |
+| N04 | Android restaurant debug and release builds, launch, login, return link. | Partial · both variants built locally. API 36 emulator signed into a disposable merchant account and verified curbside toggles persisted in Supabase. An earlier run checked the offline return link. Native payment and order pickup remain open. |
 | N05 | Browser previews at compact phone, iPhone, tablet and desktop. No unintended horizontal overflow. | Pass · Chromium and WebKit at widths 320, 390, and 834 on entry screens. Workflow screens remain open. |
 | N06 | Motion during carousel, modal, tab changes, and payment confirmation. Reduced Motion disables nonessential transitions. | Partial · preview responsive and reduced-motion checks. Frame timing and native settings exercise open. |
 | N07 | Screen reader labels and focus order through checkout and merchant forms. Browser supports keyboard-only interaction. | Partial · Chromium verified selected pickup radio state after the ARIA fix. VoiceOver and TalkBack full journeys are open. |
