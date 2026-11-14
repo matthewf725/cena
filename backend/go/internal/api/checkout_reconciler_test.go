@@ -105,3 +105,57 @@ func TestReconcileCheckoutClaimOnlyReleasesProviderConfirmedExpiry(t *testing.T)
 
 func ptrString(v string) *string { return &v }
 func ptrInt(v int) *int          { return &v }
+
+func TestCheckoutReconcilerStillProcessesRecordedSessionsWhenUnrecordedReaperFails(t *testing.T) {
+	const orderID = "550e8400-e29b-41d4-a716-446655440000"
+	const claimID = "750e8400-e29b-41d4-a716-446655440000"
+	const accountID = "acct_test123"
+	const sessionID = "cs_test123"
+	expires := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	reservation := checkoutReservation{OrderID: orderID, AmountCents: 1000, SubtotalCents: 1000, Currency: "usd",
+		ApplicationFeeCents: 175, StripeAccountID: accountID, SessionID: sessionID, ExpiresAt: expires, Status: "pending"}
+	claimData, _ := json.Marshal([]checkoutReconcileClaim{{ClaimID: claimID, checkoutReservation: reservation}})
+	var claimed, providerRead, released, finished bool
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "supabase.test" {
+			switch r.URL.Path {
+			case "/rest/v1/rpc/reap_expired_unrecorded_checkout_reservations":
+				return jsonResponse(http.StatusInternalServerError, `{}`), nil
+			case "/rest/v1/rpc/claim_due_checkout_reconciliations":
+				claimed = true
+				return jsonResponse(http.StatusOK, string(claimData)), nil
+			case "/rest/v1/rpc/release_expired_checkout":
+				released = true
+				return jsonResponse(http.StatusOK, `"expired"`), nil
+			case "/rest/v1/rpc/finish_checkout_reconciliation":
+				finished = true
+				return jsonResponse(http.StatusOK, `true`), nil
+			default:
+				t.Errorf("unexpected Supabase request %s", r.URL.Path)
+				return jsonResponse(http.StatusNotFound, `{}`), nil
+			}
+		}
+		if r.URL.Host != "api.stripe.com" {
+			t.Errorf("unexpected host %s", r.URL.Host)
+			return jsonResponse(http.StatusInternalServerError, `{}`), nil
+		}
+		if r.Method != http.MethodGet || r.Header.Get("Stripe-Account") != accountID {
+			t.Errorf("recorded session must only be retrieved in its account")
+		}
+		providerRead = true
+		session := checkoutSession{ID: sessionID, Status: "expired", PaymentStatus: "unpaid", AmountTotal: 1000,
+			Currency: "usd", ClientReferenceID: orderID, ExpiresAt: expires.Unix(),
+			Metadata:           map[string]string{"order_id": orderID, "cena_order_id": orderID, "application_fee_cents": "175"},
+			PaymentMethodTypes: []string{"card"}}
+		out, _ := json.Marshal(session)
+		return jsonResponse(http.StatusOK, string(out)), nil
+	})}
+	s := NewServer(Config{SupabaseURL: "https://supabase.test", SupabaseAnonKey: "anon", SupabaseServiceRoleKey: "service-role",
+		StripeSecretKey: "sk_test_fake", Client: client, StripeClient: client})
+	if err := s.reconcileDueCheckoutSessions(context.Background()); err == nil {
+		t.Fatal("expected the failed unrecorded reaper RPC to remain visible to the caller")
+	}
+	if !claimed || !providerRead || !released || !finished {
+		t.Fatalf("reaper failure blocked recorded-session work: claimed=%v providerRead=%v released=%v finished=%v", claimed, providerRead, released, finished)
+	}
+}

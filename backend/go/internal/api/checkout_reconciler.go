@@ -34,11 +34,12 @@ func (s *Server) RunCheckoutReconciler(ctx context.Context) {
 }
 
 func (s *Server) reconcileDueCheckoutSessions(ctx context.Context) error {
+	_, _, reaperErr := s.serviceRPC(ctx, "reap_expired_unrecorded_checkout_reservations", map[string]int{"p_limit": 25})
 	data, _, err := s.serviceRPC(ctx, "claim_due_checkout_reconciliations", map[string]int{
 		"p_limit": checkoutReconcileBatchSize, "p_lease_seconds": checkoutReconcileLeaseSeconds,
 	})
 	if err != nil {
-		return err
+		return errors.Join(reaperErr, err)
 	}
 	var claims []checkoutReconcileClaim
 	if err := json.Unmarshal(data, &claims); err != nil {
@@ -52,7 +53,7 @@ func (s *Server) reconcileDueCheckoutSessions(ctx context.Context) error {
 			log.Printf("checkout reconciliation item deferred")
 		}
 	}
-	return nil
+	return reaperErr
 }
 
 func (s *Server) reconcileClaim(ctx context.Context, claim checkoutReconcileClaim) error {

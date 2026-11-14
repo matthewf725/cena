@@ -54,6 +54,8 @@ test('recorded checkout claims are exclusive, stale leases cannot finish, and un
     reserved.result.order_id, reserved.result.stripe_account_id, reserved.result.amount_cents, reserved.result.application_fee_cents, reserved.result.expires_at,
   ]));
   await db.query(`update order_checkout_sessions set expires_at=now()-interval '1 minute',reconcile_after=now()-interval '1 minute' where order_id=$1`, [reserved.result.order_id]);
+  const { rows: [recordedNotReaped] } = await service((tx) => tx.query('select reap_expired_unrecorded_checkout_reservations(25) as reaped'));
+  assert.equal(recordedNotReaped.reaped, 0, 'recorded provider sessions must remain in verified reconciliation');
 
   const claim = async () => service((tx) => tx.query(`select coalesce(jsonb_agg(x),'[]'::jsonb) as claims
     from claim_due_checkout_reconciliations(5,300) as t(x)`));
@@ -100,4 +102,29 @@ test('recorded checkout claims are exclusive, stale leases cannot finish, and un
   assert.deepEqual(terminal, {payment_status:'expired',status:'cancelled'});
   const { rows: [none] } = await claim();
   assert.deepEqual(none.claims, [], 'terminal sessions leave the reconciliation queue');
+});
+
+test('the background reaper expires only overdue unrecorded Checkout reservations', async () => {
+  const { rows: [quoted] } = await service((tx) => tx.query(`select quote_checkout_order($1,$2,$3,$4,null) as result`, [
+    customer, fixture.restaurant, fixture.slot, JSON.stringify([{item_id:fixture.item,quantity:1}]),
+  ]));
+  const { rows: [reserved] } = await service((tx) => tx.query(`select reserve_checkout_order($1,$2,$3,$4,'counter','{}',$5,null,$6) as result`, [
+    customer, fixture.restaurant, fixture.slot, 'reconcile-unrecorded-0001', JSON.stringify([{item_id:fixture.item,quantity:1}]), quoted.result.amount_cents,
+  ]));
+  assert.equal(reserved.result.session_id, null);
+  const reap = () => service((tx) => tx.query('select reap_expired_unrecorded_checkout_reservations(25) as reaped'));
+  const { rows: [notDue] } = await reap();
+  assert.equal(notDue.reaped, 0, 'a live creation reservation is retained');
+  await db.query(`update order_checkout_sessions set expires_at=now()-interval '1 minute' where order_id=$1`, [reserved.result.order_id]);
+  const { rows: [expired] } = await reap();
+  assert.equal(expired.reaped, 1);
+  const { rows: [released] } = await db.query(`
+    select o.payment_status,o.status,s.status as session_status,i.reserved_qty,p.reserved_count
+    from orders o join order_checkout_sessions s on s.order_id=o.id
+    join order_items oi on oi.order_id=o.id join slot_item_inventory i on i.slot_id=o.slot_id and i.item_id=oi.item_id
+    join pickup_slots p on p.id=o.slot_id where o.id=$1
+  `, [reserved.result.order_id]);
+  assert.deepEqual(released, {payment_status:'expired',status:'cancelled',session_status:'expired',reserved_qty:0,reserved_count:0});
+  const { rows: [again] } = await reap();
+  assert.equal(again.reaped, 0, 'terminal reservations are not reaped twice');
 });
