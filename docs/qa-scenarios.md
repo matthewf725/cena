@@ -109,8 +109,8 @@ flowchart TD
 | P11 | Authorized full refund. Stripe result, order status, and inventory reflect verified state. | Partial · local SQL verified owner/staff/outsider access, idempotent settlement, wrong-account webhook lookup, and unit/slot release. Real refund open. |
 | P12 | Refund failure, pending result, or repeated request. Order stays consistent and retries remain idempotent. | Partial · local SQL verified pending reuse, incremented attempt after failure, and rejection of stale attempt or mismatched provider ID. Provider-race and native pending/retry are open. |
 | P13 | Simultaneous purchase, expiration, and stock edit. Postgres enforces lock order and never oversells. | Partial · two concurrent PostgreSQL requests reused one order for the same idempotency key. Two customers racing for one promo use produced one reservation. Concurrent expiry and stock editing remain open. |
-| P14 | Stripe sandbox account live connection, hosted Checkout completion, asynchronous webhook, and refund. | Open · real account, webhook URL, credentials, and dedicated fixtures required. |
-| P15 | Hosted API, database migrations, Auth email delivery, and signed store builds. | Open · local health confirmed, hosted production parity and release build evidence missing. |
+| P14 | Stripe sandbox account live connection, hosted Checkout completion, asynchronous webhook, and refund. | Open · Stripe sign-in reached passkey verification. Real account access, sandbox webhook credentials, and dedicated fixtures remain pending. |
+| P15 | Hosted API, database migrations, Auth email delivery, and signed store builds. | Partial · applied migrations `00004`–`00011` to the hosted Cena database and verified Stripe payment tables and the atomic pickup function. Both existing waitlist entries remained. Hosted Go API, custom SMTP, and signed store builds are open. |
 | P16 | Production settlement, app fee, and operational recovery. | Open · verify in dedicated sandbox before any live setup. |
 
 ## Device and accessibility
@@ -131,6 +131,8 @@ flowchart TD
 | N12 | Installed links return to correct app; missing app fallback is usable. | Partial · website route buttons, Expo return-path mapping, and Android guest return checked. Paid return and iOS physical link are open. |
 
 ## Replay the evidence
+
+The hosted migrations were applied through the Supabase SQL Editor in one transaction. Before a future CLI migration push, compare the hosted schema with the repository and reconcile the migration history so the CLI does not replay those files.
 
 | Check | Run locally |
 | --- | --- |
