@@ -18,12 +18,12 @@ Install Android Studio with Android SDK platform 36 and JDK 17 or newer. Set `AN
 For live service integration, add these properties to `%USERPROFILE%\.gradle\gradle.properties`:
 
 ```properties
-SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_URL=http://10.0.2.2:54323
 SUPABASE_KEY=your-public-anon-key
 CENA_API_URL=http://10.0.2.2:8080
 ```
 
-Use only the public Supabase anon/publishable key. `10.0.2.2` reaches the host machine from the Android emulator; use a reachable HTTPS API origin on a physical device. Debug APKs are written to each module's `build/outputs/apk/debug/` directory.
+For local development, the Supabase CLI API is exposed on port `54323` and the Cena Go API on port `8080`; `10.0.2.2` reaches the host machine from the Android emulator. The checked-in sample URL is for local development only. Use the project's HTTPS Supabase and API origins for production, and never package service-role credentials. Debug builds allow cleartext only to `10.0.2.2`, `127.0.0.1`, and `localhost`; release builds retain Android's default cleartext blocking. For a physical device, use reachable HTTPS service origins. Debug APKs are written to each module's `build/outputs/apk/debug/` directory.
 
 ## Customer app
 
