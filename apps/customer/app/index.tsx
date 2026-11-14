@@ -24,6 +24,7 @@ import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStat
 import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
 import { loadCustomerDisplayName } from '../lib/profile';
 import { calPolyDemo, calPolyPickupArea, loadSampleOrders, type DemoOrder } from '../lib/cal-poly-demo';
+import { restaurantPhoto, restaurantRating, restaurantRatingSource } from '../lib/restaurant-presentation';
 
 const footerTabs = [{ name: 'Home', Icon: House }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
 type Tab = typeof footerTabs[number]['name'] | 'Account';
@@ -106,6 +107,7 @@ export default function Home() {
   const accountReturnTab=useRef<Exclude<Tab,'Account'>>('Home');
   const [locating,setLocating]=useState(false);
   const [menuLoading,setMenuLoading]=useState(false);
+  const [menuLoadFailed,setMenuLoadFailed]=useState(false);
   const [authenticated,setAuthenticated]=useState(false);
   const [authUserId,setAuthUserId]=useState<string|null>(null);
   const [savedName,setSavedName]=useState<{userId:string;name:string}|null>(null);
@@ -169,7 +171,12 @@ export default function Home() {
     }).catch(()=>{});
     return ()=>{active=false;};
   },[authUserId,profileRevision]);
-  useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[]);
+  useEffect(()=>{
+    if(!active||flow==='menu'||flow==='done')return;
+    setNow(Date.now());
+    const timer=setInterval(()=>setNow(Date.now()),1000);
+    return ()=>clearInterval(timer);
+  },[active?.id,flow]);
   useEffect(()=>{
     if(calPolyDemo){
       let current=true;
@@ -396,7 +403,7 @@ export default function Home() {
   ),[backendOrders,demoOrders]);
   const reorderOrders=useMemo(()=>visibleOrders.filter(order=>['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status)),[visibleOrders]);
   const mealQuantities=quantityByMeal(Object.values(cart));
-  const eligibleSlots=active?.pickupSlots?.filter(x=>Date.parse(x.cutoffAt)>now&&Date.parse(x.startsAt)>=now+checkoutLeadMs&&Object.entries(mealQuantities).every(([id,qty])=>(x.remaining[id]||0)>=qty));
+  const eligibleSlots=flow==='menu'||flow==='done'?undefined:active?.pickupSlots?.filter(x=>Date.parse(x.cutoffAt)>now&&Date.parse(x.startsAt)>=now+checkoutLeadMs&&Object.entries(mealQuantities).every(([id,qty])=>(x.remaining[id]||0)>=qty));
   const selectedPickup=eligibleSlots?.find(x=>dayOffset(x.startsAt,active?.timezone)===date&&formatTime(x.startsAt,active?.timezone)===slot);
   const quoteItems=Object.values(cart).map(item=>({item_id:item.meal.backendItemId||item.meal.id,quantity:item.qty,...(item.selections&&Object.keys(item.selections).length?{selections:item.selections}:{})}));
   const currentQuoteKey=active?.backendId&&selectedPickup?quoteKey(active.backendId,selectedPickup.id,quoteItems,promoCode):'';
@@ -509,6 +516,7 @@ export default function Home() {
     setCurb(false);
     setSelected(null);
     setMenuLoading(Boolean(kitchen.backendId));
+    setMenuLoadFailed(false);
     if(supabase&&analyticsConsented&&kitchen.backendId)void trackEvent('restaurant_view',kitchen.backendId,{});
     try {
       const loaded=await loadKitchenMenu(kitchen);
@@ -523,7 +531,7 @@ export default function Home() {
         setSlot('5:30 PM');
       }
     }catch{
-      if(request===menuRequest.current)setNotice({title:'Couldn’t load this menu',message:'Go back and reopen the kitchen to try again.'});
+      if(request===menuRequest.current)setMenuLoadFailed(true);
     }finally{
       if(request===menuRequest.current)setMenuLoading(false);
     }
@@ -531,6 +539,7 @@ export default function Home() {
   const closeKitchen=()=>{
     menuRequest.current++;
     setMenuLoading(false);
+    setMenuLoadFailed(false);
     setActive(null);
     setSelected(null);
   };
@@ -847,7 +856,8 @@ export default function Home() {
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
-          onScroll={updateHomeScroll}
+          onScroll={updateHomeScroll} suspended={Boolean(active)||showLocation}
+          showDemoBanner={calPolyDemo||locationLabel===calPolyPickupArea.label}
       open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo?
         <View style={{paddingTop:topSpace+20,paddingHorizontal:22}}>
           <Text accessibilityRole="header" style={s.pageTitle}>Profile</Text>
@@ -865,12 +875,14 @@ export default function Home() {
 
     {active&&<View style={[StyleSheet.absoluteFillObject,{zIndex:3,backgroundColor:ivory}]}><Enter key={active.id} reduced={reduceMotion} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}><View style={s.modalTop}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={s.modalBrand}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={maroon}/></Pressable></View>
       {flow==='menu'&&<ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}>
-        <ImageBackground source={kitchenImage(active.image.startsWith("http")?active.id:active.image)} resizeMode="cover" style={[s.restaurantHero,{height:Math.round(contentWidth*9/16)}]}><View style={s.imageShade}/><View style={s.restaurantHeroBottom}><Text style={s.restaurantLabel}>{active.id.startsWith('cal-poly-')?'CAL POLY DEMO MENU':'YOUR NEIGHBORHOOD KITCHEN'}</Text><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View></ImageBackground>
-        <View style={s.restaurantMeta}>{active.rating&&<View style={s.metaItem}><Star size={15} color="#C57760" fill="#C57760"/><Text style={s.metaText}>{active.rating} rating</Text></View>}{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{formatDistance(active.distanceMiles)}</Text></View>}{active.address&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{active.address}</Text></View>}</View>
+        <ImageBackground source={restaurantPhoto(active)} resizeMode="cover" style={[s.restaurantHero,{height:Math.round(contentWidth*9/16)}]}><View style={s.imageShade}/><View style={s.restaurantHeroBottom}><Text style={s.restaurantLabel}>{active.id.startsWith('cal-poly-')?'CAL POLY DEMO MENU':'YOUR NEIGHBORHOOD KITCHEN'}</Text><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View></ImageBackground>
+        <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{formatDistance(active.distanceMiles)}</Text></View>}{active.address&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{active.address}</Text></View>}</View>
         <View style={{marginHorizontal:18,marginBottom:16}}><PickupCountdown slots={active.pickupSlots} timezone={active.timezone}/></View>
         <View style={s.menuTitleRow}><View><Text style={s.sectionTitle}>Finish-at-home favorites</Text><Text style={s.sectionHint}>Everything you need, already prepped.</Text></View><Text style={s.dealBadge}>~25% OFF</Text></View>
         {menuLoading&&<ActivityIndicator color={maroon} accessibilityLabel="Loading menu"/>}
-        {!menuLoading&&!active.meals.length&&<Text style={[s.sectionHint,{marginHorizontal:18}]}>No meal kits are available for pickup at this kitchen right now.</Text>}
+        {menuLoadFailed&&<Pressable accessibilityRole="button" onPress={()=>void openKitchen(active)}
+          style={{marginHorizontal:18,paddingVertical:12}}><Text style={{color:maroon}}>Couldn’t load this menu. Tap to retry.</Text></Pressable>}
+        {!menuLoading&&!menuLoadFailed&&!active.meals.length&&<Text style={[s.sectionHint,{marginHorizontal:18}]}>No meal kits are available for pickup at this kitchen right now.</Text>}
         {(authUserId||calPolyDemo)&&<LiveMenuReorder key={authUserId??'demo'} userId={authUserId} demoOrders={calPolyDemo?demoOrders:undefined} kitchen={active} add={(m,q,selections={})=>m.optionGroups?.length?openMeal(m,q,selections):add(m,q,{})}/>}
         {active.meals.map(m=>{
           const selections=quickMealSelections(m);
@@ -914,7 +926,20 @@ export default function Home() {
 }
 
 function formatTime(iso:string,tz?:string){return new Intl.DateTimeFormat('en-US',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,hour:'numeric',minute:'2-digit'}).format(new Date(iso));}
-const mealImage=foodPhoto, kitchenImage=foodPhoto;
+const mealImage=foodPhoto;
+
+function RestaurantRating({kitchen}:{kitchen:Kitchen}) {
+  const rating=restaurantRating(kitchen);
+  const source=restaurantRatingSource(kitchen);
+  if(!rating)return null;
+  const label=`${rating} out of 5 stars`;
+  const badge=<><Star size={15} color="#9A5A2F" fill="#9A5A2F" aria-hidden/>
+    <Text style={s.metaText}>{rating}</Text></>;
+  return source
+    ? <Pressable accessibilityRole="link" accessibilityLabel={`${label}, rating source`} hitSlop={8}
+        onPress={()=>void Linking.openURL(source).catch(()=>{})} style={s.metaItem}>{badge}</Pressable>
+    : <View accessible accessibilityLabel={label} style={s.metaItem}>{badge}</View>;
+}
 function PickupDate({date,setDate,next,slots,timezone,address,live}:{date:number;setDate:(n:number)=>void;next:()=>void;live:boolean;slots?:Kitchen['pickupSlots'];timezone?:string;address?:string}){
   const days=live?[...new Set((slots||[]).map(x=>dayOffset(x.startsAt,timezone)))]:[1,2,3];
   return <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[s.checkoutContent,{flexGrow:1}]}><View style={s.steps}><Text style={s.stepDone}>1  CART</Text><Text style={s.stepCurrent}>2  PICKUP</Text><Text style={s.stepIdle}>3  DETAILS</Text></View><Text style={s.checkoutTitle}>When would you{ '\n' }like to pick up?</Text><Text style={s.checkoutSub}>Choose a day first. We’ll show available kitchen windows next.</Text>{days.map((n,i)=>{const count=slots?.filter(x=>dayOffset(x.startsAt,timezone)===n).length??0;return <Pressable key={n} accessibilityRole="radio" aria-checked={date===n} accessibilityState={{selected:date===n,checked:date===n}} accessibilityLabel={dateLabel(n,timezone)+', '+(count?count+' pickup windows available':i===0?'most pickup windows available':'a few windows available')} onPress={()=>setDate(n)} style={[s.dateOption,date===n&&s.dateOptionActive]}><View style={[s.radio,date===n&&s.radioActive]}>{date===n&&<View style={s.radioInner}/>}</View><View style={{flex:1}}><Text style={s.dateDay}>{dateLabel(n,timezone)}</Text><Text style={s.dateAvailability}>{slots?.length?count+' pickup windows available':n===1?'Most pickup windows available':'A few windows available'}</Text></View><Text style={s.datePill}>{live?'AVAILABLE':i===0?'POPULAR':'AVAILABLE'}</Text></Pressable>;})}<View style={{flex:1}}/>{live&&days.length===0&&<Text style={s.checkoutSub}>No pickup dates have enough stock for this bag. Return to your bag and adjust quantities.</Text>}<PickupSummary date={date} timezone={timezone} address={address}/><Pressable accessibilityRole="button" onPress={next} style={s.primaryBtn}><Text style={s.primaryBtnText}>{live&&!days.length?'Back to bag':'Choose pickup time'}</Text><ChevronRight size={19} color="#FFF"/></Pressable></ScrollView>}

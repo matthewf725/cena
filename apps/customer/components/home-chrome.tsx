@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Keyboard, Platform, Pressable, StyleSheet, useWindowDimensions, View, type KeyboardEvent } from 'react-native';
 import { MapPin, Search, X } from 'lucide-react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Text, TextInput } from './type';
@@ -109,12 +109,71 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
   height: number;
 }) {
   const [focused,setFocused] = useState(false);
-  return <View pointerEvents="box-none" style={[s.searchDock, { bottom, left: side, right: side }]}>
+  const { height: windowHeight } = useWindowDimensions();
+  const focusHeight = useRef(windowHeight);
+  const latestWindowHeight = useRef(windowHeight);
+  const keyboardHeight = useRef(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  latestWindowHeight.current = windowHeight;
+
+  useEffect(() => {
+    if (!focused) {
+      keyboardHeight.current = 0;
+      setKeyboardInset(0);
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return;
+      const viewport = window.visualViewport;
+      const updateFromViewport = () => {
+        const layoutHeight = window.innerHeight;
+        const visibleHeight = viewport?.height ?? layoutHeight;
+        const visibleTop = viewport?.offsetTop ?? 0;
+        setKeyboardInset(Math.max(0, layoutHeight - visibleHeight - visibleTop));
+      };
+      updateFromViewport();
+      viewport?.addEventListener('resize', updateFromViewport);
+      viewport?.addEventListener('scroll', updateFromViewport);
+      window.addEventListener('resize', updateFromViewport);
+      return () => {
+        viewport?.removeEventListener('resize', updateFromViewport);
+        viewport?.removeEventListener('scroll', updateFromViewport);
+        window.removeEventListener('resize', updateFromViewport);
+      };
+    }
+
+    const updateFromKeyboard = () => {
+      const layoutResize = Math.max(0, focusHeight.current - latestWindowHeight.current);
+      setKeyboardInset(Math.max(0, keyboardHeight.current - layoutResize));
+    };
+    const updateFrame = (event: KeyboardEvent) => {
+      if (Platform.OS === 'ios') Keyboard.scheduleLayoutAnimation(event);
+      keyboardHeight.current = Platform.OS === 'ios'
+        ? Math.max(0, focusHeight.current - event.endCoordinates.screenY)
+        : event.endCoordinates.height;
+      updateFromKeyboard();
+    };
+    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow', updateFrame);
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', event => {
+      if (Platform.OS === 'ios') Keyboard.scheduleLayoutAnimation(event);
+      keyboardHeight.current = 0;
+      setKeyboardInset(0);
+    });
+    updateFromKeyboard();
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [focused, windowHeight]);
+
+  return <View pointerEvents="box-none" style={[s.searchDock, { bottom: bottom + (focused ? keyboardInset : 0), left: side, right: side }]}>
     <View style={[s.search, { borderRadius: radius, height }, focused && s.searchFocused]}>
       <Search size={18} color={maroon} aria-hidden />
       <TextInput accessibilityLabel="Search restaurants" value={query} onChangeText={setQuery}
         placeholder="Search restaurants" placeholderTextColor={muted} style={s.input} maxLength={120}
-        onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
+        onFocus={()=>{focusHeight.current=latestWindowHeight.current;setFocused(true);}}
+        onBlur={()=>{keyboardHeight.current=0;setFocused(false);setKeyboardInset(0);}}
         autoCorrect={false} returnKeyType="search" clearButtonMode="never" />
       {!!query && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={s.clear}>
         <View pointerEvents="none" style={s.clearCircle}><X size={18} color={maroon} aria-hidden /></View>

@@ -1,17 +1,19 @@
 import { FlatList, ImageBackground, Pressable, StyleSheet, View } from 'react-native';
+import { Star } from 'lucide-react-native';
 import { Text } from './type';
 import type { Kitchen } from '../lib/data';
 import { formatDistance } from '../lib/discovery';
-import { foodPhoto } from '../lib/food-photos';
+import { restaurantPhoto, restaurantRating } from '../lib/restaurant-presentation';
 import { PickupCountdown } from './pickup-countdown';
 
-export function KitchenRail({ title, kitchens, width, radius, open, reduced }: {
+export function KitchenRail({ title, kitchens, width, radius, open, reduced, suspended }: {
   title: string;
   kitchens: Kitchen[];
   width: number;
   radius: number;
   open: (kitchen: Kitchen) => void;
   reduced: boolean;
+  suspended: boolean;
 }) {
   if (!kitchens.length) return null;
   const cardWidth = Math.max(210, Math.min(320, width - (width < 390 ? 54 : 84)));
@@ -32,22 +34,31 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced }: {
         snapToInterval={reduced ? undefined : stride}
         snapToAlignment="start"
         contentContainerStyle={styles.rail}
-        renderItem={({ item: kitchen }) => (
+        renderItem={({ item: kitchen }) => {
+          const rating = restaurantRating(kitchen);
+          return (
           <View style={[styles.card, { width: cardWidth, borderRadius: radius }]}>
             <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
               style={({ pressed }) => pressed && styles.pressed}>
-              <ImageBackground source={foodPhoto(kitchen.image.startsWith('http') ? kitchen.id : kitchen.image)}
+              <ImageBackground source={restaurantPhoto(kitchen)}
                 resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16) }]} />
               <View style={styles.caption}>
-                <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
+                <View style={styles.nameRow}>
+                  <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
+                  {rating && <View style={styles.rating}>
+                    <Star size={13} color="#9A5A2F" fill="#9A5A2F" aria-hidden />
+                    <Text accessibilityLabel={`${rating} out of 5 stars`} style={styles.ratingValue}>{rating}</Text>
+                  </View>}
+                </View>
                 <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
               </View>
             </Pressable>
             {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>
-              <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} />
+              <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} suspended={suspended} />
             </View>}
           </View>
-        )}
+          );
+        }}
       />
     </View>
   );
@@ -61,7 +72,10 @@ const styles = StyleSheet.create({
   photo: { width: '100%', overflow: 'hidden', backgroundColor: '#F0E1D9' },
   caption: { paddingTop: 10, paddingBottom: 10, paddingHorizontal: 12 },
   countdown: { paddingHorizontal: 12, paddingBottom: 12 },
-  name: { fontWeight:'500', color: '#271D19', fontSize: 18, lineHeight: 23 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  name: { flex: 1, fontWeight:'500', color: '#271D19', fontSize: 18, lineHeight: 23 },
+  rating: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  ratingValue: { color: '#271D19', fontSize: 14, fontWeight: '500' },
   details: { color: '#77645B', fontSize: 14, lineHeight: 19, marginTop: 2 },
   pressed: { opacity: 0.72 },
 });

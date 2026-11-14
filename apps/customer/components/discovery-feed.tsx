@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ArrowRight } from 'lucide-react-native';
 import { Text } from './type';
 import { discoverPickupFeed, type DiscoveryPage, type PickupOrigin } from '../lib/discovery';
 import { supabase } from '../lib/supabase';
 import type { Kitchen } from '../lib/data';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, topSpace, bottomSpace, onScroll }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, topSpace, bottomSpace, onScroll, suspended, showDemoBanner }: {
   width: number;
   side: number;
   radius: number;
   query: string;
   reduced: boolean;
+  suspended: boolean;
+  showDemoBanner: boolean;
   origin: PickupOrigin;
   recentIds: string[];
   open: (kitchen: Kitchen) => void;
@@ -20,6 +23,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }) {
   const list = useRef<FlatList<DiscoveryPage['categories'][number]>>(null);
+  const nearbyOffset = useRef(0);
   const [page, setPage] = useState<DiscoveryPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -96,22 +100,34 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   const loadMore = () => {
     if (!error) void load(true, generation.current);
   };
-  const rail = { width, radius, open, reduced };
+  const rail = { width, radius, open, reduced, suspended };
   const content = (
     <>
       {page && (
         <>
+          {!filter && showDemoBanner && <Pressable accessibilityRole="button" accessibilityLabel="Explore Cal Poly demo restaurants"
+            onPress={() => list.current?.scrollToOffset({ offset: nearbyOffset.current, animated: !reduced })}
+            style={[styles.banner, { borderRadius: radius }]}>
+            <View style={styles.bannerCopy}>
+              <Text accessibilityRole="header" style={styles.bannerTitle}>Cal Poly demo</Text>
+              <Text style={styles.bannerText}>Local restaurant meal kits. Pick up downtown and finish at home.</Text>
+              <View style={styles.bannerLink}><Text style={styles.bannerLinkText}>Explore menus</Text><ArrowRight size={15} color="#FAF6F3" aria-hidden /></View>
+            </View>
+            <Image source={require('../assets/cal-poly-luna-red.webp')} resizeMode="cover" aria-hidden style={styles.bannerImage} />
+          </Pressable>}
           {!filter && (page.recents.length > 0
             ? <KitchenRail title="Recents" kitchens={page.recents} {...rail} />
             : <View style={styles.empty}>
               <Text accessibilityRole="header" style={styles.heading}>Recents</Text>
               <Text style={styles.help}>Restaurants you order from will appear here.</Text>
             </View>)}
-          {page.nearby.length ? <KitchenRail title={filter ? 'Matching restaurants' : 'Near you'} kitchens={page.nearby} {...rail} />
+          <View onLayout={event => { nearbyOffset.current = event.nativeEvent.layout.y; }}>
+            {page.nearby.length ? <KitchenRail title={filter ? 'Matching restaurants' : 'Near you'} kitchens={page.nearby} {...rail} />
             : <View style={styles.empty}>
               <Text accessibilityRole="header" style={styles.heading}>{filter ? 'Matching restaurants' : 'Near you'}</Text>
               <Text style={styles.help}>{filter ? 'No restaurants match that search.' : 'No restaurants have pickup windows right now.'}</Text>
             </View>}
+          </View>
         </>
       )}
     </>
@@ -144,6 +160,13 @@ const ink = '#271D19';
 const muted = '#77645B';
 const normalizeQuery = (query: string) => Array.from(query.trim()).slice(0, 120).join('');
 const styles = StyleSheet.create({
+  banner: { overflow: 'hidden', flexDirection: 'row', backgroundColor: maroon, minHeight: 142, marginBottom: 24 },
+  bannerCopy: { flex: 1, minWidth: 0, justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 15, gap: 6 },
+  bannerTitle: { color: '#FAF6F3', fontSize: 24, lineHeight: 27, fontWeight: '600' },
+  bannerText: { color: '#F7DDD3', fontSize: 14, lineHeight: 18 },
+  bannerLink: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  bannerLinkText: { color: '#FAF6F3', fontSize: 14, fontWeight: '600' },
+  bannerImage: { width: '33%', alignSelf: 'stretch', backgroundColor: '#792B24' },
   empty: { marginBottom: 20 },
   heading: { fontWeight:'500', color: ink, fontSize: 25, lineHeight: 30, marginBottom: 10 },
   help: { color: muted, fontSize: 14 },

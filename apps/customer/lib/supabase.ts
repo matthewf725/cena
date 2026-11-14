@@ -22,42 +22,122 @@ export const verifyEmailCode = async (email: string, token: string) => {
   return supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token, type: 'email' });
 };
 
+const MENU_READ_TIMEOUT_MS = 15_000;
+const SLOT_PAGE_SIZE = 500;
+const MENU_PAGE_SIZE = 500;
+const INVENTORY_SLOT_BATCH_SIZE = 75;
+const NEVER_ABORTED_SIGNAL = new AbortController().signal;
+
+type PickupSlotRow = {
+  id: string;
+  restaurant_id: string;
+  starts_at: string;
+  ends_at: string;
+  cutoff_at: string;
+  capacity: number;
+  reserved_count: number;
+};
+
+type SlotInventoryRow = { slot_id: string; item_id: string; available_qty: number; reserved_qty: number };
+
 // Available meal kits are derived per slot from available_qty - reserved_qty.
-export async function fetchPickupAvailability(restaurantId: string) {
+export async function fetchPickupAvailability(restaurantId: string, signal?: AbortSignal) {
   if (!supabase) return { data: null, error: null };
-  const { data: slots, error } = await supabase.from('pickup_slots').select('id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count')
-    .eq('restaurant_id', restaurantId).eq('active', true).gt('starts_at', new Date().toISOString()).gt('cutoff_at', new Date().toISOString()).order('starts_at');
-  if (error || !slots?.length) return { data: error ? null : [], error };
-  const { data: inventory, error: inventoryError } = await supabase.from('slot_item_inventory').select('slot_id,item_id,available_qty,reserved_qty').in('slot_id', slots.map(x => x.id));
-  return { data: inventoryError ? null : slots.map(slot => ({ ...slot, items: (inventory || []).filter(i => i.slot_id === slot.id).map(i => ({ ...i, remaining: i.available_qty - i.reserved_qty })) })), error: inventoryError };
+  const now = new Date().toISOString();
+  const slots: PickupSlotRow[] = [];
+  for (let offset = 0; ; offset += SLOT_PAGE_SIZE) {
+    const query = supabase.from('pickup_slots').select('id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count')
+      .eq('restaurant_id', restaurantId).eq('active', true).gt('starts_at', now).gt('cutoff_at', now)
+      .order('starts_at').order('id').range(offset, offset + SLOT_PAGE_SIZE - 1).returns<PickupSlotRow[]>()
+      .abortSignal(signal ?? NEVER_ABORTED_SIGNAL);
+    const { data, error } = await query;
+    if (error) return { data: null, error };
+    const page = data ?? [];
+    slots.push(...page);
+    if (page.length < SLOT_PAGE_SIZE) break;
+  }
+  if (!slots.length) return { data: [], error: null };
+
+  const inventoryBySlot = new Map<string, SlotInventoryRow[]>();
+  for (let offset = 0; offset < slots.length; offset += INVENTORY_SLOT_BATCH_SIZE) {
+    const slotIds = slots.slice(offset, offset + INVENTORY_SLOT_BATCH_SIZE).map(slot => slot.id);
+    for (let row = 0; ; row += SLOT_PAGE_SIZE) {
+      const { data, error } = await supabase.from('slot_item_inventory').select('slot_id,item_id,available_qty,reserved_qty')
+        .in('slot_id', slotIds).order('slot_id').order('item_id').range(row, row + SLOT_PAGE_SIZE - 1)
+        .returns<SlotInventoryRow[]>().abortSignal(signal ?? NEVER_ABORTED_SIGNAL);
+      if (error) return { data: null, error };
+      for (const item of data ?? []) {
+        const items = inventoryBySlot.get(item.slot_id);
+        if (items) items.push(item);
+        else inventoryBySlot.set(item.slot_id, [item]);
+      }
+      if ((data?.length ?? 0) < SLOT_PAGE_SIZE) break;
+    }
+  }
+  return {
+    data: slots.map(slot => ({
+      ...slot,
+      items: (inventoryBySlot.get(slot.id) ?? []).map(item => ({
+        ...item,
+        remaining: item.available_qty - item.reserved_qty,
+      })),
+    })),
+    error: null,
+  };
 }
 
 export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
   if (!supabase || !kitchen.backendId) return kitchen;
   const restaurantId = kitchen.backendId;
-  const [menu, availability] = await Promise.all([
-    fetchMenuItems(supabase, restaurantId),
-    fetchPickupAvailability(restaurantId),
-  ]);
-  if (menu.error || availability.error) throw menu.error ?? availability.error;
-  const slots = (availability.data ?? []).filter(slot => slot.reserved_count < slot.capacity);
-  const meals = (menu.data ?? []).map(toMeal);
-  return {
-    ...kitchen,
-    meals: meals.filter(meal => slots.some(slot => slot.items.some(item => item.item_id === meal.id && item.remaining > 0))),
-    pickupSlots: slots.filter(slot => slot.items.some(item => item.remaining > 0)).map(slot => ({
-      id: slot.id, startsAt: slot.starts_at, endsAt: slot.ends_at, cutoffAt: slot.cutoff_at,
-      remaining: Object.fromEntries(slot.items.map(item => [item.item_id, item.remaining])),
-    })),
-  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MENU_READ_TIMEOUT_MS);
+  try {
+    const [menu, availability] = await Promise.all([
+      fetchMenuItems(supabase, restaurantId, controller.signal),
+      fetchPickupAvailability(restaurantId, controller.signal),
+    ]);
+    if (menu.error || availability.error) throw menu.error ?? availability.error;
+    const slots = (availability.data ?? []).filter(slot => slot.reserved_count < slot.capacity);
+    const availableItems = new Set(slots.flatMap(slot => slot.items.filter(item => item.remaining > 0).map(item => item.item_id)));
+    const meals = (menu.data ?? []).map(toMeal);
+    return {
+      ...kitchen,
+      meals: meals.filter(meal => availableItems.has(meal.id)),
+      pickupSlots: slots.filter(slot => slot.items.some(item => item.remaining > 0)).map(slot => ({
+        id: slot.id, startsAt: slot.starts_at, endsAt: slot.ends_at, cutoffAt: slot.cutoff_at,
+        remaining: Object.fromEntries(slot.items.map(item => [item.item_id, item.remaining])),
+      })),
+    };
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('This menu is taking longer than expected. Please try again.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-async function fetchMenuItems(client: SupabaseClient, restaurantId: string) {
-  const fields = 'id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key';
-  const query = (columns: string) => client.from('catalog_items').select(columns)
-    .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null).order('name').returns<CatalogMealRow[]>();
-  const result = await query(`${fields},option_groups`);
-  return result.error?.code === '42703' ? query(fields) : result;
+async function fetchMenuItems(client: SupabaseClient, restaurantId: string, signal?: AbortSignal) {
+  const baseFields = 'id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key';
+  let columns = `${baseFields},option_groups`;
+  const rows: CatalogMealRow[] = [];
+  for (let offset = 0; ; offset += MENU_PAGE_SIZE) {
+    const query = (selectedColumns: string) => {
+      return client.from('catalog_items').select(selectedColumns)
+        .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null)
+        .order('name').range(offset, offset + MENU_PAGE_SIZE - 1).returns<CatalogMealRow[]>()
+        .abortSignal(signal ?? NEVER_ABORTED_SIGNAL);
+    };
+    let result = await query(columns);
+    if (result.error?.code === '42703' && columns !== baseFields) {
+      columns = baseFields;
+      result = await query(columns);
+    }
+    if (result.error) return { data: null, error: result.error };
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (page.length < MENU_PAGE_SIZE) break;
+  }
+  return { data: rows, error: null };
 }
 
 export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> {

@@ -1,25 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Text } from './type';
 import { Clock3 } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 
-export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlots']; timezone?: string }) {
+export function PickupCountdown({ slots, timezone, suspended = false }: { slots: Kitchen['pickupSlots']; timezone?: string; suspended?: boolean }) {
   const [now, setNow] = useState(Date.now);
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, dateStyle: 'short' });
+  const day = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-US', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch {
+      return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' });
+    }
+  }, [timezone]);
+  const windows = useMemo(() => (slots ?? []).flatMap(slot => {
+    const startsAt = Date.parse(slot.startsAt);
+    const cutoffAt = Date.parse(slot.cutoffAt);
+    if (!Number.isFinite(startsAt) || !Number.isFinite(cutoffAt)) return [];
+    return [{ id: slot.id, startsAt, cutoffAt, date: day.format(startsAt) }];
+  }), [day, slots]);
   const today = day.format(now);
-  const upcoming = (slots ?? []).filter(slot => Date.parse(slot.cutoffAt) > now && Date.parse(slot.startsAt) > now);
-  const next = upcoming.find(slot => day.format(new Date(slot.startsAt)) === today);
+  const upcoming = windows.filter(slot => slot.cutoffAt > now && slot.startsAt > now);
+  const next = upcoming.find(slot => slot.date === today);
 
   useEffect(() => {
-    if (!next) return;
+    if (!suspended) setNow(Date.now());
+  }, [suspended, slots]);
+
+  useEffect(() => {
+    if (suspended || !next) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [next?.id]);
+  }, [next?.id, suspended]);
 
   if (!next) return <Text style={styles.unavailable}>{upcoming.length ? 'Order ahead for pickup' : 'No pickup windows available'}</Text>;
 
-  const seconds = Math.max(0, Math.ceil((Date.parse(next.cutoffAt) - now) / 1000));
+  const seconds = Math.max(0, Math.ceil((next.cutoffAt - now) / 1000));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor(seconds / 60) % 60;
   const clock = [hours, minutes, seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
