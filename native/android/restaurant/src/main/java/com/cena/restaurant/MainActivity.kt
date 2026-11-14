@@ -25,6 +25,29 @@ class MainActivity:Activity(){private val bg=Color.rgb(250,246,243);private val 
   outer.addView(body)
   sc.addView(outer)
   setContentView(sc)
+  // Keep page changes calm and brief; Android's animator scale is also its
+  // system reduced-motion switch, so leave the view still when animations are off.
+  val animatorScale = runCatching {
+   android.provider.Settings.Global.getFloat(
+    contentResolver,
+    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+    1f
+   )
+  }.getOrDefault(1f)
+  if (animatorScale > 0f && android.animation.ValueAnimator.areAnimatorsEnabled()) {
+   outer.alpha = 0f
+   outer.translationY = 8f * resources.displayMetrics.density
+   outer.post {
+    if (!isFinishing && outer.isAttachedToWindow) {
+     outer.animate()
+      .alpha(1f)
+      .translationY(0f)
+      .setDuration(180)
+      .setInterpolator(android.view.animation.DecelerateInterpolator())
+      .start()
+    }
+   }
+  }
  }
  private fun title(s:String,z:Float=25f) = title(s,z,body)
  private fun title(s:String,z:Float,target:LinearLayout) {
