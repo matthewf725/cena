@@ -1,4 +1,4 @@
-import { kitchens, type Kitchen } from './data';
+import type { Kitchen } from './data';
 import { supabase } from './supabase';
 
 export type PickupOrigin = { latitude: number; longitude: number };
@@ -64,41 +64,14 @@ function toKitchen(row: RestaurantRow): Kitchen {
   };
 }
 
-export function formatDistance(miles: number | undefined, fromCity = false): string | undefined {
+export function formatDistance(miles: number | undefined): string | undefined {
   if (miles === undefined || !Number.isFinite(miles) || miles < 0) return undefined;
   const value = miles < 0.1 ? '<0.1' : new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(miles);
-  return `${value} mi ${fromCity ? 'from San Francisco' : 'away'}`;
-}
-
-function demoDistance(origin: PickupOrigin, restaurant: Kitchen) {
-  if (restaurant.latitude === undefined || restaurant.longitude === undefined) return undefined;
-  const radians = Math.PI / 180;
-  const angle = Math.sin((restaurant.latitude - origin.latitude) * radians / 2) ** 2
-    + Math.cos(origin.latitude * radians) * Math.cos(restaurant.latitude * radians)
-    * Math.sin((restaurant.longitude - origin.longitude) * radians / 2) ** 2;
-  return 3958.7613 * 2 * Math.asin(Math.min(1, Math.sqrt(angle)));
-}
-
-function demoDiscovery({ query, origin, recentIds }: DiscoveryInput): DiscoveryPage {
-  const matches = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
-  const byDistance = kitchens.map(kitchen => ({ ...kitchen, distanceMiles: demoDistance(origin, kitchen) }))
-    .sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity));
-  const available = byDistance.filter(kitchen => matches(kitchen.name) || matches(kitchen.cuisine)
-    || kitchen.meals.some(meal => matches(meal.name) || matches(meal.subtitle)));
-
-  return {
-    recents: [...new Set(recentIds)].flatMap(id => byDistance.filter(kitchen => kitchen.id === id)),
-    nearby: available.slice(0, 8),
-    categories: [...new Set(available.map(kitchen => kitchen.cuisine))].sort().map(name => ({
-      name,
-      kitchens: available.filter(kitchen => kitchen.cuisine === name).slice(0, 8),
-    })),
-    nextCursor: null,
-  };
+  return `${value} mi away`;
 }
 
 export async function discoverPickupFeed(input: DiscoveryInput): Promise<DiscoveryPage> {
-  if (!supabase) return demoDiscovery(input);
+  if (!supabase) throw new Error('Restaurant discovery needs a Supabase connection.');
   const args = {
     p_latitude: input.origin.latitude,
     p_longitude: input.origin.longitude,

@@ -42,6 +42,9 @@ function tomorrowAtServiceTime(iso, timezone) {
 
 await context.route('**/*', async route => {
   const url = new URL(route.request().url());
+  if (url.origin === 'https://tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname)) {
+    return route.abort('blockedbyclient');
+  }
   if (['http:', 'https:'].includes(url.protocol) && !loopback.includes(url.hostname)) {
     blocked.push(url.origin);
     return route.abort('blockedbyclient');

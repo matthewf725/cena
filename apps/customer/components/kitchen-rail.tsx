@@ -5,14 +5,13 @@ import { formatDistance } from '../lib/discovery';
 import { foodPhoto } from '../lib/food-photos';
 import { PickupCountdown } from './pickup-countdown';
 
-export function KitchenRail({ title, kitchens, width, radius, open, reduced, fromCity }: {
+export function KitchenRail({ title, kitchens, width, radius, open, reduced }: {
   title: string;
   kitchens: Kitchen[];
   width: number;
   radius: number;
   open: (kitchen: Kitchen) => void;
   reduced: boolean;
-  fromCity: boolean;
 }) {
   if (!kitchens.length) return null;
   const cardWidth = Math.max(210, Math.min(320, width - (width < 390 ? 54 : 84)));
@@ -41,7 +40,7 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, fro
                 resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16) }]} />
               <View style={styles.caption}>
                 <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
-                <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles, fromCity), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
+                <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
               </View>
             </Pressable>
             {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>

@@ -72,6 +72,9 @@ await context.route('**/*', async route => {
             : [];
     return route.fulfill({ status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
   }
+  if (url.origin === 'https://tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname)) {
+    return route.abort('blockedbyclient');
+  }
   if (['http:', 'https:'].includes(url.protocol) && !loopback.includes(url.hostname)) {
     externalRequests.push(url.origin);
     return route.abort('blockedbyclient');
@@ -118,6 +121,8 @@ try {
   const address = dialog.getByRole('textbox', { name: 'Street address, city or ZIP code' });
   await address.waitFor();
   assert.equal(await address.evaluate(element => element === document.activeElement), true, 'Opening location picker should focus its address input');
+  await dialog.getByRole('heading', { name: 'Suggested areas', exact: true }).waitFor();
+  await dialog.getByRole('link', { name: 'OpenStreetMap attribution', exact: true }).waitFor();
   const focusables = dialog.locator('input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])');
   const focusableCount = await focusables.count();
   assert.ok(focusableCount >= 3, `Expected address, close, and location actions in dialog; found ${focusableCount}`);

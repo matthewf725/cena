@@ -17,7 +17,7 @@ Install Node.js 24 and pnpm 11, then run `pnpm install`. Open separate terminals
 | Cena for Restaurants preview | `pnpm restaurant` | `http://localhost:8082` |
 | Signup website | `pnpm site` | `http://127.0.0.1:4173` |
 
-The Expo apps are browser and device previews of the customer and restaurant workflows. They start with demo data when Supabase is unconfigured. The website marks its browser-local signup preview. Use `pnpm typecheck` and `pnpm test` for the automated checks.
+The Expo apps are browser and device previews of the customer and restaurant workflows. Both read restaurant, menu, profile, and order records from the configured Supabase database. Load `supabase/seed.sql` in a local sandbox for sample restaurant and pickup data. The website marks its browser-local signup preview. Use `pnpm typecheck` and `pnpm test` for the automated checks.
 
 See [native iOS](native/ios/README.md) for the SwiftUI builds and [native Android](native/android/README.md) for the Kotlin builds. The native clients currently cover the core pickup flows. Their READMEs list remaining feature differences and build requirements.
 

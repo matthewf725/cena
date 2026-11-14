@@ -8,24 +8,38 @@ export const welcomeFadeEnd = 140;
 export const searchGap = 12;
 export const homeContentMaxWidth = 760;
 
-const maroon = '#5D100A';
+const maroon = '#46110E';
 const muted = '#77645B';
 const greetingFont = Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' });
-const fade = 'linear-gradient(180deg, #000 0%, #000 28%, transparent 100%)';
-const blur = Platform.select<ViewStyle>({ web: {
-  backdropFilter: 'blur(14px)',
-  WebkitBackdropFilter: 'blur(14px)',
-  maskImage: fade,
-  WebkitMaskImage: fade,
-} as ViewStyle });
+const headerTail = 40;
 
-function gradient(color: string) {
-  const image = `linear-gradient(180deg, rgb(${color}) 0%, rgba(${color}, .96) 33%, rgba(${color}, .57) 70%, rgba(${color}, 0) 100%)`;
+function gradient(image: string) {
   return Platform.OS === 'web' ? { backgroundImage: image } as ViewStyle : { experimental_backgroundImage: image };
 }
 
-const compactGradient = gradient('250, 246, 243');
-const expandedGradient = gradient('255, 225, 213');
+const creamSurface = gradient('linear-gradient(180deg, #FAF6F3 0%, #FAF6F3 64%, rgba(250, 246, 243, .96) 73%, rgba(250, 246, 243, .71) 84%, rgba(250, 246, 243, .29) 94%, rgba(250, 246, 243, 0) 100%)');
+const warmSurface = gradient('linear-gradient(180deg, #FFDACE 0%, #F9E3DA 49%, #FAF6F3 73%, rgba(250, 246, 243, .74) 84%, rgba(250, 246, 243, .29) 94%, rgba(250, 246, 243, 0) 100%)');
+
+export function PageHeader({ children, identityHeight, topInset }: {
+  children: ReactNode;
+  identityHeight: number;
+  topInset: number;
+}) {
+  return <View pointerEvents="box-none" style={s.pageHeader}>
+    <HeaderSurface height={identityHeight + topInset + headerTail + 14} topInset={topInset} />
+    {children}
+  </View>;
+}
+
+function HeaderSurface({ height, topInset, warmOpacity = 1 }: {
+  height: number | Animated.AnimatedInterpolation<number>;
+  topInset: number;
+  warmOpacity?: number | Animated.AnimatedInterpolation<number>;
+}) {
+  return <Animated.View pointerEvents="none" style={[s.headerSurface, creamSurface, { top: -topInset, height }]}>
+    <Animated.View style={[StyleSheet.absoluteFillObject, warmSurface, { opacity: warmOpacity }]} />
+  </Animated.View>;
+}
 
 export function HomeWelcome({ greeting }: { greeting: string }) {
   return <Text accessibilityRole="header" numberOfLines={1} style={s.staticGreeting}>{greeting}</Text>;
@@ -46,11 +60,9 @@ export function HomeHeader({ children, scrollY, reduced, greeting, collapsed, si
   });
 
   return <View pointerEvents="box-none" style={s.header}>
-    <Animated.View pointerEvents="none" style={[s.headerSurface, { top: -topInset }, blur, compactGradient, {
-      height: reduced ? identityHeight + topInset : collapse(identityHeight + welcomeHeight + topInset, identityHeight + topInset),
-    }]}>
-      <Animated.View style={[StyleSheet.absoluteFillObject, expandedGradient, { opacity: reduced ? 1 : collapse(1, 0) }]} />
-    </Animated.View>
+    <HeaderSurface topInset={topInset}
+      height={reduced ? identityHeight + topInset + welcomeHeight + headerTail : collapse(identityHeight + topInset + welcomeHeight + headerTail, identityHeight + topInset + headerTail)}
+      warmOpacity={reduced ? 1 : collapse(1, 0)} />
     {children}
     {!reduced && <Animated.View pointerEvents="none" aria-hidden={collapsed}
       accessibilityElementsHidden={collapsed} importantForAccessibility={collapsed ? 'no-hide-descendants' : 'auto'}
@@ -85,6 +97,7 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
 
 const s = StyleSheet.create({
   header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 },
+  pageHeader: { zIndex: 1 },
   headerSurface: { position: 'absolute', left: 0, right: 0, overflow: 'hidden' },
   welcome: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', overflow: 'hidden' },
   greeting: { color: maroon, fontFamily: greetingFont, fontWeight: '400', lineHeight: 42, letterSpacing: -0.7 },

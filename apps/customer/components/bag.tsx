@@ -1,4 +1,4 @@
-import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from './type';
 import { ChevronRight, Minus, Plus, ShoppingBag } from 'lucide-react-native';
 import type { Meal } from '../lib/data';
@@ -53,16 +53,17 @@ export function Bag({ items, subtotal, radius, loading, locked = false, bottomNa
         </Pressable>
       </View>}
     </ScrollView>
-    {!!items.length && <View style={[styles.footer, { marginBottom: bottomNavHeight }]}>
-      <View style={[styles.row, styles.actions]}>
-        <Text style={styles.item}>Subtotal</Text><Text style={styles.price}>${subtotal.toFixed(2)}</Text>
+    <View style={[styles.footer, { marginBottom: bottomNavHeight }]}>
+      <View style={[styles.row, styles.subtotalRow, { borderRadius: radius }]}>
+        <Text style={styles.subtotalLabel}>Subtotal</Text>
+        <Text style={styles.subtotalPrice}>${subtotal.toFixed(2)}</Text>
       </View>
-      <Pressable accessibilityRole="button" accessibilityState={{ busy: loading }} disabled={loading} onPress={checkout}
+      {!!items.length && <Pressable accessibilityRole="button" accessibilityState={{ busy: loading }} disabled={loading} onPress={checkout}
         style={[styles.button, styles.actions, loading && styles.disabled]}>
         <Text style={styles.buttonText}>{loading ? 'Checking availability…' : 'Continue to pickup'}</Text>
         <ChevronRight size={18} color="#FFF" />
-      </Pressable>
-    </View>}
+      </Pressable>}
+    </View>
   </View>;
 }
 
@@ -80,6 +81,9 @@ const styles = StyleSheet.create({
   quantity: { minWidth: 18, textAlign: 'center', color: maroon, fontWeight: '500' },
   remove: { color: maroon, fontSize: 13, paddingVertical: 12, fontWeight: '500' },
   empty: { minHeight: 190, backgroundColor: '#FFFDFA', alignItems: 'center', justifyContent: 'center', padding: 18, gap: 16 },
+  subtotalRow: { minHeight: 54, justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#FFF8F4', borderWidth: 1, borderColor: '#E8DCD5' },
+  subtotalLabel: { fontSize: 15, fontWeight: '500', color: '#4A0D09' },
+  subtotalPrice: { fontFamily: Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' }), fontSize: 17, fontWeight: '400', fontVariant: ['tabular-nums'], color: '#46110E' },
   footer: { paddingHorizontal: 18, paddingVertical: 12, gap: 10, borderTopWidth: 1, borderTopColor: '#E8DCD5' },
   button: { backgroundColor: maroon, minHeight: 46, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
   buttonText: { color: '#FFF', fontSize: 15, fontWeight: '500', flexShrink: 1 }, disabled: { opacity: 0.55 },

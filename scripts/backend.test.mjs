@@ -40,7 +40,7 @@ before(async () => {
     from restaurants r join pickup_slots s on s.restaurant_id = r.id
     join slot_item_inventory i on i.slot_id = s.id
     join catalog_items c on c.id = i.item_id
-    where s.cutoff_at > now()
+    where s.cutoff_at > now() + interval '2 minutes' and s.starts_at > now() + interval '34 minutes'
     order by s.starts_at, r.name, c.name limit 1
   `);
   assert.ok(row, 'Demo catalog has an available pickup slot');

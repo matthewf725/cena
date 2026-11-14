@@ -37,10 +37,11 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
 }
 
 const green = '#245C40';
+const lineHeight = 18;
 
 const styles = StyleSheet.create({
   row: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  label: { color: green, fontSize: 13, lineHeight: 17, flex: 1 },
-  counter: { color: green, fontSize: 14, fontWeight: '500', fontVariant: ['tabular-nums'], minWidth: 64, textAlign: 'right', flexShrink: 0 },
+  label: { color: green, fontSize: 13, lineHeight, includeFontPadding: false, flex: 1 },
+  counter: { color: green, fontSize: 14, lineHeight, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'], minWidth: 64, textAlign: 'right', flexShrink: 0 },
   unavailable: { color: '#77645B', fontSize: 14 },
 });

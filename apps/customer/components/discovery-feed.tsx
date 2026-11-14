@@ -2,17 +2,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Text } from './type';
 import { discoverPickupFeed, type DiscoveryPage, type PickupOrigin } from '../lib/discovery';
+import { supabase } from '../lib/supabase';
 import type { Kitchen } from '../lib/data';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fromCity, recentIds, open, headerHeight, bottomSpace, onScroll, welcome }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, headerHeight, bottomSpace, onScroll, welcome }: {
   width: number;
   side: number;
   radius: number;
   query: string;
   reduced: boolean;
   origin: PickupOrigin;
-  fromCity: boolean;
   recentIds: string[];
   open: (kitchen: Kitchen) => void;
   headerHeight: number;
@@ -97,7 +97,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
   const loadMore = () => {
     if (!error) void load(true, generation.current);
   };
-  const rail = { width, radius, open, reduced, fromCity };
+  const rail = { width, radius, open, reduced };
   const content = (
     <>
       {welcome}
@@ -118,7 +118,8 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, fro
       )}
     </>
   );
-  const footer = loading ? <ActivityIndicator color={maroon} accessibilityLabel="Loading kitchens" style={styles.footer} />
+  const footer = !supabase ? <Text style={styles.help}>Restaurants are unavailable until this preview connects to Supabase.</Text>
+    : loading ? <ActivityIndicator color={maroon} accessibilityLabel="Loading kitchens" style={styles.footer} />
     : error ? <Pressable accessibilityRole="button" style={styles.footer} onPress={() => {
       if (page && cursor.current) void load(true, generation.current);
       else setRetry(count => count + 1);

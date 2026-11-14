@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { kitchens, toMeal, type Kitchen } from './data';
+import { toMeal, type Kitchen } from './data';
 import { createAuthTimeoutFetch } from './auth-timeout-fetch';
 import { validateCheckoutQuote, type CheckoutQuote } from './checkout-quote';
 export type { CheckoutQuote } from './checkout-quote';
@@ -54,7 +54,7 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
 }
 
 export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> {
-  if (!supabase) return kitchens.find(kitchen => kitchen.id === slug) ?? null;
+  if (!supabase) return null;
   const { data, error } = await supabase.from('restaurants')
     .select('id,slug,name,cuisine,image_key,address,timezone,curbside_enabled')
     .eq('slug', slug).eq('active', true).maybeSingle();
