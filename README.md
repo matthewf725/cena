@@ -49,6 +49,12 @@ Run the [Android emulator smoke checks](scripts/android-smoke.sh) and the [iOS s
 
 Customer discovery loads four cuisine rows at a time via `discover_pickup_feed`. Distance estimates are straight-line miles from the selected pickup area or an optional approximate device location. General discovery shows kitchens within 35 miles. Restaurants without coordinates can still appear in search and Recents. The request origin is used for ranking and is never written to the application database.
 
+## TestFlight builds
+
+The Expo apps in `apps/customer` and `apps/restaurant` each have an EAS production profile for iOS store distribution. These builds use the same app code as the hosted demos. With an Expo account and a paid Apple Developer team, run `npx eas-cli@latest init` from each app directory to link its own EAS project. In each project's production environment, set `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` to the cloud project's publishable key, and `EXPO_PUBLIC_CENA_SITE_URL`. Set `EXPO_PUBLIC_CENA_API_URL` only when a public checkout service is available.
+
+From the app directory, run `npx eas-cli@latest build --platform ios --profile production --auto-submit`. The first submission requires Apple signing credentials and an App Store Connect app record for the app's bundle identifier. After Apple processes the build, set up a TestFlight group in App Store Connect. Apple reviews the first build sent to external testers.
+
 ## Hosted waitlist
 
 The public signup page is at [cena-xi.vercel.app](https://cena-xi.vercel.app). Signups are stored in `public.waitlist_entries` in the hosted Cena Supabase project. The optional note is stored in `clarification`. Review rows in Supabase Table Editor. Visitors can submit the form through `join_waitlist` and cannot read the list.
