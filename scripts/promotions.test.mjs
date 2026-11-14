@@ -105,6 +105,18 @@ test('restaurant promotions are private, scheduled, scoped, capped, and snapshot
   await service((tx)=>tx.query(`select record_checkout_session($1,'cs_promo_cancel','https://checkout.stripe.com/c/pay/cs_promo_cancel',$2,$3,$4,$5)`,[
     first.order_id,first.stripe_account_id,first.amount_cents,first.application_fee_cents,first.expires_at,
   ]));
+  const pendingOwner=await service((tx)=>tx.query('select get_checkout_for_owner($1,$2) as checkout',[first.order_id,customer]));
+  assert.deepEqual(Object.fromEntries(['order_id','status','order_status','session_id','stripe_account_id','amount_cents','subtotal_cents','discount_cents','promo_code','discount_percent','application_fee_cents','currency'].map((key)=>[key,pendingOwner.rows[0].checkout[key]])),{
+    order_id:first.order_id,status:'pending',order_status:'pending_payment',session_id:'cs_promo_cancel',stripe_account_id:first.stripe_account_id,
+    amount_cents:quoted.amount_cents,subtotal_cents:fixture.price_cents,discount_cents:expectedDiscount,promo_code:'SUNDAY25',
+    discount_percent:25,application_fee_cents:first.application_fee_cents,currency:'usd',
+  });
+  await assert.rejects(service((tx)=>tx.query('select get_checkout_for_owner($1,$2)',[first.order_id,outsider])),/order not found/);
+  await assert.rejects(as('authenticated',customer,(tx)=>tx.query('select get_checkout_for_owner($1,$2)',[first.order_id,customer])),/permission denied/);
+  const pendingCustomerOrder=await as('authenticated',customer,(tx)=>tx.query('select payment_status from orders where id=$1',[first.order_id]));
+  const hiddenPendingForMerchant=await as('authenticated',merchant,(tx)=>tx.query('select id from orders where id=$1',[first.order_id]));
+  assert.deepEqual(pendingCustomerOrder.rows,[{payment_status:'pending'}]);
+  assert.equal(hiddenPendingForMerchant.rows.length,0,'pending checkout stays hidden from merchant RLS');
   await service((tx)=>tx.query('select cancel_checkout_if_unpaid($1,$2,$3)',[first.order_id,'cs_promo_cancel',first.stripe_account_id]));
   const {rows:[released]}=await db.query('select reserved_redemptions from restaurant_promotions where code=$1',['SUNDAY25']);
   assert.equal(released.reserved_redemptions,0);
@@ -118,6 +130,14 @@ test('restaurant promotions are private, scheduled, scoped, capped, and snapshot
   await service((tx)=>tx.query(`select finalize_checkout_event('evt_promo_paid','checkout.session.completed',$1,'cs_promo_paid',$2,$3,$4,'usd','paid',now())`,[
     second.order_id,second.stripe_account_id,second.amount_cents,second.application_fee_cents,
   ]));
+  const paidOwner=await service((tx)=>tx.query('select get_checkout_for_owner($1,$2) as checkout',[second.order_id,customer]));
+  assert.deepEqual(Object.fromEntries(['order_id','status','order_status','session_id','stripe_account_id','amount_cents','subtotal_cents','discount_cents','promo_code','discount_percent','application_fee_cents','currency'].map((key)=>[key,paidOwner.rows[0].checkout[key]])),{
+    order_id:second.order_id,status:'paid',order_status:'placed',session_id:'cs_promo_paid',stripe_account_id:second.stripe_account_id,
+    amount_cents:refreshedQuote.amount_cents,subtotal_cents:fixture.price_cents,discount_cents:refreshedQuote.discount_cents,promo_code:'SUNDAY25',
+    discount_percent:30,application_fee_cents:second.application_fee_cents,currency:'usd',
+  });
+  const visiblePaidForMerchant=await as('authenticated',merchant,(tx)=>tx.query('select payment_status from orders where id=$1',[second.order_id]));
+  assert.deepEqual(visiblePaidForMerchant.rows,[{payment_status:'paid'}],'settled checkout becomes visible through merchant RLS');
   const {rows:[used]}=await db.query('select reserved_redemptions,redeemed_count from restaurant_promotions where code=$1',['SUNDAY25']);
   assert.deepEqual(used,{reserved_redemptions:0,redeemed_count:1});
   const {rows:[order]}=await db.query('select subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent from orders where id=$1',[second.order_id]);

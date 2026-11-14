@@ -169,6 +169,20 @@ test('online checkout reserves once, hides unpaid orders, and finalizes idempote
     first.amount_cents, first.application_fee_cents, first.expires_at,
   ]));
   assert.equal(recorded.rows[0].result.status, 'pending');
+  const ownerCheckout = await withServiceRole((tx) => tx.query('select get_checkout_for_owner($1,$2) as checkout', [first.order_id, customer]));
+  assert.deepEqual({
+    order_id: ownerCheckout.rows[0].checkout.order_id,
+    status: ownerCheckout.rows[0].checkout.status,
+    order_status: ownerCheckout.rows[0].checkout.order_status,
+    amount_cents: ownerCheckout.rows[0].checkout.amount_cents,
+    subtotal_cents: ownerCheckout.rows[0].checkout.subtotal_cents,
+    discount_cents: ownerCheckout.rows[0].checkout.discount_cents,
+    promo_code: ownerCheckout.rows[0].checkout.promo_code,
+    discount_percent: ownerCheckout.rows[0].checkout.discount_percent,
+  }, {
+    order_id: first.order_id, status: 'pending', order_status: 'pending_payment', amount_cents: first.amount_cents,
+    subtotal_cents: first.subtotal_cents, discount_cents: 0, promo_code: null, discount_percent: null,
+  });
   await assert.rejects(withRole('authenticated', customer, (tx) => tx.query(`select record_checkout_session($1,'cs_fake','https://checkout.stripe.com/fake',$2,$3,$4,$5)`, [
     first.order_id, first.stripe_account_id, first.amount_cents, first.application_fee_cents, first.expires_at,
   ])), /permission denied/);
