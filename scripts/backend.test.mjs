@@ -143,14 +143,20 @@ test('a curbside order completes through restaurant pickup and the customer sees
 });
 
 test('online checkout reserves once, hides unpaid orders, and finalizes idempotently', async () => {
-  const reserve = (tx, key) => tx.query(`select reserve_checkout_order($1,$2,$3,$4,$5,$6,$7) as result`, [
-    customer, fixture.restaurant, fixture.slot, key, 'counter', '{}', JSON.stringify([{ item_id: fixture.item, quantity: 1 }]),
+  const quote = await withServiceRole((tx) => tx.query(`select quote_checkout_order($1,$2,$3,$4,$5::text) as result`, [
+    customer, fixture.restaurant, fixture.slot, JSON.stringify([{ item_id: fixture.item, quantity: 1 }]), null,
+  ])).then(({ rows: [row] }) => row.result);
+  const reserve = (tx, key) => tx.query(`select reserve_checkout_order($1,$2,$3,$4,$5,$6,$7,$8::text,$9) as result`, [
+    customer, fixture.restaurant, fixture.slot, key, 'counter', '{}', JSON.stringify([{ item_id: fixture.item, quantity: 1 }]), null, quote.amount_cents,
   ]).then(({ rows: [row] }) => row.result);
   const first = await withServiceRole((tx) => reserve(tx, 'online-checkout-1'));
   const retry = await withServiceRole((tx) => reserve(tx, 'online-checkout-1'));
   assert.equal(first.order_id, retry.order_id);
   assert.equal(first.status, 'pending');
   assert.equal(first.application_fee_cents, 175);
+  assert.equal(first.subtotal_cents, fixture.price_cents);
+  assert.equal(first.discount_cents, 0);
+  assert.equal(first.amount_cents, quote.amount_cents);
   assert.ok(first.expires_at);
   await assert.rejects(withServiceRole((tx) => reserve(tx, 'online-checkout-2')), /orders_one_pending_online_per_customer_idx|duplicate key/);
 

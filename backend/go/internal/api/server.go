@@ -81,6 +81,7 @@ func New(cfg Config) http.Handler {
 	s.mux.HandleFunc("POST /v1/orders", s.createOrder)
 	s.mux.HandleFunc("PATCH /v1/orders/{id}/status", s.updateOrderStatus)
 	s.mux.HandleFunc("POST /v1/checkout", s.startCheckout)
+	s.mux.HandleFunc("POST /v1/checkout/quote", s.quoteCheckout)
 	s.mux.HandleFunc("GET /v1/checkout/{id}", s.checkoutStatus)
 	s.mux.HandleFunc("DELETE /v1/checkout/{id}", s.cancelCheckout)
 	s.mux.HandleFunc("POST /v1/stripe/webhook", s.stripeWebhook)
@@ -191,12 +192,14 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) {
 func tooLong(v *string, n int) bool { return v != nil && len(*v) > n }
 
 type orderRequest struct {
-	RestaurantID   string          `json:"p_restaurant_id"`
-	SlotID         string          `json:"p_slot_id"`
-	IdempotencyKey string          `json:"p_idempotency_key"`
-	PickupMode     string          `json:"p_pickup_mode"`
-	Vehicle        json.RawMessage `json:"p_vehicle"`
-	Items          json.RawMessage `json:"p_items"`
+	RestaurantID        string          `json:"p_restaurant_id"`
+	SlotID              string          `json:"p_slot_id"`
+	IdempotencyKey      string          `json:"p_idempotency_key"`
+	PickupMode          string          `json:"p_pickup_mode"`
+	Vehicle             json.RawMessage `json:"p_vehicle"`
+	Items               json.RawMessage `json:"p_items"`
+	PromoCode           string          `json:"promo_code"`
+	ExpectedAmountCents *int            `json:"expected_amount_cents"`
 }
 
 func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,10 @@ var checkoutOrderIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-
 type checkoutReservation struct {
 	OrderID             string    `json:"order_id"`
 	AmountCents         int       `json:"amount_cents"`
+	SubtotalCents       int       `json:"subtotal_cents"`
+	DiscountCents       int       `json:"discount_cents"`
+	PromoCode           *string   `json:"promo_code"`
+	DiscountPercent     *int      `json:"discount_percent"`
 	Currency            string    `json:"currency"`
 	ApplicationFeeCents int       `json:"application_fee_cents"`
 	StripeAccountID     string    `json:"stripe_account_id"`
@@ -29,6 +33,115 @@ type checkoutReservation struct {
 	ExpiresAt           time.Time `json:"expires_at"`
 	Status              string    `json:"status"`
 	PaymentStatus       string    `json:"payment_status"`
+}
+
+type checkoutQuote struct {
+	RestaurantID    string  `json:"restaurant_id"`
+	SlotID          string  `json:"slot_id"`
+	SubtotalCents   int     `json:"subtotal_cents"`
+	DiscountCents   int     `json:"discount_cents"`
+	AmountCents     int     `json:"amount_cents"`
+	Currency        string  `json:"currency"`
+	PromoCode       *string `json:"promo_code"`
+	DiscountPercent *int    `json:"discount_percent"`
+}
+
+type promoRequest struct {
+	RestaurantID string          `json:"p_restaurant_id"`
+	SlotID       string          `json:"p_slot_id"`
+	Items        json.RawMessage `json:"p_items"`
+	PromoCode    string          `json:"promo_code"`
+}
+
+var promoCodePattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{2,31}$`)
+
+func normalizePromoCode(code string) (string, bool) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return "", true
+	}
+	return code, promoCodePattern.MatchString(code)
+}
+
+func validQuote(v checkoutQuote, restaurantID, slotID string) bool {
+	if v.RestaurantID != restaurantID || v.SlotID != slotID || v.SubtotalCents < 0 || v.DiscountCents < 0 ||
+		v.AmountCents < 0 || v.AmountCents != v.SubtotalCents-v.DiscountCents || !strings.EqualFold(v.Currency, "usd") {
+		return false
+	}
+	if v.PromoCode == nil {
+		return v.DiscountCents == 0 && v.DiscountPercent == nil
+	}
+	return promoCodePattern.MatchString(*v.PromoCode) && v.DiscountCents > 0 && v.DiscountPercent != nil && *v.DiscountPercent >= 1 && *v.DiscountPercent <= 90
+}
+
+func validPromotionSnapshot(v checkoutReservation) bool {
+	if v.SubtotalCents != v.AmountCents+v.DiscountCents || v.DiscountCents < 0 {
+		return false
+	}
+	if v.PromoCode == nil {
+		return v.DiscountCents == 0 && v.DiscountPercent == nil
+	}
+	return promoCodePattern.MatchString(*v.PromoCode) && v.DiscountCents > 0 && v.DiscountPercent != nil && *v.DiscountPercent >= 1 && *v.DiscountPercent <= 90
+}
+
+func (s *Server) quoteCheckout(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authenticatedSupabaseUser(w, r)
+	if !ok {
+		return
+	}
+	if !s.paymentConfigured() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "online checkout is not configured"})
+		return
+	}
+	var in promoRequest
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	code, valid := normalizePromoCode(in.PromoCode)
+	if !valid || !checkoutOrderIDPattern.MatchString(in.RestaurantID) || !checkoutOrderIDPattern.MatchString(in.SlotID) || !validOrderItems(in.Items) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid checkout quote request"})
+		return
+	}
+	var promo any
+	if code != "" {
+		promo = code
+	}
+	data, status, err := s.serviceRPC(r.Context(), "quote_checkout_order", map[string]any{
+		"p_user_id": userID, "p_restaurant_id": in.RestaurantID, "p_slot_id": in.SlotID, "p_items": in.Items, "p_promo_code": promo,
+	})
+	if err != nil {
+		upstreamError(w, status, err)
+		return
+	}
+	var quote checkoutQuote
+	if err := json.Unmarshal(data, &quote); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "checkout quote response was invalid"})
+		return
+	}
+	// The service RPC is scoped by these request IDs and returns price fields only.
+	// Echo the already-validated IDs rather than requiring the SQL function to repeat them.
+	quote.RestaurantID, quote.SlotID = in.RestaurantID, in.SlotID
+	if !validQuote(quote, in.RestaurantID, in.SlotID) {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "checkout quote response was invalid"})
+		return
+	}
+	writeJSON(w, http.StatusOK, quote)
+}
+
+func validOrderItems(raw json.RawMessage) bool {
+	var items []struct {
+		ItemID   string `json:"item_id"`
+		Quantity int    `json:"quantity"`
+	}
+	if len(raw) == 0 || len(raw) > 32<<10 || json.Unmarshal(raw, &items) != nil || len(items) == 0 || len(items) > 30 {
+		return false
+	}
+	for _, item := range items {
+		if !checkoutOrderIDPattern.MatchString(item.ItemID) || item.Quantity < 1 || item.Quantity > 100 {
+			return false
+		}
+	}
+	return true
 }
 
 func (v checkoutReservation) state() string {
@@ -104,7 +217,8 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	if in.RestaurantID == "" || in.SlotID == "" || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || in.PickupMode == "" || !json.Valid(in.Items) || len(in.Items) == 0 {
+	code, promoValid := normalizePromoCode(in.PromoCode)
+	if !promoValid || in.ExpectedAmountCents == nil || *in.ExpectedAmountCents < 0 || !checkoutOrderIDPattern.MatchString(in.RestaurantID) || !checkoutOrderIDPattern.MatchString(in.SlotID) || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || in.PickupMode == "" || !validOrderItems(in.Items) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid checkout request"})
 		return
 	}
@@ -123,6 +237,12 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 	args["p_vehicle"] = in.Vehicle
 	args["p_items"] = in.Items
 	args["p_user_id"], _ = json.Marshal(userID)
+	args["p_expected_amount_cents"], _ = json.Marshal(*in.ExpectedAmountCents)
+	if code == "" {
+		args["p_promo_code"] = json.RawMessage("null")
+	} else {
+		args["p_promo_code"], _ = json.Marshal(code)
+	}
 	reservationBody, err := json.Marshal(args)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid checkout request"})
@@ -130,6 +250,10 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	rpcData, status, err := s.serviceRPC(r.Context(), "reserve_checkout_order", json.RawMessage(reservationBody))
 	if err != nil {
+		if quoteConflict(status, rpcData) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "checkout price changed; request a new quote"})
+			return
+		}
 		upstreamError(w, status, err)
 		return
 	}
@@ -139,7 +263,7 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reservation.state() == "paid" {
-		writeJSON(w, http.StatusOK, map[string]string{"order_id": reservation.OrderID, "status": "paid"})
+		writeCheckoutReservation(w, http.StatusOK, reservation, "paid", "")
 		return
 	}
 	if reservation.state() != "pending" {
@@ -216,13 +340,39 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not save checkout session; retry this request to resume payment"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"order_id": reservation.OrderID, "checkout_url": session.URL})
+	writeCheckoutReservation(w, http.StatusOK, reservation, "", session.URL)
+}
+
+func quoteConflict(status int, body []byte) bool {
+	if status == http.StatusConflict {
+		return true
+	}
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	message := strings.ToLower(string(body))
+	return strings.Contains(message, "quote changed") || strings.Contains(message, "amount changed")
 }
 
 func validReservation(v checkoutReservation) bool {
 	return checkoutOrderIDPattern.MatchString(v.OrderID) && v.AmountCents > 0 && strings.EqualFold(v.Currency, "usd") &&
 		v.ApplicationFeeCents >= 150 && v.ApplicationFeeCents <= 200 && v.ApplicationFeeCents <= v.AmountCents &&
-		connectedAccountID.MatchString(v.StripeAccountID) && !v.ExpiresAt.IsZero()
+		connectedAccountID.MatchString(v.StripeAccountID) && !v.ExpiresAt.IsZero() && validPromotionSnapshot(v)
+}
+
+func writeCheckoutReservation(w http.ResponseWriter, status int, v checkoutReservation, state, checkoutURL string) {
+	response := map[string]any{
+		"order_id": v.OrderID, "subtotal_cents": v.SubtotalCents, "discount_cents": v.DiscountCents,
+		"amount_cents": v.AmountCents, "currency": strings.ToLower(v.Currency), "promo_code": v.PromoCode,
+		"discount_percent": v.DiscountPercent,
+	}
+	if state != "" {
+		response["status"] = state
+	}
+	if checkoutURL != "" {
+		response["checkout_url"] = checkoutURL
+	}
+	writeJSON(w, status, response)
 }
 
 func sessionParams(v checkoutReservation, webBase string) url.Values {
