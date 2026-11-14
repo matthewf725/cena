@@ -11,6 +11,8 @@ These terms govern a restaurant’s participation in Cena, including menu listin
 
 Cena provides tools to publish meal-kit listings and receive and manage customer pickup orders. In the initial release, customers pay the Restaurant directly at pickup; Cena does not collect or remit customer payments. Restaurant must not represent that Cena processes payment. No commission, subscription, or other fee is charged unless the parties separately accept a written fee schedule or order form identifying the fee and its effective date.
 
+Cena plans to charge restaurants a flat $1.50–$2.00 per order and a 0% commission. The final amount and billing terms will be listed in the written fee schedule before any fee takes effect.
+
 Cena does not prepare, own, inspect, or deliver food. The Restaurant is the seller of the food and is responsible for each order from acceptance through handoff to the customer.
 
 ## 2. Restaurant responsibilities
