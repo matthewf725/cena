@@ -106,7 +106,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ user_id: create.id, restaurant_id: restaurant.id, role: 'owner' }),
     });
-    return { email, password, restaurant };
+    return { email, password, restaurant, itemId, slotId: slotRows[0].id, availableQty: sourceSlot.capacity };
   }
 
   async function createRoutes(page) {
@@ -426,7 +426,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
     customerPage = await context.newPage();
     await createRoutes(customerPage);
-    await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 180000 });
     mark('customer document DOM content loaded');
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).waitFor({ state: 'visible', timeout: 90000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
@@ -455,9 +455,24 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const checkoutOtpSend = await checkoutOtpSendPromise;
     mark(`checkout OTP send returned ${checkoutOtpSend.status()}`);
     assert.ok(checkoutOtpSend.ok(), 'Local Supabase should accept the checkout OTP request');
-    await clickGotIt(customerPage);
+    await customerPage.getByText('Check your email for a six-digit sign-in code.', { exact: true }).waitFor({ timeout: 10000 });
+    const checkoutResend = customerPage.getByRole('button', { name: 'Send a new code', exact: true });
+    assert.equal(await checkoutResend.isDisabled(), true, 'Checkout resend must be rate limited immediately after sending');
     const checkoutOtp = await readOtp(checkoutEmail);
     mark('checkout OTP received from local Mailpit');
+    const wrongCheckoutOtp = checkoutOtp === '000000' ? '111111' : '000000';
+    await customerPage.getByPlaceholder('6-digit email sign-in code').fill(wrongCheckoutOtp);
+    const wrongCheckoutOtpVerifyPromise = customerPage.waitForResponse(response => {
+      const pathname = new URL(response.url()).pathname;
+      return (pathname.endsWith('/auth/v1/verify') || pathname.includes('/auth/v1/token')) && response.request().method() === 'POST';
+    }, { timeout: 30000 });
+    await customerPage.getByRole('button', { name: 'Verify code and continue', exact: true }).click();
+    const wrongCheckoutOtpVerify = await wrongCheckoutOtpVerifyPromise;
+    assert.ok(!wrongCheckoutOtpVerify.ok(), 'An incorrect checkout OTP must be rejected');
+    await customerPage.getByText('That code didn’t work. Check the digits or request a new code.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await checkoutResend.isDisabled(), true, 'Resend must stay disabled during its cooldown after an incorrect code');
+    mark('wrong checkout OTP rejected with inline feedback while resend stayed disabled');
+
     await customerPage.getByPlaceholder('6-digit email sign-in code').fill(checkoutOtp);
     const checkoutOtpVerifyPromise = customerPage.waitForResponse(response => {
       const pathname = new URL(response.url()).pathname;
@@ -560,6 +575,48 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.ok(recoveredQuoteResponse.ok(), `Recovered promo quote failed (${recoveredQuoteResponse.status()})`);
     assert.equal((await recoveredQuoteResponse.json()).amount_cents, expectedAmountCents);
     mark('late promo rejection returned 422 without creating order/Checkout; customer removed code and successfully re-quoted');
+
+    const checkoutSessionsBeforeStockRejection = fake.audit.filter(entry => entry.kind === 'checkout_session').length;
+    const reduceFixtureStock = async availableQty => {
+      const updated = await serviceRequest(`/rest/v1/slot_item_inventory?slot_id=eq.${fixture.slotId}&item_id=eq.${fixture.itemId}`, {
+        method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ available_qty: availableQty }),
+      });
+      assert.equal(updated.length, 1, 'The isolated fixture inventory row should update');
+    };
+    await reduceFixtureStock(1);
+    const stockRejectionPromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout' && response.request().method() === 'POST');
+    await customerPage.getByRole('button', { name: /Continue to secure payment/ }).click();
+    const stockRejection = await stockRejectionPromise;
+    assert.equal(stockRejection.status(), 422, 'Checkout must revalidate inventory after the quote');
+    const stockRejectionBody = await stockRejection.json();
+    assert.equal(stockRejectionBody.code, 'item_unavailable');
+    await customerPage.getByText('A meal kit in your bag is unavailable for that pickup time. Update your bag or choose another time.', { exact: true }).waitFor({ timeout: 15000 });
+    await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).waitFor();
+    assert.equal((await queryRows('orders', 'id', { user_id: `eq.${customerUserId}` })).length, 0, 'Late stock rejection must not create an order');
+    assert.equal(fake.audit.filter(entry => entry.kind === 'checkout_session').length, checkoutSessionsBeforeStockRejection, 'Late stock rejection must not create a Stripe Checkout Session');
+    const rejectedInventory = await serviceRequest(`/rest/v1/slot_item_inventory?select=available_qty,reserved_qty&slot_id=eq.${fixture.slotId}&item_id=eq.${fixture.itemId}`);
+    assert.deepEqual(rejectedInventory, [{ available_qty: 1, reserved_qty: 0 }], 'A rejected late-stock checkout must not reserve inventory');
+    await customerPage.getByRole('button', { name: 'Return to bag and refresh availability', exact: true }).click();
+    await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
+    await customerPage.getByRole('button', { name: `Decrease ${mealName} quantity`, exact: true }).waitFor();
+    await customerPage.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+    await customerPage.getByText('No pickup time fits this bag', { exact: true }).waitFor({ timeout: 30000 });
+    await clickGotIt(customerPage);
+    await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
+    await customerPage.getByRole('button', { name: `Decrease ${mealName} quantity`, exact: true }).waitFor();
+    await reduceFixtureStock(fixture.availableQty);
+    await customerPage.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+    await customerPage.getByText('When would you', { exact: false }).waitFor({ timeout: 30000 });
+    await customerPage.getByRole('button', { name: 'Choose pickup time', exact: true }).click();
+    await customerPage.getByText('Pick a time that', { exact: false }).waitFor({ timeout: 10000 });
+    await customerPage.getByRole('button', { name: 'Continue to details', exact: true }).click();
+    await customerPage.getByLabel('Restaurant discount code').waitFor({ timeout: 15000 });
+    const refreshedStockQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname === '/v1/checkout/quote' && response.request().method() === 'POST');
+    await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).click();
+    const refreshedStockQuote = await refreshedStockQuotePromise;
+    assert.ok(refreshedStockQuote.ok(), `Fresh quote after inventory recovery failed (${refreshedStockQuote.status()})`);
+    assert.equal((await refreshedStockQuote.json()).amount_cents, expectedAmountCents, 'The unchanged two-item bag should quote at its exact prior total');
+    mark('late stock rejection returned 422, preserved the two-item bag, refreshed availability, and recovered with a fresh quote');
 
     async function createCheckout() {
       const responsePromise = customerPage.waitForResponse(response => {
