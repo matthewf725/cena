@@ -16,6 +16,7 @@ import { formatDistance, sanFrancisco, type PickupOrigin } from '../lib/discover
 import { foodPhoto } from '../lib/food-photos';
 import { dateLabel, dayOffset } from '../lib/pickup-days';
 import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutQuote } from '../lib/supabase';
+import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
 
 const footerTabs = [{ name: 'Home', Icon: Search }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
 type Tab = typeof footerTabs[number]['name'] | 'Account';
@@ -30,13 +31,13 @@ export default function Home() {
   const {width}=useWindowDimensions();
   const reduceMotion=useReducedMotion();
   const contentRadius=16+Math.max(0,Math.min(10,(390-width)*.08));
-  const [tab,setTab]=useState<Tab>('Home'), [active,setActive]=useState<Kitchen|null>(null), [backendOrders,setBackendOrders]=useState<any[]>([]), [completedItems,setCompletedItems]=useState<{meal:Meal;qty:number}[]>([]), [query,setQuery]=useState(''), [cart,setCart]=useState<Record<string,{meal:Meal;qty:number;options:string;restaurantId:string}>>({}), [selected,setSelected]=useState<Meal|null>(null), [selectedQuantity,setSelectedQuantity]=useState(1), [selectedOptions,setSelectedOptions]=useState<string[]>([]), [flow,setFlow]=useState<'menu'|'date'|'time'|'contact'|'done'>('menu'), [date,setDate]=useState(1), [slot,setSlot]=useState('5:30 PM'), [curb,setCurb]=useState(false), [email,setEmail]=useState(''), [phone,setPhone]=useState(''), [displayName,setDisplayName]=useState(''), [vehicleMake,setVehicleMake]=useState(''), [vehicleModel,setVehicleModel]=useState(''), [vehicleColor,setVehicleColor]=useState(''), [equipment,setEquipment]=useState<string[]>([]), [analyticsConsented,setAnalyticsConsented]=useState(false), [termsAccepted,setTermsAccepted]=useState(false), [hydrated,setHydrated]=useState(false), [otpSent,setOtpSent]=useState(false), [otpCode,setOtpCode]=useState(''), [now,setNow]=useState(Date.now()), [notice,setNotice]=useState<{title:string;message:string}|null>(null);
+  const [tab,setTab]=useState<Tab>('Home'), [active,setActive]=useState<Kitchen|null>(null), [backendOrders,setBackendOrders]=useState<any[]>([]), [completedItems,setCompletedItems]=useState<{meal:Meal;qty:number}[]>([]), [query,setQuery]=useState(''), [cart,setCart]=useState<Record<string,{meal:Meal;qty:number;options:string;restaurantId:string}>>({}), [selected,setSelected]=useState<Meal|null>(null), [selectedQuantity,setSelectedQuantity]=useState(1), [selectedOptions,setSelectedOptions]=useState<string[]>([]), [flow,setFlow]=useState<'menu'|'date'|'time'|'contact'|'done'>('menu'), [date,setDate]=useState(1), [slot,setSlot]=useState('5:30 PM'), [curb,setCurb]=useState(false), [email,setEmail]=useState(''), [phone,setPhone]=useState(''), [displayName,setDisplayName]=useState(''), [vehicleMake,setVehicleMake]=useState(''), [vehicleModel,setVehicleModel]=useState(''), [vehicleColor,setVehicleColor]=useState(''), [equipment,setEquipment]=useState<string[]>([]), [analyticsConsented,setAnalyticsConsented]=useState(false), [termsAccepted,setTermsAccepted]=useState(false), [hydrated,setHydrated]=useState(false), [authResolved,setAuthResolved]=useState(!supabase), [otpSent,setOtpSent]=useState(false), [otpCode,setOtpCode]=useState(''), [now,setNow]=useState(Date.now()), [notice,setNotice]=useState<{title:string;message:string}|null>(null);
   const [checkingBag,setCheckingBag]=useState(false);
   const [cartRevision,setCartRevision]=useState('');
   const cartRevisionRef=useRef('');
-  const cartChangedBeforeHydration=useRef(false);
   const cartRef=useRef(cart);
   cartRef.current=cart;
+  const flowRef=useRef(flow);flowRef.current=flow;
   const [origin,setOrigin]=useState<PickupOrigin>(sanFrancisco);
   const [locationLabel,setLocationLabel]=useState('From San Francisco');
   const [showLocation,setShowLocation]=useState(false);
@@ -48,6 +49,10 @@ export default function Home() {
   const [authUserId,setAuthUserId]=useState<string|null>(null);
   const currentAuthUserId=useRef<string|null>(null);
   const initialAuthEvent=useRef(true);
+  const storageOwnerRef=useRef<string|null|undefined>(undefined);
+  const storageLoadGeneration=useRef(0);
+  const storageWriteQueue=useRef<Promise<void>>(Promise.resolve());
+  const guestBagToAdopt=useRef<{snapshot:CustomerLocalSnapshot;checkoutInProgress:boolean}|null>(null);
   const [checkout,setCheckout]=useState<{orderId:string;url:string;restaurantId:string;date:number;slot:string;email:string;total?:number;ownerUserId:string;cartRevision?:string;items?:{meal:Meal;qty:number}[]}|null>(null);
   const [showCheckoutRecovery,setShowCheckoutRecovery]=useState(true);
   const [paymentStatus,setPaymentStatus]=useState<'pending'|'paid'|'expired'|'failed'|'cancelled'|'refunded'|null>(null);
@@ -62,10 +67,17 @@ export default function Home() {
   const emailEdited=useRef(false);
   const storageHydrated=useRef(false);
   const sessionEmail=useRef<string|null>(null);
+  const demoRecentIdsRef=useRef(demoRecentIds);demoRecentIdsRef.current=demoRecentIds;
+  const demoRecentMealsRef=useRef(demoRecentMeals);demoRecentMealsRef.current=demoRecentMeals;
+  const customerLocalSnapshot=():CustomerLocalSnapshot=>({cart:cartRef.current,cartRevision:cartRevisionRef.current,demoRecentIds:demoRecentIdsRef.current,demoRecentMeals:demoRecentMealsRef.current});
+  const queueCustomerLocalSave=(userId:string|null,snapshot=customerLocalSnapshot())=>{
+    storageWriteQueue.current=storageWriteQueue.current.catch(()=>{}).then(()=>saveCustomerLocalState(AsyncStorage,userId,snapshot)).catch(()=>{});
+    return storageWriteQueue.current;
+  };
   const updateEmail=(value:string)=>{emailEdited.current=true;setEmail(value);};
   const pendingStorageKey=(userId:string)=>`cena.customer.pending-checkout.v1.${userId}`;
   const idempotencyStorageKey=(userId:string)=>`cena.customer.idempotency.v1.${userId}`;
-  const bumpCartRevision=()=>{const next=`${Date.now()}-${Math.random().toString(36).slice(2,10)}`;cartRevisionRef.current=next;cartChangedBeforeHydration.current=true;setCartRevision(next);};
+  const bumpCartRevision=()=>{const next=`${Date.now()}-${Math.random().toString(36).slice(2,10)}`;cartRevisionRef.current=next;setCartRevision(next);};
   const menuRequest=useRef(0);
   const bagRequest=useRef(0);
   const idempotency=useRef({ fingerprint:'', key:'' });
@@ -83,8 +95,29 @@ export default function Home() {
       setAuthenticated(Boolean(session));
       const nextUserId=session?.user.id??null;
       if(currentAuthUserId.current!==nextUserId){
+         const previousUserId=currentAuthUserId.current;
+         const previousStorageOwner=storageOwnerRef.current;
+         if(previousStorageOwner!==undefined)void queueCustomerLocalSave(previousStorageOwner,customerLocalSnapshot());
+         const isGuestSignIn=Boolean(nextUserId)&&!previousUserId&&!isInitialAuthEvent;
+         const liveGuestBag=cartRef.current;
+         guestBagToAdopt.current=isGuestSignIn&&Object.keys(liveGuestBag).length>0
+           ?{snapshot:customerLocalSnapshot(),checkoutInProgress:flowRef.current==='contact'}:null;
+         storageOwnerRef.current=undefined;
+         setHydrated(false);
+         if(!guestBagToAdopt.current){
+           cartRef.current={};setCart({});cartRevisionRef.current='';setCartRevision('');
+           setDemoRecentIds([]);setDemoRecentMeals([]);
+         }
+         if(previousUserId){
+           setDisplayName('');setPhone('');setEquipment([]);setAnalyticsConsented(false);
+           setTermsAccepted(false);
+         }else if(event==='SIGNED_OUT'){
+           setDisplayName('');setPhone('');setEquipment([]);setAnalyticsConsented(false);
+           setTermsAccepted(false);
+         }
         currentAuthUserId.current=nextUserId;
         if(!isInitialAuthEvent)bumpCartRevision();
+         if(guestBagToAdopt.current)guestBagToAdopt.current.snapshot={...guestBagToAdopt.current.snapshot,cartRevision:cartRevisionRef.current};
         setCheckout(null);setPaymentStatus(null);setShowCheckoutRecovery(false);
         setQuote(null);setQuoteError('');
         setBackendOrders([]);
@@ -92,6 +125,7 @@ export default function Home() {
         idempotency.current={fingerprint:'',key:''};
       }
       setAuthUserId(nextUserId);
+       if(isInitialAuthEvent)setAuthResolved(true);
       sessionEmail.current=session?.user.email??null;
       if(event==='SIGNED_OUT'){emailEdited.current=false;setEmail('');}
       else if(session?.user.email&&(event==='SIGNED_IN'||(storageHydrated.current&&!emailEdited.current))){emailEdited.current=false;setEmail(session.user.email);}
@@ -103,9 +137,47 @@ export default function Home() {
     });
     return ()=>{request++;clearTimeout(pending);subscription.unsubscribe();};
   },[]);
-  useEffect(()=>{AsyncStorage.getItem('cena.customer.demo.v1').then(raw=>{if(raw){const v=JSON.parse(raw);setCart(v.cart||{});setEquipment(v.equipment||[]);if(!cartChangedBeforeHydration.current){cartRevisionRef.current=typeof v.cartRevision==='string'?v.cartRevision:'';setCartRevision(cartRevisionRef.current);}if(!emailEdited.current)setEmail(sessionEmail.current||v.email||'');setPhone(v.phone||'');setDisplayName(v.displayName||'');setDemoRecentIds(v.demoRecentIds||[]);setDemoRecentMeals(v.demoRecentMeals||[]);setAnalyticsConsented(!!v.analyticsConsented);setTermsAccepted(!!v.termsAccepted);}}).catch(()=>{}).finally(()=>{storageHydrated.current=true;if(sessionEmail.current&&!emailEdited.current)setEmail(sessionEmail.current);setHydrated(true);});},[]);
+  useEffect(()=>{
+    if(!authResolved)return;
+    const generation=++storageLoadGeneration.current;
+    let active=true;
+    setHydrated(false);
+    void (async()=>{
+      await storageWriteQueue.current.catch(()=>{});
+      const owner=authUserId;
+      const saved=await loadCustomerLocalState(AsyncStorage,owner);
+      if(!active||generation!==storageLoadGeneration.current||currentAuthUserId.current!==owner)return;
+      const guest=owner?guestBagToAdopt.current:null;
+      const adoptGuest=Boolean(guest&&(guest.checkoutInProgress||Object.keys(saved.cart).length===0));
+      if(adoptGuest&&guest){
+        const adopted={...guest.snapshot,demoRecentIds:[],demoRecentMeals:[]};
+        await queueCustomerLocalSave(owner,adopted);
+        if(!active||generation!==storageLoadGeneration.current||currentAuthUserId.current!==owner)return;
+        setCart(adopted.cart as typeof cart);
+        cartRevisionRef.current=adopted.cartRevision;setCartRevision(adopted.cartRevision);
+      }else{
+        setCart(saved.cart as typeof cart);
+        cartRevisionRef.current=saved.cartRevision;setCartRevision(saved.cartRevision);
+      }
+      setDemoRecentIds(saved.demoRecentIds);setDemoRecentMeals(saved.demoRecentMeals);
+      storageOwnerRef.current=owner;
+      if(owner)guestBagToAdopt.current=null;
+      storageHydrated.current=true;
+      if(sessionEmail.current&&!emailEdited.current)setEmail(sessionEmail.current);
+      setHydrated(true);
+    })().catch(()=>{
+      if(!active||generation!==storageLoadGeneration.current||currentAuthUserId.current!==authUserId)return;
+      storageOwnerRef.current=authUserId;
+      storageHydrated.current=true;
+      setHydrated(true);
+    });
+    return()=>{active=false;};
+  },[authResolved,authUserId]);
   useEffect(()=>{if(!hydrated||!authUserId)return;let active=true;AsyncStorage.getItem(pendingStorageKey(authUserId)).then(raw=>{if(!active||!raw)return;const pending=JSON.parse(raw);if(pending.ownerUserId===authUserId&&typeof pending.orderId==='string'&&typeof pending.url==='string'&&isTrustedCheckoutURL(pending.url)){setCheckout(pending);setPaymentStatus('pending');setShowCheckoutRecovery(true);}}).catch(()=>{});return()=>{active=false;};},[hydrated,authUserId]);
-  useEffect(()=>{if(hydrated)AsyncStorage.setItem('cena.customer.demo.v1',JSON.stringify({cart,cartRevision,equipment,email,phone,displayName,demoRecentIds,demoRecentMeals,analyticsConsented,termsAccepted})).catch(()=>{});},[cart,cartRevision,equipment,email,phone,displayName,demoRecentIds,demoRecentMeals,analyticsConsented,termsAccepted,hydrated]);
+  useEffect(()=>{
+    if(!hydrated||storageOwnerRef.current!==authUserId)return;
+    void queueCustomerLocalSave(authUserId,{cart,cartRevision,demoRecentIds,demoRecentMeals});
+  },[cart,cartRevision,demoRecentIds,demoRecentMeals,hydrated,authUserId]);
   const confirmPaidCheckout=async(pending:NonNullable<typeof checkout>)=>{
     if(currentAuthUserId.current!==pending.ownerUserId)return;
     if(paidCheckout.current===pending.orderId)return;
@@ -283,6 +355,7 @@ export default function Home() {
     }
   }
   const add=(meal:Meal,qty=1,options='')=>{
+    if(!hydrated)return;
     if(checkout){setNotice({title:'Finish this checkout first',message:'Complete or cancel the pending payment before changing your bag.'});return;}
     if(!active)return;
     const restaurantId=active.id;
@@ -294,6 +367,7 @@ export default function Home() {
     setCart(c=>({...c,[meal.id]:{meal,qty:Math.min(50,(c[meal.id]?.qty||0)+qty),options:options||c[meal.id]?.options||'',restaurantId}}));
   };
   const changeQty=(id:string,d:number)=>{
+    if(!hydrated)return;
     if(checkout)return;
     if(!cart[id])return;
     bumpCartRevision();
@@ -358,7 +432,7 @@ export default function Home() {
   };
   async function continueBag() {
     const lines: BagLine[]=Object.values(cart);
-    if(checkingBag||!lines.length)return;
+    if(!hydrated||checkingBag||!lines.length)return;
     const request=++bagRequest.current;
     setCheckingBag(true);
     try {
@@ -494,10 +568,10 @@ export default function Home() {
           <MapPin size={15} color={maroon}/><Text numberOfLines={1} style={[s.locText,{flexShrink:1}]}>{locating?'Finding location…':locationLabel}</Text>
         </Pressable><Pressable accessibilityRole="button" accessibilityLabel="Open account" onPress={()=>navigate('Account')} style={[s.avatar,{flexShrink:0}]}><UserRound size={17} color={maroon}/></Pressable></View>
       <Enter key={tab} reduced={reduceMotion}>
-        {tab==='Home'?<DiscoveryFeed width={Math.min(width,560)} radius={contentRadius}
+      {tab==='Home'?<DiscoveryFeed width={Math.min(width,560)} radius={contentRadius}
           query={query} setQuery={setQuery} reduced={reduceMotion} origin={origin} fromCity={fromCity} recentIds={recentIds} recentMealIds={recentMealIds}
-          open={kitchen=>void openKitchen(kitchen)} openMeal={({kitchen,meal})=>void openKitchen(kitchen,meal.id)}/>:tab==='Orders'?<Orders onRepeat={(k)=>openKitchen(k)} orders={visibleOrders} live={!!supabase}/>:tab==='Bag'?<Bag items={Object.values(cart)} subtotal={subtotal} radius={contentRadius} loading={checkingBag} locked={Boolean(checkout)} bottomNavHeight={73} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<Account
-          equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
+      open={kitchen=>void openKitchen(kitchen)} openMeal={({kitchen,meal})=>void openKitchen(kitchen,meal.id)}/>:tab==='Orders'?<Orders onRepeat={(k)=>openKitchen(k)} orders={visibleOrders} live={!!supabase}/>:tab==='Bag'?<Bag items={Object.values(cart)} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} bottomNavHeight={73} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<Account
+          userId={authUserId} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
           displayName={displayName} setDisplayName={setDisplayName}/>}
       </Enter>
@@ -512,7 +586,7 @@ export default function Home() {
         {menuLoading&&<ActivityIndicator color={maroon} accessibilityLabel="Loading menu"/>}
         {!menuLoading&&!active.meals.length&&<Text style={[s.sectionHint,{marginHorizontal:18}]}>No meal kits are available for pickup at this kitchen right now.</Text>}
         {supabase?<LiveMenuReorder kitchen={active} orders={reorderOrders} add={(m,q)=>add(m,q)}/>:Object.values(recentlyOrdered).some(x=>active.meals.some(m=>m.id in recentlyOrdered))&&<View style={s.reorderBox}><View style={s.reorderIcon}><CircleCheck size={19} color={green}/></View><View style={{flex:1}}><Text style={s.reorderTitle}>Your usual, just how you like it</Text><Text style={s.reorderSub}>Previous quantity and preferences are saved.</Text>{active.meals.filter(m=>m.id in recentlyOrdered).map(m=><View key={m.id} style={s.savedOrderRow}><Text style={s.savedOrderName}>{m.name}</Text><Text style={s.savedOrderOpts}>{recentlyOrdered[m.id].qty}× · {recentlyOrdered[m.id].options}</Text><Pressable onPress={()=>add(m,recentlyOrdered[m.id].qty,recentlyOrdered[m.id].options)} style={s.reorderBtn}><Plus size={14} color="#FFF"/><Text style={s.reorderBtnText}>Add usual</Text></Pressable></View>)}</View></View>}
-        {active.meals.map(m=><Pressable onPress={()=>openMeal(m)} style={s.mealRow} key={m.id}><View style={s.mealText}><View style={s.mealTags}>{m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}{m.equipment&&!equipment.some(e=>e.toLowerCase()===m.equipment!.toLowerCase())&&<Text style={s.equipmentTag}>NEEDS {m.equipment.toUpperCase()}</Text>}</View><Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>{cart[m.id]&&<Text style={s.inCart}>In your bag · {cart[m.id].qty}</Text>}</View><View><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={s.mealImage}/><Pressable accessibilityRole="button" accessibilityLabel={`Add ${m.name} to bag`} onPress={event=>{event.stopPropagation();add(m);}} style={s.addBubble}><Plus size={19} color={maroon}/></Pressable></View></Pressable>)}
+        {active.meals.map(m=><Pressable onPress={()=>openMeal(m)} style={s.mealRow} key={m.id}><View style={s.mealText}><View style={s.mealTags}>{m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}{m.equipment&&!equipment.some(e=>e.toLowerCase()===m.equipment!.toLowerCase())&&<Text style={s.equipmentTag}>NEEDS {m.equipment.toUpperCase()}</Text>}</View><Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>{cart[m.id]&&<Text style={s.inCart}>In your bag · {cart[m.id].qty}</Text>}</View><View><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={s.mealImage}/><Pressable accessibilityRole="button" accessibilityLabel={`Add ${m.name} to bag`} disabled={!hydrated} onPress={event=>{event.stopPropagation();add(m);}} style={s.addBubble}><Plus size={19} color={maroon}/></Pressable></View></Pressable>)}
       </ScrollView>}
       {flow==='date'&&<PickupDate date={date} live={!!active.backendId} slots={eligibleSlots} timezone={active.timezone} address={active.address} setDate={n=>{setQuote(null);setQuoteError('');setDate(n);const first=eligibleSlots?.find(x=>dayOffset(x.startsAt,active.timezone)===n);if(first)setSlot(formatTime(first.startsAt,active.timezone));}} next={()=>{if(active.backendId&&!eligibleSlots?.length){closeKitchen();setTab('Bag');}else setFlow('time');}}/>}
       {flow==='time'&&<PickupTime date={date} live={!!active.backendId} available={eligibleSlots?.filter(x=>dayOffset(x.startsAt,active.timezone)===date)} timezone={active.timezone} address={active.address} slot={slot} setSlot={value=>{setQuote(null);setQuoteError('');setSlot(value);}} curb={curb} setCurb={setCurb} curbsideEnabled={active.curbsideEnabled!==false} editDate={()=>setFlow('date')} next={()=>setFlow(active.backendId&&!eligibleSlots?.some(x=>dayOffset(x.startsAt,active.timezone)===date)?'date':'contact')}/>}

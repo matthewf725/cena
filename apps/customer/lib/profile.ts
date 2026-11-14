@@ -49,11 +49,11 @@ export async function loadCustomerAccount(): Promise<CustomerAccount | null> {
   };
 }
 
-export async function saveCustomerAccount(profile: CustomerProfile, analyticsConsented: boolean) {
+export async function saveCustomerAccount(profile: CustomerProfile, analyticsConsented: boolean, expectedUserId: string) {
   const api = client();
   const { data: { user }, error: userError } = await api.auth.getUser();
   if (userError) throw userError;
-  if (!user) throw new Error('Sign in to sync your profile across devices.');
+  if (!user || user.id !== expectedUserId) throw new Error('Your account changed. Reload the profile and try again.');
   const { error: profileError } = await api.from('profiles').upsert({
     id: user.id,
     display_name: profile.displayName.trim().slice(0, 80),
