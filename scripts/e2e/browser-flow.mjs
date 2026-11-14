@@ -67,16 +67,16 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const create = await serviceRequest('/auth/v1/admin/users', {
       method: 'POST', body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { display_name: 'Cena QA Owner' } }),
     });
-    const restaurants = await serviceRequest(`/rest/v1/restaurants?select=id,name,slug&slug=eq.${restaurantSlug}&active=eq.true&limit=1`);
+    const restaurants = await serviceRequest(`/rest/v1/restaurants?select=id,name,slug,latitude,longitude&slug=eq.${restaurantSlug}&active=eq.true&limit=1`);
     assert.equal(restaurants.length, 1, `Seed restaurant ${restaurantSlug} must exist locally`);
     const source = restaurants[0];
     const sourceItems = await serviceRequest(`/rest/v1/catalog_items?select=*&restaurant_id=eq.${source.id}&name=eq.${encodeURIComponent(mealName)}&active=eq.true&limit=1`);
     assert.equal(sourceItems.length, 1, `Seed menu item ${mealName} must exist locally`);
     const sourceSlots = await serviceRequest(`/rest/v1/pickup_slots?select=*&restaurant_id=eq.${source.id}&active=eq.true&cutoff_at=gt.${encodeURIComponent(new Date().toISOString())}&order=starts_at.asc&limit=1`);
     assert.ok(sourceSlots.length, `Seed restaurant ${source.slug} needs a future pickup slot`);
-    const restaurantRows = await serviceRequest('/rest/v1/restaurants?select=id,name,slug', {
+    const restaurantRows = await serviceRequest('/rest/v1/restaurants?select=id,name,slug,latitude,longitude', {
       method: 'POST', headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({ slug: `cena-e2e-${runId}-${browserName}`, name: `QA Sunrise ${runId.slice(-6)} ${browserName}`, description: 'Disposable local browser QA restaurant.', cuisine: 'Cafe', image_key: 'sunrise-cafe-cover', timezone: 'America/Los_Angeles', address: 'Local QA only', curbside_enabled: true, active: true }),
+      body: JSON.stringify({ slug: `cena-e2e-${runId}-${browserName}`, name: `QA Sunrise ${runId.slice(-6)} ${browserName}`, description: 'Disposable local browser QA restaurant.', cuisine: 'Cafe', image_key: 'sunrise-cafe-cover', timezone: 'America/Los_Angeles', address: 'Local QA only', latitude: source.latitude, longitude: source.longitude, curbside_enabled: true, active: true }),
     });
     const restaurant = restaurantRows[0];
     const sourceItem = sourceItems[0];
@@ -86,9 +86,12 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     });
     const itemId = itemRows[0].id;
     const sourceSlot = sourceSlots[0];
+    const slotStartsAt = new Date(Date.now() + 90 * 60 * 1000);
+    const slotEndsAt = new Date(slotStartsAt.getTime() + 30 * 60 * 1000);
+    const slotCutoffAt = new Date(slotStartsAt.getTime() - 60 * 60 * 1000);
     const slotRows = await serviceRequest('/rest/v1/pickup_slots?select=id', {
       method: 'POST', headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({ restaurant_id: restaurant.id, starts_at: sourceSlot.starts_at, ends_at: sourceSlot.ends_at, cutoff_at: sourceSlot.cutoff_at, capacity: sourceSlot.capacity, active: true }),
+      body: JSON.stringify({ restaurant_id: restaurant.id, starts_at: slotStartsAt.toISOString(), ends_at: slotEndsAt.toISOString(), cutoff_at: slotCutoffAt.toISOString(), capacity: sourceSlot.capacity, active: true }),
     });
     await serviceRequest('/rest/v1/slot_item_inventory', {
       method: 'POST', headers: { Prefer: 'return=minimal' },
@@ -269,6 +272,18 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     fixtureRestaurantId = fixture.restaurant.id;
     report.restaurant = fixture.restaurant.name;
     mark('local synthetic merchant fixture provisioned');
+    const fixtureDiscoveryResponse = await fetch(`${apiOrigin}/v1/discovery`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ p_latitude: fixture.restaurant.latitude, p_longitude: fixture.restaurant.longitude, p_query: fixture.restaurant.name, p_recent_ids: [] }),
+    });
+    assert.ok(fixtureDiscoveryResponse.ok, `Synthetic restaurant discovery probe failed (${fixtureDiscoveryResponse.status})`);
+    const fixtureDiscovery = await fixtureDiscoveryResponse.json();
+    const visibleRestaurants = [
+      ...(fixtureDiscovery.nearby || []).map(card => card.name),
+      ...(fixtureDiscovery.explore || []).map(entry => entry.restaurant?.name),
+    ];
+    assert.ok(visibleRestaurants.includes(fixture.restaurant.name), `Seeded Go discovery search did not find ${fixture.restaurant.name}`);
+    mark('synthetic restaurant and fresh slot visible through Go discovery search');
 
     merchantPage = await context.newPage();
     await createRoutes(merchantPage);
@@ -347,7 +362,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await createRoutes(customerPage);
     await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
-    const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true });
+    await customerPage.getByLabel('Search restaurants and meal kits').fill(fixture.restaurant.name);
+    const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first();
     await restaurantCard.waitFor({ timeout: 45000 });
     await restaurantCard.click();
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).waitFor({ timeout: 30000 });
@@ -457,6 +473,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     mark('pending status, idempotent replay, and merchant invisibility passed');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
+    await customerPage.reload({ waitUntil: 'domcontentloaded' });
     await customerPage.getByText('Finish secure payment', { exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('button', { name: 'Cancel checkout', exact: true }).click();
     await waitUntil(async () => fake.audit.some(entry => entry.kind === 'session_expire'));
@@ -467,6 +484,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const releasedPromo = await queryPromo(fixture.restaurant.id);
     assert.equal(releasedPromo.reserved_redemptions, 0, 'Cancelled checkout should release its reserved code');
     assert.equal(releasedPromo.redeemed_count, 0);
+    await customerPage.getByText('Finish secure payment', { exact: true }).waitFor({ state: 'hidden', timeout: 15000 });
+    await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 15000 });
     mark('customer cancelled a pending checkout; provider expiry released promo reservation');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
@@ -477,9 +496,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     if ((await termsAfterRetry.getAttribute('aria-checked')) === 'false') await termsAfterRetry.click();
     await customerPage.getByLabel('Restaurant discount code').fill(promoCode);
     const retryQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 30000 });
-    await customerPage.getByRole('button', { name: 'Review total', exact: true }).click().catch(async () => {
-      await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).click();
-    });
+    await customerPage.getByRole('button', { name: 'Apply code & review total', exact: true }).click();
     const retryQuoteResponse = await retryQuotePromise;
     assert.ok(retryQuoteResponse.ok());
     assert.equal((await retryQuoteResponse.json()).amount_cents, expectedAmountCents);
@@ -548,7 +565,6 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await merchantPage.getByRole('button', { name: 'Cancel and refund', exact: true }).click();
     await merchantPage.getByRole('button', { name: 'Keep order', exact: true }).click();
     assert.equal(fake.audit.filter(entry => entry.kind === 'refund').length, 0, 'Dismissed refund confirmation must not contact Stripe');
-    await merchantPage.getByText(orderPrefix, { exact: false }).first().click();
     await merchantPage.getByRole('button', { name: 'Cancel and refund', exact: true }).click();
     await merchantPage.getByRole('button', { name: 'Confirm refund and cancel', exact: true }).click();
     await waitUntil(async () => (await queryOrder(paidOrderId)).payment_status === 'refunded');
@@ -557,6 +573,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     mark('merchant accepted/prepared/readied order; unsafe cancel rejected; refund confirmation guard and fake refund passed');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
+    await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
     await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click().catch(() => {});
     await customerPage.getByText('Refunded', { exact: true }).waitFor({ timeout: 30000 });
     const customerHistory = await queryRows('orders', 'id,payment_status,status', { id: `eq.${paidOrderId}`, user_id: `eq.${customerUserId}` });
