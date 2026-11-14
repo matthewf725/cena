@@ -14,6 +14,7 @@ import { PickupCountdown } from '../components/pickup-countdown';
 import { Kitchen, Meal, kitchens as demoKitchens } from '../lib/data';
 import { formatDistance, sanFrancisco, type PickupOrigin } from '../lib/discovery';
 import { foodPhoto } from '../lib/food-photos';
+import { dateLabel, dayOffset } from '../lib/pickup-days';
 import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutQuote } from '../lib/supabase';
 
 const footerTabs = [{ name: 'Home', Icon: Search }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
@@ -535,9 +536,7 @@ export default function Home() {
   </View></View>;
 }
 
-function dayOffset(iso:string,tz?:string){const nowKey=new Intl.DateTimeFormat('en-CA',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const dayKey=new Intl.DateTimeFormat('en-CA',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));return Math.round((Date.parse(`${dayKey}T12:00:00Z`)-Date.parse(`${nowKey}T12:00:00Z`))/86400000);}
 function formatTime(iso:string,tz?:string){return new Intl.DateTimeFormat('en-US',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,hour:'numeric',minute:'2-digit'}).format(new Date(iso));}
-function dateLabel(n:number,tz?:string){const d=new Date(Date.now()+n*86400000);return new Intl.DateTimeFormat('en-US',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,weekday:'long',month:'long',day:'numeric'}).format(d);}
 const mealImage=foodPhoto, kitchenImage=foodPhoto;
 function Option({label,selected,onPress}:{label:string;selected:boolean;onPress:()=>void}) {
   return <Pressable accessibilityRole="checkbox" accessibilityState={{checked:selected}} onPress={onPress}

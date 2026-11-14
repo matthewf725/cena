@@ -41,7 +41,7 @@ flowchart TD
 | C09 | First item and repeated add. Pending/confirmed bag changes are visible in the Bag tab. | Partial · native empty bag smoke. Full signed-in journey belongs to browser E2E. |
 | C10 | Increase, decrease, remove, and restart. Bag contents and the counter agree after reload. | Open · browser E2E plus device restart. |
 | C11 | Add an item from a second restaurant. The current bag is preserved until the shopper clears it. | Pass · Chromium rejected the second kitchen and kept the original item. Native replacement prompts still need replay. |
-| C12 | Today unavailable, future day available. The next available day is offered; changing day resets the time. | Partial · a Chromium fixture shifted all slots to tomorrow in `America/Los_Angeles`. The date was checked and the shopper could continue to times. Day switching and DST remain open. |
+| C12 | Today unavailable, future day available. The next available day is offered; changing day resets the time. | Partial · Chromium verified tomorrow selected with no same-day slots. Calendar tests cover both Los Angeles DST transitions and different service timezones. Day switching on devices remains open. |
 | C13 | Same-day order, advance order, sold-out item, or full window. Only viable choices can reach payment. | Pass · SQL rejection and quote lead-time tests. Device presentation is open. |
 | C14 | Counter or supported curbside. Vehicle fields appear only for curbside and required details are validated. | Pass · SQL acceptance and curbside rejection. Full app input/keyboard behavior is open. |
 | C15 | Back, cancel, refuse a bag replacement, or leave checkout. The bag remains recoverable. | Open · test on WebKit and devices. |
