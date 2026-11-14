@@ -17,7 +17,7 @@ export function MealPrice({ meal }: { meal: Meal }) {
 }
 
 const styles = StyleSheet.create({
-  prices: { gap: 3, marginTop: 5 },
+  prices: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 7, marginTop: 5 },
   kit: { fontSize: 15, fontWeight: '500', color: '#5D100A' },
   label: { fontSize: 11, lineHeight: 15, color: '#77645B' },
   comparison: { textDecorationLine: 'line-through' },

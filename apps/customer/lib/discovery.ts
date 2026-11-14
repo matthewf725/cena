@@ -88,7 +88,56 @@ export function formatDistance(miles: number | undefined): string | undefined {
   return `${value} mi away`;
 }
 
-export async function discoverPickupFeed(input: DiscoveryInput): Promise<DiscoveryPage> {
+const DISCOVERY_CACHE_MS = 30_000;
+const feedCache = new Map<string, { value: DiscoveryPage; expires: number; timer: ReturnType<typeof setTimeout> }>();
+const feedRequests = new Map<string, Promise<DiscoveryPage>>();
+const latestFeedRequests = new Map<string, Promise<DiscoveryPage>>();
+function feedKey(input: DiscoveryInput): string | null {
+  // Search text and personalized recents are never retained. Coordinates are short-lived in memory only.
+  if (input.query) return null;
+  return JSON.stringify([input.origin.latitude, input.origin.longitude, input.after ?? null]);
+}
+export function getCachedPickupFeed(input: DiscoveryInput): DiscoveryPage | null {
+  const key = feedKey(input);
+  if (!key) return null;
+  const entry = feedCache.get(key);
+  if (!entry) return null;
+  if (entry.expires <= Date.now()) { clearTimeout(entry.timer); feedCache.delete(key); return null; }
+  return entry.value;
+}
+export async function discoverPickupFeed(input: DiscoveryInput, options: { forceRefresh?: boolean } = {}): Promise<DiscoveryPage> {
+  const key = feedKey(input);
+  const personalized = input.recentIds.length > 0;
+  if (key && !options.forceRefresh && !personalized) {
+    const cached = getCachedPickupFeed(input);
+    if (cached) return cached;
+    const pending = feedRequests.get(key);
+    if (pending) return pending;
+  }
+  if (key && (options.forceRefresh || personalized)) feedRequests.delete(key);
+  const request = fetchPickupFeed(input);
+  if (key) { latestFeedRequests.set(key, request); if (!personalized) feedRequests.set(key, request); }
+  try {
+    const value = await request;
+    if (key && latestFeedRequests.get(key) === request) {
+      const old = feedCache.get(key);
+      if (old) clearTimeout(old.timer);
+      if (feedCache.size >= 8 && !old) {
+        const first = feedCache.keys().next().value!;
+        clearTimeout(feedCache.get(first)!.timer);
+        feedCache.delete(first);
+      }
+      const entry = { value: { ...value, recents: [] }, expires: Date.now() + DISCOVERY_CACHE_MS, timer: setTimeout(() => { feedCache.delete(key); }, DISCOVERY_CACHE_MS) };
+      feedCache.set(key, entry);
+    }
+    return value;
+  } finally {
+    if (key && feedRequests.get(key) === request) feedRequests.delete(key);
+    if (key && latestFeedRequests.get(key) === request) latestFeedRequests.delete(key);
+  }
+}
+
+async function fetchPickupFeed(input: DiscoveryInput): Promise<DiscoveryPage> {
   if (!supabase) throw new Error('Restaurant discovery needs a Supabase connection.');
   const args = {
     p_latitude: input.origin.latitude,

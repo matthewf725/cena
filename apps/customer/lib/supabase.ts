@@ -86,7 +86,49 @@ export async function fetchPickupAvailability(restaurantId: string, signal?: Abo
   };
 }
 
-export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
+const MENU_CACHE_MS = 30_000;
+const menuCache = new Map<string, { expires: number; meals: Kitchen['meals']; pickupSlots: Kitchen['pickupSlots'] }>();
+const menuRequests = new Map<string, Promise<Kitchen>>();
+
+/** Cached snapshots are for browsing only. Checkout callers must use the default fresh read. */
+export function getCachedKitchenMenu(kitchen: Kitchen): Kitchen | null {
+  if (!kitchen.backendId) return null;
+  const cached = menuCache.get(kitchen.backendId);
+  if (!cached || cached.expires <= Date.now()) {
+    menuCache.delete(kitchen.backendId);
+    return null;
+  }
+  return { ...kitchen, meals: cached.meals, pickupSlots: cached.pickupSlots };
+}
+
+export async function loadKitchenMenu(kitchen: Kitchen, options: { cache?: boolean; forceRefresh?: boolean } = {}): Promise<Kitchen> {
+  if (!options.cache || !kitchen.backendId) return fetchKitchenMenu(kitchen);
+  const id = kitchen.backendId;
+  const cached = !options.forceRefresh && getCachedKitchenMenu(kitchen);
+  if (cached) return cached;
+  if (!options.forceRefresh) {
+    const pending = menuRequests.get(id);
+    if (pending) {
+      const result = await pending;
+      return { ...kitchen, meals: result.meals, pickupSlots: result.pickupSlots };
+    }
+  }
+  const request = fetchKitchenMenu(kitchen);
+  menuRequests.set(id, request);
+  try {
+    const result = await request;
+    if (menuRequests.get(id) === request) {
+      // Bound the cache and do not let an older forced request overwrite a newer one.
+      if (menuCache.size >= 40) menuCache.delete(menuCache.keys().next().value!);
+      menuCache.set(id, { expires: Date.now() + MENU_CACHE_MS, meals: result.meals, pickupSlots: result.pickupSlots });
+    }
+    return result;
+  } finally {
+    if (menuRequests.get(id) === request) menuRequests.delete(id);
+  }
+}
+
+async function fetchKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
   if (!supabase || !kitchen.backendId) return kitchen;
   const restaurantId = kitchen.backendId;
   const controller = new AbortController();

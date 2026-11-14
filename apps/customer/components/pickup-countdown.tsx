@@ -4,7 +4,7 @@ import { Text } from './type';
 import { Clock3 } from 'lucide-react-native';
 import type { Kitchen } from '../lib/data';
 
-export function PickupCountdown({ slots, timezone, suspended = false }: { slots: Kitchen['pickupSlots']; timezone?: string; suspended?: boolean }) {
+export function PickupCountdown({ slots, timezone, suspended = false, large = false }: { slots: Kitchen['pickupSlots']; timezone?: string; suspended?: boolean; large?: boolean }) {
   const [now, setNow] = useState(Date.now);
   const day = useMemo(() => {
     try {
@@ -41,12 +41,12 @@ export function PickupCountdown({ slots, timezone, suspended = false }: { slots:
   const clock = [hours, minutes, seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
 
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, large && styles.rowLarge]}>
       <View style={styles.clock} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        <Clock3 size={16} color={green} />
+        <Clock3 size={large ? 19 : 16} color={green} />
       </View>
-      <Text style={styles.label}>Order cutoff for pickup today</Text>
-      <Text style={styles.counter} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
+      <Text style={[styles.label, large && styles.labelLarge]}>Order cutoff for pickup today</Text>
+      <Text style={[styles.counter, large && styles.counterLarge]} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
         {clock}
       </Text>
     </View>
@@ -54,15 +54,24 @@ export function PickupCountdown({ slots, timezone, suspended = false }: { slots:
 }
 
 const green = '#245C40';
+const paleGreen = '#E7F3EA';
+const greenLine = '#B8D4C0';
 const textStyle = {
   color: green, fontFamily: Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' }),
-  fontSize: 13, lineHeight: 20, fontWeight: '400', includeFontPadding: false,
+  fontSize: 13, lineHeight: 20, fontWeight: '500', includeFontPadding: false,
 } as const;
 
 const styles = StyleSheet.create({
-  row: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  row: {
+    minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 11, paddingVertical: 8, borderRadius: 12,
+    backgroundColor: paleGreen, borderWidth: 1, borderColor: greenLine,
+  },
   clock: { width: 16, height: 20, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  label: { ...textStyle, flex: 1 },
-  counter: { ...textStyle, fontVariant: ['tabular-nums'], minWidth: 60, textAlign: 'right', flexShrink: 0 },
+  rowLarge: { minHeight: 54, paddingHorizontal: 14, gap: 11 },
+  labelLarge: { fontSize: 15, lineHeight: 21 },
+  counterLarge: { fontSize: 16, lineHeight: 21, minWidth: 72 },
+  label: { ...textStyle, flex: 1, minWidth: 0 },
+  counter: { ...textStyle, fontSize: 14, lineHeight: 20, fontWeight: '600', fontVariant: ['tabular-nums'], minWidth: 62, textAlign: 'right', flexShrink: 0 },
   unavailable: { color: '#77645B', fontSize: 14 },
 });

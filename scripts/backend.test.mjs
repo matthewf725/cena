@@ -20,7 +20,7 @@ before(async () => {
     create role anon;
     create role authenticated;
     create role service_role bypassrls;
-    create table auth.users (id uuid primary key, raw_user_meta_data jsonb default '{}');
+    create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
     create function auth.uid() returns uuid language sql stable as $$
       select nullif(current_setting('request.jwt.claim.sub',true), '')::uuid
     $$;
@@ -471,4 +471,56 @@ test('merchant pickup window and stock creation are atomic under member RLS', as
   await assert.rejects(withRole('authenticated',customer,(tx)=>create(tx,[],unauthorizedStartsAt)),/not authorized/);
   const {rows:[unauthorizedSlot]}=await database.query('select count(*)::int as count from pickup_slots where starts_at=$1',[unauthorizedStartsAt]);
   assert.equal(unauthorizedSlot.count,0,'nonmember cannot create a pickup window');
+});
+
+test('anonymous Cal Poly preview returns only the pinned demo fixture projection', async () => {
+  const demoUser = '10000000-0000-4000-8000-000000000006';
+  const demoRestaurant = '20000000-0000-4000-8000-000000000005';
+  const otherRestaurant = '20000000-0000-4000-8000-000000000006';
+  const itemId = '30000000-0000-4000-8000-000000000006';
+  const otherItemId = '30000000-0000-4000-8000-000000000007';
+  const pastSlot = '40000000-0000-4000-8000-000000000006';
+  const futureSlot = '40000000-0000-4000-8000-000000000007';
+  const otherSlot = '40000000-0000-4000-8000-000000000008';
+  const pastOrder = '50000000-0000-4000-8000-000000000006';
+  const futureOrder = '50000000-0000-4000-8000-000000000007';
+  const otherUserOrder = '50000000-0000-4000-8000-000000000009';
+  await database.query(`insert into auth.users(id,email,raw_user_meta_data) values
+    ($1,'demo-calpoly-customer@cena.test','{"cena_demo":"cal-poly"}')`, [demoUser]);
+  await database.query(`update profiles set display_name='Jeffrey Fixture',phone='555-PRIVATE',
+    equipment=array['Oven','Stovetop','Private free text'] where id=$1`, [demoUser]);
+  await database.query(`insert into restaurants(id,slug,name,address,timezone) values
+    ($1,'cal-poly-luna-red','Luna Red','1023 Chorro St, SLO','America/Los_Angeles'),
+    ($2,'ordinary-private','Private Restaurant','Secret address','America/Los_Angeles')`, [demoRestaurant, otherRestaurant]);
+  await database.query(`insert into catalog_items(id,restaurant_id,name,price_cents,published_steps,active,published_at)
+    values($1,$3,'Paella Kit',1800,array['Heat on stovetop'],true,now()),
+          ($2,$4,'Private Kit',1000,array['Private instruction'],true,now())`, [itemId, otherItemId, demoRestaurant, otherRestaurant]);
+  await database.query(`insert into pickup_slots(id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,active) values
+    ($1,$3,now()-interval '2 days',now()-interval '2 days'+interval '30 minutes',now()-interval '2 days 30 minutes',10,true),
+    ($2,$3,now()+interval '2 days',now()+interval '2 days 30 minutes',now()+interval '1 day 23 hours',10,true),
+    ($4,$5,now()+interval '3 days',now()+interval '3 days 30 minutes',now()+interval '2 days 23 hours',10,true)`,
+    [pastSlot, futureSlot, demoRestaurant, otherSlot, otherRestaurant]);
+  await database.query(`insert into orders(id,user_id,restaurant_id,slot_id,idempotency_key,status,request_hash,
+    pickup_starts_at,pickup_ends_at,restaurant_timezone,subtotal_cents,payment_method,payment_status)
+    values ($1,$3,$5,$7,'demo-past','completed','cal-poly-demo',now()-interval '2 days',now()-interval '2 days'+interval '30 minutes','America/Los_Angeles',1800,'pay_at_pickup','pay_at_pickup'),
+    ($2,$3,$5,$8,'demo-future','placed','cal-poly-demo',now()+interval '2 days',now()+interval '2 days 30 minutes','America/Los_Angeles',1800,'pay_at_pickup','pay_at_pickup'),
+    ($4,$3,$6,$9,'out-of-scope','placed','cal-poly-demo',now()+interval '3 days',now()+interval '3 days 30 minutes','America/Los_Angeles',1000,'pay_at_pickup','pay_at_pickup'),
+    ($10,$11,$5,$8,'other-user','placed','cal-poly-demo',now()+interval '2 days',now()+interval '2 days 30 minutes','America/Los_Angeles',1800,'pay_at_pickup','pay_at_pickup')`,
+    [pastOrder, futureOrder, demoUser, '50000000-0000-4000-8000-000000000008', demoRestaurant, otherRestaurant, pastSlot, futureSlot, otherSlot, otherUserOrder, customer]);
+  await database.query(`insert into order_items(order_id,item_id,name_snapshot,unit_price_cents,quantity,prep_steps_snapshot,options_snapshot)
+    values($1,$3,'Paella Kit',1800,1,array['Heat on stovetop'],'[]'),($2,$3,'Paella Kit',1800,1,array['Heat on stovetop'],'[]'),($4,$5,'Private Kit',1000,1,array['Private instruction'],'[]')`,
+    [pastOrder, futureOrder, itemId, '50000000-0000-4000-8000-000000000008', otherItemId]);
+
+  const { rows: [row] } = await withRole('anon', null, (tx) => tx.query('select get_cal_poly_demo() as data'));
+  const data = row.data;
+  assert.equal(data.profile.display_name, 'Jeffrey Fixture');
+  assert.deepEqual(data.profile.equipment, ['Oven', 'Stovetop']);
+  assert.equal(data.pickup_area.label, '1 Grand Ave, San Luis Obispo');
+  assert.equal(data.upcoming_pickup.id, futureOrder);
+  assert.deepEqual(new Set(data.orders.map((entry) => entry.id)), new Set([pastOrder, futureOrder]));
+  assert.equal(data.orders.find((entry) => entry.id === futureOrder).order_items[0].prep_steps_snapshot[0], 'Heat on stovetop');
+  const serialized = JSON.stringify(data);
+  for (const secret of ['555-PRIVATE', 'demo-calpoly-customer@cena.test', demoUser, 'Private Restaurant', 'Private instruction']) {
+    assert.equal(serialized.includes(secret), false, `preview omits ${secret}`);
+  }
 });

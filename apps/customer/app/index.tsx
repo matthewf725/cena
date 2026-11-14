@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ActivityIndicator, Animated, AppState, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ActivityIndicator, Animated, AppState, BackHandler, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Location from 'expo-location';
 import { ChevronRight, House, ShoppingBag, MapPin, Star, Plus, Minus, ArrowLeft, CircleCheck, CalendarDays, Phone, Mail, Check, CarFront, PackageCheck, ChefHat, Soup, Bell, CreditCard, UserRound, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { DiscoveryFeed } from '../components/discovery-feed';
 import { HeaderButton, HeaderWordmark, HomeSearch, PageHeader, PickupAreaButton, headerContentGap, homeContentMaxWidth, searchGap } from '../components/home-chrome';
 import { Text, TextInput } from '../components/type';
 import { Account } from '../components/account';
+import { DemoProfile } from '../components/demo-profile';
 import { AuthScreen } from '../components/auth-screen';
 import { Bag, type BagLine } from '../components/bag';
 import { LocationPicker } from '../components/location-picker';
@@ -21,10 +22,10 @@ import { mealSelectionSummary, normalizeMealSelections, type Kitchen, type Meal,
 import { formatDistance, sanFrancisco, type PickupOrigin } from '../lib/discovery';
 import { foodPhoto } from '../lib/food-photos';
 import { dateLabel, dayOffset } from '../lib/pickup-days';
-import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, fetchRestaurantRecentOrders, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutItem, type CheckoutQuote } from '../lib/supabase';
+import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, fetchRestaurantRecentOrders, getCachedKitchenMenu, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutItem, type CheckoutQuote } from '../lib/supabase';
 import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
 import { loadCustomerDisplayName } from '../lib/profile';
-import { calPolyDemo, calPolyPickupArea, loadSampleOrders, type DemoOrder } from '../lib/cal-poly-demo';
+import { calPolyDemo, calPolyPickupArea, loadCalPolyDemo, type CalPolyDemo, type DemoOrder } from '../lib/cal-poly-demo';
 import { restaurantPhoto, restaurantRating, restaurantRatingSource } from '../lib/restaurant-presentation';
 
 const footerTabs = [{ name: 'Home', Icon: House }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
@@ -112,7 +113,11 @@ export default function Home() {
   const [authenticated,setAuthenticated]=useState(false);
   const [authUserId,setAuthUserId]=useState<string|null>(null);
   const [savedName,setSavedName]=useState<{userId:string;name:string}|null>(null);
-  const [demoOrders,setDemoOrders]=useState<DemoOrder[]>([]);
+  const [demo,setDemo]=useState<CalPolyDemo>();
+  const [demoLoading,setDemoLoading]=useState(calPolyDemo);
+  const [demoAttempt,setDemoAttempt]=useState(0);
+  const [demoSignInOpen,setDemoSignInOpen]=useState(false);
+  const [orderClock,setOrderClock]=useState(Date.now);
   const [profileRevision,setProfileRevision]=useState(0);
   const currentAuthUserId=useRef<string|null>(null);
   const initialAuthEvent=useRef(true);
@@ -150,8 +155,9 @@ export default function Home() {
   const navShown=!active&&!showLocation&&(!supabase||authenticated||calPolyDemo);
   const navOffset=useMenuTabOffset(navShown,reduceMotion||Platform.OS==='ios',navHeight);
   const submitting=useRef(false);
-  const profileName=authUserId&&savedName?.userId===authUserId?savedName.name:'';
-  const profileInitial=calPolyDemo?'J':Array.from(profileName)[0]?.toLocaleUpperCase();
+  const profileName=authUserId?(savedName?.userId===authUserId?savedName.name:''):(demo?.profile.display_name??'');
+  const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
+  const activeEquipment=authUserId?equipment:(demo?.profile.equipment??equipment);
   const updateHomeScroll=(event:NativeSyntheticEvent<NativeScrollEvent>)=>{
     const scrolled=event.nativeEvent.contentOffset.y>0;
     if(homeCompactRef.current!==scrolled){
@@ -179,12 +185,23 @@ export default function Home() {
     return ()=>clearInterval(timer);
   },[active?.id,flow]);
   useEffect(()=>{
-    if(calPolyDemo){
-      let current=true;
-      setAuthResolved(true);
-      void loadSampleOrders().then(orders=>{if(current)setDemoOrders(orders);}).catch(()=>{});
-      return ()=>{current=false;};
-    }
+    if(!calPolyDemo||authUserId)return;
+    const controller=new AbortController();
+    let current=true;
+    const timeout=setTimeout(()=>controller.abort(),12_000);
+    setDemoLoading(true);
+    void loadCalPolyDemo(controller.signal).then(next=>{
+      if(!current)return;
+      setDemo(next);
+      const area=next.pickup_area;
+      if(area){
+        setOrigin(previous=>previous===calPolyPickupArea?area:previous);
+        setLocationLabel(previous=>previous===calPolyPickupArea.label?area.label:previous);
+      }
+    }).catch(()=>{}).finally(()=>{clearTimeout(timeout);if(current)setDemoLoading(false);});
+    return ()=>{current=false;clearTimeout(timeout);controller.abort();};
+  },[authUserId,demoAttempt]);
+  useEffect(()=>{
     if(!supabase)return;
     let request=0;
     let pending: ReturnType<typeof setTimeout> | undefined;
@@ -229,9 +246,12 @@ export default function Home() {
         idempotency.current={fingerprint:'',key:''};
       }
       setAuthUserId(nextUserId);
-       if(isInitialAuthEvent){setAuthResolved(true);setTab(nextUserId?'Home':'Account');setActive(null);setSelected(null);setShowLocation(false);}
-      else if(event==='SIGNED_OUT'){setTab('Account');setActive(null);setSelected(null);setShowLocation(false);}
-      else if(event==='SIGNED_IN'&&nextUserId!==previousAuthUserId&&flowRef.current!=='contact')setTab('Home');
+      if(isInitialAuthEvent){
+        setAuthResolved(true);
+        if(!calPolyDemo){setTab(nextUserId?'Home':'Account');setActive(null);setSelected(null);setShowLocation(false);}
+      }else if(event==='SIGNED_OUT'){setTab('Account');setActive(null);setSelected(null);setShowLocation(false);}
+      else if(!calPolyDemo&&event==='SIGNED_IN'&&nextUserId!==previousAuthUserId&&flowRef.current!=='contact')setTab('Home');
+      if(calPolyDemo&&nextUserId)setDemoSignInOpen(false);
       sessionEmail.current=session?.user.email??null;
       if(event==='SIGNED_OUT'){emailEdited.current=false;setEmail('');}
       else if(session?.user.email&&(event==='SIGNED_IN'||(storageHydrated.current&&!emailEdited.current))){emailEdited.current=false;setEmail(session.user.email);}
@@ -379,7 +399,7 @@ export default function Home() {
     return()=>{clearInterval(timer);sub.remove();};
   },[checkout,hydrated]);
   useEffect(()=>{
-    if(!supabase||!authUserId||tab!=='Orders'||active)return;
+    if(!supabase||!authUserId)return;
     let disposed=false;
     let requesting=false;
     const refresh=async()=>{
@@ -395,13 +415,26 @@ export default function Home() {
     const timer=setInterval(()=>{if(AppState.currentState==='active')void refresh();},30_000);
     const subscription=AppState.addEventListener('change',state=>{if(state==='active')void refresh();});
     return()=>{disposed=true;clearInterval(timer);subscription.remove();};
-  },[authUserId,tab,active]);
+  },[authUserId]);
   useEffect(()=>{if(supabase&&analyticsConsented&&query.trim()){const timer=setTimeout(()=>void trackEvent('search',undefined,{query_length:query.trim().length}),700);return ()=>clearTimeout(timer);}},[query,analyticsConsented]);
   const cartCount=Object.values(cart).reduce((n,x)=>n+x.qty,0), subtotal=Object.values(cart).reduce((n,x)=>n+x.qty*x.meal.price,0);
-  const visibleOrders=useMemo(()=>calPolyDemo?demoOrders:backendOrders.filter(order=>
+  const visibleOrders=useMemo(()=>calPolyDemo&&!authUserId?(demo?.orders??[]):backendOrders.filter(order=>
     (['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status))
     ||(order.payment_method==='stripe_checkout'&&order.payment_status==='refunded'&&order.status==='cancelled')
-  ),[backendOrders,demoOrders]);
+  ),[authUserId,backendOrders,demo]);
+  const upcomingOrders=visibleOrders.filter(order=>isUpcomingCustomerOrder(order,orderClock));
+  const upcomingCount=upcomingOrders.length;
+  const nextOrderBoundary=upcomingOrders.reduce((soonest,order)=>{
+    const end=Date.parse(order.pickup_ends_at??'');
+    const expiry=Number.isFinite(end)&&end>orderClock?end:Date.parse(order.pickup_starts_at??'');
+    return Math.min(soonest,expiry);
+  },Infinity);
+  useEffect(()=>{
+    const update=()=>setOrderClock(Date.now());
+    const subscription=AppState.addEventListener('change',state=>{if(state==='active')update();});
+    const timer=Number.isFinite(nextOrderBoundary)?setTimeout(update,Math.max(25,Math.min(2_147_483_647,nextOrderBoundary-Date.now()+25))):undefined;
+    return()=>{clearTimeout(timer);subscription.remove();};
+  },[nextOrderBoundary,orderClock]);
   const reorderOrders=useMemo(()=>visibleOrders.filter(order=>['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status)),[visibleOrders]);
   const mealQuantities=quantityByMeal(Object.values(cart));
   const eligibleSlots=flow==='menu'||flow==='done'?undefined:active?.pickupSlots?.filter(x=>Date.parse(x.cutoffAt)>now&&Date.parse(x.startsAt)>=now+checkoutLeadMs&&Object.entries(mealQuantities).every(([id,qty])=>(x.remaining[id]||0)>=qty));
@@ -447,11 +480,15 @@ export default function Home() {
     const request=++locationRequest.current;
     setLocating(true);
     setLocationError('');
+    let timeout:ReturnType<typeof setTimeout>|undefined;
     try {
       const permission=await Location.requestForegroundPermissionsAsync();
       if(request!==locationRequest.current)return;
       if (!permission.granted) throw new Error('Location permission was declined.');
-      const position=await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.Balanced});
+      const position=await Promise.race([
+        Location.getCurrentPositionAsync({accuracy:Location.Accuracy.Balanced}),
+        new Promise<never>((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Location took too long')),10_000);}),
+      ]);
       if(request!==locationRequest.current)return;
       setOrigin({
         latitude:Math.round(position.coords.latitude*100)/100,
@@ -462,6 +499,7 @@ export default function Home() {
     } catch {
       if(request===locationRequest.current)setLocationError('Couldn’t get your location. Check your permissions or enter an address.');
     } finally {
+      clearTimeout(timeout);
       if(request===locationRequest.current)setLocating(false);
     }
   }
@@ -510,17 +548,18 @@ export default function Home() {
       return next;
     });
   };
-  const openKitchen=useCallback(async (kitchen:Kitchen)=>{
+  const openKitchen=useCallback(async (kitchen:Kitchen,forceRefresh=false)=>{
     const request=++menuRequest.current;
-    setActive(kitchen);
+    const cached=forceRefresh?null:getCachedKitchenMenu(kitchen);
+    setActive(cached??kitchen);
     setFlow('menu');
     setCurb(false);
     setSelected(null);
-    setMenuLoading(Boolean(kitchen.backendId));
+    setMenuLoading(Boolean(kitchen.backendId)&&!cached);
     setMenuLoadFailed(false);
     if(supabase&&analyticsConsented&&kitchen.backendId)void trackEvent('restaurant_view',kitchen.backendId,{});
     try {
-      const loaded=await loadKitchenMenu(kitchen);
+      const loaded=await loadKitchenMenu(kitchen,{cache:true,forceRefresh});
       if(request!==menuRequest.current)return;
       setActive(loaded);
     }catch{
@@ -613,13 +652,18 @@ export default function Home() {
     return valid?selections:null;
   };
   const openPolicy=async(path:'consumer-terms'|'privacy-policy')=>{const base=process.env.EXPO_PUBLIC_CENA_SITE_URL;if(base){try{await Linking.openURL(`${base.replace(/\/$/,'')}/${path==='consumer-terms'?'terms.html':'privacy.html'}`);return;}catch{}}setNotice({title:path==='consumer-terms'?'Consumer terms':'Privacy policy',message:path==='consumer-terms'?'Orders reserve restaurant-prepared items for pickup after secure payment. Restaurants are responsible for menu and allergen details.':`We use your email and optional phone to link and manage pickup orders. Anonymous browsing analytics are optional and off until you choose to share them.`});};
-  const closeLocationPicker=()=>{
+  const closeLocationPicker=useCallback(()=>{
     locationRequest.current++;
     setLocating(false);
     setLocationError('');
     setShowLocation(false);
     if(Platform.OS==='web')requestAnimationFrame(()=>pickupAreaButtonRef.current?.focus?.());
-  };
+  },[]);
+  useEffect(()=>{
+    if(Platform.OS!=='android'||!showLocation)return;
+    const back=BackHandler.addEventListener('hardwareBackPress',()=>{closeLocationPicker();return true;});
+    return()=>back.remove();
+  },[closeLocationPicker,showLocation]);
   const usePickupAddress=(address:PickupAddress)=>{
     setOrigin({latitude:address.latitude,longitude:address.longitude});
     setLocationLabel(address.label);
@@ -816,8 +860,9 @@ export default function Home() {
   const topSpace=identityHeight+headerContentGap;
   const requiresSignIn = !calPolyDemo && Boolean(supabase) && !authenticated;
   const checkingAccount = !calPolyDemo && Boolean(supabase) && !authResolved;
-  if (authResolved && requiresSignIn) {
-    return <AuthScreen topInset={insets.top} bottomInset={insets.bottom}/>;
+  if ((authResolved&&requiresSignIn)||(demoSignInOpen&&!authenticated)) {
+    return <AuthScreen topInset={insets.top} bottomInset={insets.bottom} startAt={demoSignInOpen?'sign-in':'welcome'}
+      onBack={demoSignInOpen?()=>setDemoSignInOpen(false):undefined}/>;
   }
   if (checkingAccount) {
     return <View style={[s.screen, {paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
@@ -842,7 +887,7 @@ export default function Home() {
     </HeaderButton>
   </View>;
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}><View style={{flex:1,width:'100%'}}>
-    <View style={active?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
+    <View style={active||showLocation?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
       <PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
@@ -851,36 +896,31 @@ export default function Home() {
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll} suspended={Boolean(active)||showLocation}
           clearQuery={()=>setQuery('')}
-      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo?
-        <View style={{paddingTop:topSpace+20,paddingHorizontal:22}}>
-          <Text accessibilityRole="header" style={s.pageTitle}>Profile</Text>
-          <View style={s.profileHero}>
-            <View style={s.profileAvatar}><Text style={s.profileInitial}>J</Text></View>
-            <View><Text style={s.profileName}>Jeffrey Armstrong</Text><Text style={s.profileHint}>Cal Poly demo</Text></View>
-          </View>
-        </View>:<Account
+      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace} orderNow={orderClock}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo&&!authUserId?
+        <DemoProfile profile={demo?.profile} pickupArea={demo?.pickup_area} topSpace={topSpace} bottomSpace={navHeight+18} loading={demoLoading}
+          retry={()=>setDemoAttempt(attempt=>attempt+1)} signIn={()=>setDemoSignInOpen(true)}/>:<Account
           userId={authUserId} topSpace={topSpace} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
           displayName={displayName} setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
       </Enter>
-      {tab==='Home'&&!active&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight} reduced={reduceMotion}/>}
+      {tab==='Home'&&!active&&!showLocation&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight} reduced={reduceMotion}/>}
     </View>
 
     {active&&<View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}><View style={s.modalTop}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={s.modalBrand}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={maroon}/></Pressable></View>
-      {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}>
-        <View style={[s.restaurantHero,{height:Math.round(contentWidth*9/16)}]}><Image source={restaurantPhoto(active)} resizeMode="cover" style={[StyleSheet.absoluteFillObject,{width:'100%',height:'100%'}]}/><View style={s.imageShade}/><View style={s.restaurantHeroBottom}><Text style={s.restaurantLabel}>{active.id.startsWith('cal-poly-')?'CAL POLY DEMO MENU':'YOUR NEIGHBORHOOD KITCHEN'}</Text><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View></View>
-        <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{formatDistance(active.distanceMiles)}</Text></View>}{active.address&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{active.address}</Text></View>}</View>
-        <View style={{marginHorizontal:18,marginBottom:16}}><PickupCountdown slots={active.pickupSlots} timezone={active.timezone}/></View>
-        <View style={s.menuTitleRow}><View><Text style={s.sectionTitle}>Finish-at-home favorites</Text><Text style={s.sectionHint}>Everything you need, already prepped.</Text></View><Text style={s.dealBadge}>~25% OFF</Text></View>
+      {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active,true)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}>
+        <View style={[s.restaurantHero,{height:Math.round(contentWidth*9/16)}]}><Image source={restaurantPhoto(active)} resizeMode="cover" style={[StyleSheet.absoluteFillObject,{width:'100%',height:'100%'}]}/><View style={s.restaurantHeroBottom}><View style={s.restaurantTitleBacking}><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View></View></View>
+        <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={18} color={muted}/><Text style={s.menuMetaText}>{formatDistance(active.distanceMiles)}</Text></View>}</View>
+        <View style={{marginHorizontal:18,marginBottom:16}}><PickupCountdown slots={active.pickupSlots} timezone={active.timezone} large/></View>
+        <View style={s.menuTitleRow}><View><Text style={s.sectionTitle}>Finish-at-home favorites</Text><Text style={s.sectionHint}>Everything you need, already prepped.</Text></View></View>
         {menuLoading&&<ActivityIndicator color={maroon} accessibilityLabel="Loading menu"/>}
-        {menuLoadFailed&&<Pressable accessibilityRole="button" onPress={()=>void openKitchen(active)}
+        {menuLoadFailed&&<Pressable accessibilityRole="button" onPress={()=>void openKitchen(active,true)}
           style={{marginHorizontal:18,paddingVertical:12}}><Text style={{color:maroon}}>Couldn’t load this menu. Tap to retry.</Text></Pressable>}
         {!menuLoading&&!menuLoadFailed&&!active.meals.length&&<Text style={[s.sectionHint,{marginHorizontal:18}]}>No meal kits are available for pickup at this kitchen right now.</Text>}
-        {(authUserId||calPolyDemo)&&<LiveMenuReorder key={authUserId??'demo'} userId={authUserId} demoOrders={calPolyDemo?demoOrders:undefined} kitchen={active} add={(m,q,selections={})=>m.optionGroups?.length?openMeal(m,q,selections):add(m,q,{})}/>}
+        {(authUserId||calPolyDemo)&&<LiveMenuReorder key={authUserId??'demo'} userId={authUserId} demoOrders={calPolyDemo&&!authUserId?demo?.orders:undefined} kitchen={active} add={openMeal} reduced={reduceMotion}/>}
         {active.meals.map(m=>{
           const selections=quickMealSelections(m);
           const quickLineKey=selections===null?null:lineKey(m.id,selections);
-          return <View style={s.mealRow} key={m.id}><Pressable accessibilityRole="button" accessibilityLabel={`View ${m.name}`} onPress={()=>openMeal(m)} style={s.mealText}><View style={s.mealTags}>{m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}{m.equipment&&!equipment.some(e=>e.toLowerCase()===m.equipment!.toLowerCase())&&<Text style={s.equipmentTag}>NEEDS {m.equipment.toUpperCase()}</Text>}</View><Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>{mealQuantities[m.id]>0&&<Text style={s.inCart}>In your bag · {mealQuantities[m.id]}</Text>}</Pressable><View><Pressable accessibilityRole="button" accessibilityLabel={`View photo and options for ${m.name}`} onPress={()=>openMeal(m)}><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={s.mealImage}/></Pressable><MenuQuantity name={m.name} count={quickLineKey===null?0:cart[quickLineKey]?.qty??0}
+          return <View style={s.mealRow} key={m.id}><Pressable accessibilityRole="button" accessibilityLabel={`View ${m.name}`} onPress={()=>openMeal(m)} style={s.mealText}><View style={s.mealTags}>{m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}{m.equipment&&!activeEquipment.some(e=>e.toLowerCase()===m.equipment!.toLowerCase())&&<Text style={s.equipmentTag}>NEEDS {m.equipment.toUpperCase()}</Text>}</View><Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>{mealQuantities[m.id]>0&&<Text style={s.inCart}>In your bag · {mealQuantities[m.id]}</Text>}</Pressable><View><Pressable accessibilityRole="button" accessibilityLabel={`View photo and options for ${m.name}`} onPress={()=>openMeal(m)}><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={s.mealImage}/></Pressable><MenuQuantity name={m.name} count={quickLineKey===null?0:cart[quickLineKey]?.qty??0}
             needsOptions={selections===null} disabled={!hydrated||!!checkout} reduced={reduceMotion}
             onPlus={()=>{if(selections===null){openMeal(m);return false;}return add(m,1,selections);}}
             onMinus={()=>{if(quickLineKey!==null)changeQty(quickLineKey,-1);}}/></View></View>;
@@ -900,19 +940,22 @@ export default function Home() {
     {(navShown||Platform.OS!=='ios')&&<Animated.View pointerEvents={navShown?'auto':'none'} aria-hidden={!navShown} accessibilityElementsHidden={!navShown}
       importantForAccessibility={navShown?'auto':'no-hide-descendants'} style={[s.bottomNav,{height:navHeight,paddingBottom:navPadding,transform:[{translateY:navOffset}]}]}>{footerTabs.map(({name,Icon})=><Pressable
       key={name} accessibilityRole="tab" accessibilityState={{selected:tab===name}} aria-selected={tab===name}
-      accessibilityLabel={name==='Bag'&&cartCount?`Bag, ${cartCount} ${cartCount===1?'item':'items'}`:name}
+      accessibilityLabel={name==='Bag'&&cartCount?`Bag, ${cartCount} ${cartCount===1?'item':'items'}`:
+        name==='Orders'&&upcomingCount?`Orders, ${upcomingCount} upcoming ${upcomingCount===1?'order':'orders'}`:name}
       onPress={()=>navigate(name)} style={[s.navItem,{flex:1,minHeight:44}]}>
       <View style={s.navIconWrap}><Icon size={21} color={tab===name?maroon:muted}/>
         {name==='Bag'&&cartCount>0&&<View style={s.navBadge}><Text style={s.navBadgeTxt}>{cartCount>99?'99+':cartCount}</Text></View>}
+        {name==='Orders'&&upcomingCount>0&&<View aria-hidden testID="orders-upcoming-badge" style={s.navBadge}><Text style={s.navBadgeTxt}>{upcomingCount>99?'99+':upcomingCount}</Text></View>}
       </View>
       <Text style={[s.navText,tab===name&&s.navTextActive]}>{name}</Text>
     </Pressable>)}</Animated.View>}
     {showLocation&&<LocationPicker close={closeLocationPicker} locating={locating} useDevice={usePickupLocation}
       useAddress={usePickupAddress} currentLabel={locationLabel} recentAddresses={recentAddresses} deviceError={locationError}
-      reset={()=>{setOrigin(sanFrancisco);setLocationLabel('From San Francisco');closeLocationPicker();}}/>}
+      resetLabel={calPolyDemo?'Use Cal Poly pickup area':undefined}
+      reset={()=>usePickupAddress(calPolyDemo?(demo?.pickup_area??calPolyPickupArea):{...sanFrancisco,label:'From San Francisco'})}/>}
     {checkout&&showCheckoutRecovery&&flow!=='contact'&&<View style={{...StyleSheet.absoluteFillObject,justifyContent:'center',zIndex:25}}><View style={{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(28,18,14,.4)'}}/><View style={{marginHorizontal:24,backgroundColor:ivory,borderRadius:contentRadius,padding:20,borderWidth:1,borderColor:line}}><Text style={{fontSize:21,fontWeight:'500',color:ink}}>Finish secure payment</Text><Text style={{fontSize:12,color:muted,lineHeight:18,marginTop:8,marginBottom:16}}>Your bag is saved. Your order is not confirmed until payment status shows paid.</Text><Pressable accessibilityRole="button" onPress={()=>void Linking.openURL(checkout.url).catch(()=>setNotice({title:'Couldn’t open checkout',message:'Try opening secure checkout again or check your connection.'}))} style={s.primaryBtn}><Text style={s.primaryBtnText}>Open secure checkout</Text></Pressable><View style={{flexDirection:'row',justifyContent:'space-between',marginTop:14}}><Pressable accessibilityRole="button" onPress={()=>void refreshPaymentStatus(checkout)}><Text style={s.summaryEdit}>Check payment status</Text></Pressable><Pressable accessibilityRole="button" onPress={()=>void cancelPendingPayment()}><Text style={[s.summaryEdit,{color:'#A1382C'}]}>Cancel checkout</Text></Pressable></View><Pressable accessibilityRole="button" onPress={()=>setShowCheckoutRecovery(false)} style={{alignSelf:'center',paddingVertical:14}}><Text style={s.summaryEdit}>Keep browsing</Text></Pressable></View></View>}
     {notice&&<View accessibilityViewIsModal style={{...StyleSheet.absoluteFillObject,justifyContent:'center',zIndex:30}}><Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={()=>setNotice(null)} style={{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(28,18,14,.4)'}}/><View style={{marginHorizontal:28,backgroundColor:ivory,borderRadius:16,padding:21,borderWidth:1,borderColor:line}}><Text style={{fontSize:23,fontWeight:'500',color:ink}}>{notice.title}</Text><Text style={{fontSize:12,color:muted,lineHeight:18,marginTop:9,marginBottom:18}}>{notice.message}</Text><Pressable accessibilityRole="button" onPress={()=>setNotice(null)} style={s.primaryBtn}><Text style={s.primaryBtnText}>Got it</Text></Pressable></View></View>}
-    {selected&&<MealSelection key={`${selected.id}:${JSON.stringify(mealInitialSelections.current)}:${mealQuantity.current}`} meal={selected} groups={selected.optionGroups??[]} equipment={equipment} initialQuantity={mealQuantity.current} initialSelections={mealInitialSelections.current}
+    {selected&&<MealSelection key={`${selected.id}:${JSON.stringify(mealInitialSelections.current)}:${mealQuantity.current}`} meal={selected} groups={selected.optionGroups??[]} equipment={activeEquipment} initialQuantity={mealQuantity.current} initialSelections={mealInitialSelections.current}
       reduced={reduceMotion} bottomInset={insets.bottom} topInset={insets.top} onClose={()=>setSelected(null)}
       onAdd={(quantity,selections)=>{if(add(selected,quantity,selections))setSelected(null);}}/>}
   </View></View>;
@@ -928,8 +971,8 @@ function RestaurantRating({kitchen}:{kitchen:Kitchen}) {
   const source=restaurantRatingSource(kitchen);
   if(!rating)return null;
   const label=`${rating} out of 5 stars`;
-  const badge=<><Star size={15} color="#9A5A2F" fill="#9A5A2F" aria-hidden/>
-    <Text style={s.metaText}>{rating}</Text></>;
+  const badge=<><Star size={18} color="#9A5A2F" fill="#9A5A2F" aria-hidden/>
+    <Text style={s.menuMetaText}>{rating}</Text></>;
   return source
     ? <Pressable accessibilityRole="link" accessibilityLabel={`${label}, rating source`} hitSlop={8}
         onPress={()=>void Linking.openURL(source).catch(()=>{})} style={s.metaItem}>{badge}</Pressable>
@@ -973,10 +1016,11 @@ function recentOrderOptionCombos(snapshot: unknown, quantity: number): { quantit
   return combos.length?combos:fallback;
 }
 
-function LiveMenuReorder({kitchen,userId,demoOrders,add}:{kitchen:Kitchen;userId:string|null;demoOrders?:DemoOrder[];add:(m:Meal,q:number,selections?:MealSelections)=>void}) {
+function LiveMenuReorder({kitchen,userId,demoOrders,add,reduced}:{kitchen:Kitchen;userId:string|null;demoOrders?:DemoOrder[];add:(m:Meal,q:number,selections?:MealSelections)=>void;reduced:boolean}) {
   const restaurantId = kitchen.backendId;
   const [orders, setOrders] = useState<Awaited<ReturnType<typeof fetchRestaurantRecentOrders>>>(null);
   useEffect(() => {
+    setOrders(null);
     if (!restaurantId || !userId || demoOrders) return;
     let current = true;
     void fetchRestaurantRecentOrders(userId,restaurantId).then(data => {
@@ -988,31 +1032,35 @@ function LiveMenuReorder({kitchen,userId,demoOrders,add}:{kitchen:Kitchen;userId
   if (!recent.length) return null;
   const date = new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:kitchen.timezone});
 
-  return <View style={s.reorderBox}>
-    <View style={s.reorderIcon}><CircleCheck size={19} color={green}/></View>
-    <View style={{flex:1,minWidth:0}}>
-      <Text accessibilityRole="header" style={s.reorderTitle}>Recent orders</Text>
-      {recent.map(order => <View key={order.id} style={s.savedOrderRow}>
-        <Text style={s.reorderSub}>{date.format(new Date(order.pickup_starts_at))}</Text>
-        {order.order_items.map((item,index) => {
-          const meal = kitchen.meals.find(candidate => candidate.backendItemId === item.item_id);
-            const combos=recentOrderOptionCombos(item.options_snapshot,item.quantity);
-          return <View key={`${item.item_id}-${index}`} style={{marginBottom:8}}>
-            <Text style={s.savedOrderName}>{item.quantity} × {item.name_snapshot}</Text>
-              {combos.map((combo,comboIndex)=><View key={`${order.id}-${item.item_id}-${comboIndex}`} style={{marginTop:4}}>
-                {!!combo.label&&<Text style={s.savedOrderOpts}>{combo.quantity} × {combo.label}</Text>}
-                {meal&&<Pressable accessibilityRole="button" accessibilityLabel={`Order ${meal.name} again${combo.label?` with ${combo.label}`:''}`}
-                  onPress={()=>add(meal,combo.quantity,combo.selections)} style={s.reorderBtn}>
-                  <Plus size={14} color="#FFF"/><Text style={s.reorderBtnText}>Order again</Text>
-                </Pressable>}
-              </View>)}
-          </View>;
-        })}
-      </View>)}
-    </View>
+  return <View style={{marginBottom:20}}>
+    <Text accessibilityRole="header" style={{fontSize:21,fontWeight:'500',color:ink,marginHorizontal:18,marginBottom:10}}>Recent orders</Text>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={246} snapToAlignment="start"
+      decelerationRate={reduced?'normal':'fast'} contentContainerStyle={{paddingHorizontal:18,gap:10}}>
+      {recent.flatMap(order => order.order_items.flatMap((item,index) => {
+        const meal = kitchen.meals.find(candidate => candidate.backendItemId === item.item_id);
+        return recentOrderOptionCombos(item.options_snapshot,item.quantity).map((combo,comboIndex) =>
+          <Pressable key={`${order.id}-${item.item_id}-${index}-${comboIndex}`} accessibilityRole="button"
+            accessibilityLabel={meal ? `Order ${meal.name} again, quantity ${combo.quantity}${combo.label?`, ${combo.label}`:''}` : `${item.name_snapshot}, unavailable`}
+            accessibilityState={{disabled:!meal}} disabled={!meal} onPress={()=>meal&&add(meal,combo.quantity,combo.selections)}
+            style={{width:236,minHeight:124,borderWidth:1,borderColor:line,borderRadius:12,backgroundColor:'#FFFDFA',padding:12,opacity:meal?1:.6}}>
+            <Text style={{fontSize:12,color:muted}}>{date.format(new Date(order.pickup_starts_at))}</Text>
+            <Text style={{fontSize:15,fontWeight:'500',color:ink,marginTop:5}}>{combo.quantity} × {item.name_snapshot}</Text>
+            {!!combo.label&&<Text style={{fontSize:12,color:muted,marginTop:4}}>{combo.label}</Text>}
+            <Text style={{fontSize:13,fontWeight:'500',color:maroon,marginTop:10}}>{meal?'View and order again':'Currently unavailable'}</Text>
+          </Pressable>);
+      }))}
+    </ScrollView>
   </View>;
 }
-function customerOrderStatus(order:any){if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return 'Paid · awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
+function customerOrderStatus(order:any){if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return order.payment_status==='paid'?'Paid · awaiting kitchen':'Awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
+function isUpcomingCustomerOrder(order:any,now=Date.now()) {
+  const pickupAt=Date.parse(order?.pickup_starts_at??'');
+  const pickupEndsAt=Date.parse(order?.pickup_ends_at??'');
+  const pickupInProgress=Number.isFinite(pickupEndsAt)&&pickupEndsAt>now&&pickupEndsAt>=pickupAt;
+  return ['paid','pay_at_pickup'].includes(order?.payment_status)
+    && ['placed','accepted','preparing','ready'].includes(order?.status)
+    && Number.isFinite(pickupAt)&&(pickupAt>now||pickupInProgress);
+}
 function orderDateParts(value:string, timezone:string) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -1030,29 +1078,36 @@ function safeOrderTimezone(value:unknown) {
   catch { return 'UTC'; }
 }
 
-function LiveOrders({orders,topSpace}:{orders:any[];topSpace:number}) {
-  const groups = useMemo(() => {
-    const byDate = new Map<string,{key:string;stamp:number;timezone:string;orders:any[]}>();
-    for (const order of orders) {
-      const timezone = safeOrderTimezone(order.restaurant_timezone);
-      const parts = orderDateParts(order.pickup_starts_at,timezone);
-      const existing = byDate.get(parts.key);
-      if (existing) existing.orders.push(order);
-      else byDate.set(parts.key,{...parts,timezone,orders:[order]});
-    }
-    return [...byDate.values()].map(group => {
-      const today = orderDateParts(new Date().toISOString(),group.timezone).stamp;
-      const dayOffset = Math.round((group.stamp-today)/86_400_000);
-      return {...group,dayOffset};
-    }).sort((a,b) => {
-      const rank = (day:number) => day===0?0:day>0?1:2;
-      const rankDiff = rank(a.dayOffset)-rank(b.dayOffset);
-      if (rankDiff) return rankDiff;
-      return a.dayOffset>0?a.stamp-b.stamp:b.stamp-a.stamp;
-    });
-  },[orders]);
+type CustomerOrderDateGroup={key:string;stamp:number;timezone:string;dayOffset:number;orders:any[]};
+function groupCustomerOrdersByPickupDate(orders:any[],now:number):CustomerOrderDateGroup[] {
+  const byDate=new Map<string,{key:string;stamp:number;timezone:string;orders:any[]}>();
+  for(const order of orders){
+    const timezone=safeOrderTimezone(order.restaurant_timezone);
+    const parts=orderDateParts(order.pickup_starts_at,timezone);
+    const existing=byDate.get(parts.key);
+    if(existing)existing.orders.push(order);
+    else byDate.set(parts.key,{...parts,timezone,orders:[order]});
+  }
+  return [...byDate.values()].map(group=>{
+    const today=orderDateParts(new Date(now).toISOString(),group.timezone).stamp;
+    return {...group,dayOffset:Math.round((group.stamp-today)/86_400_000)};
+  }).sort((a,b)=>{
+    const rank=(day:number)=>day===0?0:day>0?1:2;
+    const rankDiff=rank(a.dayOffset)-rank(b.dayOffset);
+    if(rankDiff)return rankDiff;
+    return a.dayOffset>0?a.stamp-b.stamp:b.stamp-a.stamp;
+  });
+}
 
-  const groupLabel = (group:{key:string;stamp:number;timezone:string;dayOffset:number}) => {
+function LiveOrders({orders,topSpace,orderNow}:{orders:any[];topSpace:number;orderNow:number}) {
+  const [expandedOrders,setExpandedOrders]=useState<Set<string>>(()=>new Set());
+  const [expandedPrep,setExpandedPrep]=useState<Set<string>>(()=>new Set());
+  const upcomingOrders=useMemo(()=>orders.filter(order=>isUpcomingCustomerOrder(order,orderNow)),[orders,orderNow]);
+  const historyOrders=useMemo(()=>orders.filter(order=>!isUpcomingCustomerOrder(order,orderNow)),[orders,orderNow]);
+  const upcomingGroups=useMemo(()=>groupCustomerOrdersByPickupDate(upcomingOrders,orderNow),[upcomingOrders,orderNow]);
+  const historyGroups=useMemo(()=>groupCustomerOrdersByPickupDate(historyOrders,orderNow),[historyOrders,orderNow]);
+
+  const groupLabel = (group:CustomerOrderDateGroup) => {
     if(group.dayOffset===0)return 'Today';
     if(group.dayOffset===1)return 'Tomorrow';
     if(group.dayOffset===-1)return 'Yesterday';
@@ -1062,36 +1117,69 @@ function LiveOrders({orders,topSpace}:{orders:any[];topSpace:number}) {
     }).format(new Date(group.stamp));
   };
 
+  const toggleOrder=(orderId:string)=>setExpandedOrders(current=>{
+    const next=new Set(current);
+    if(next.has(orderId))next.delete(orderId);else next.add(orderId);
+    return next;
+  });
+  const togglePrep=(key:string)=>setExpandedPrep(current=>{
+    const next=new Set(current);
+    if(next.has(key))next.delete(key);else next.add(key);
+    return next;
+  });
+
+  const renderGroups=(groups:CustomerOrderDateGroup[])=>groups.map(group=><View key={group.key}>
+    <Text accessibilityRole="header" style={{fontSize:18,lineHeight:23,fontWeight:'500',color:ink,marginTop:8,marginBottom:10}}>{groupLabel(group)}</Text>
+    {group.orders.map(order=>{
+      const rest=Array.isArray(order.restaurants)?order.restaurants[0]:order.restaurants;
+      const items=order.order_items||[];
+      const timezone=safeOrderTimezone(order.restaurant_timezone);
+      const pickup=new Intl.DateTimeFormat('en-US',{timeZone:timezone,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(order.pickup_starts_at));
+      const expanded=expandedOrders.has(order.id);
+      return <View key={order.id} style={s.orderHistoryCard}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`${rest?.name||'Cena kitchen'}, ${pickup}, ${customerOrderStatus(order)}, ${dollars((order.total_cents??order.subtotal_cents)/100)}`}
+          accessibilityState={{expanded}} aria-expanded={expanded} onPress={()=>toggleOrder(order.id)} style={[s.historyHead,{minHeight:48}]}>
+          <View style={[s.historyIcon,{width:34,height:34,borderRadius:10}]}><PackageCheck size={19} color={green}/></View>
+          <View style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={s.historyName}>{rest?.name||'Cena kitchen'}</Text><Text numberOfLines={1} style={s.historyDate}>{pickup} · {order.pickup_mode==='curbside'?'Curbside':'Pickup'}</Text></View>
+          <View style={{alignItems:'flex-end',gap:3}}><Text style={s.historyPrice}>{dollars((order.total_cents??order.subtotal_cents)/100)}</Text><Text style={[s.statusText,order.payment_status==='refunded'&&{color:'#A1382C'}]}>{customerOrderStatus(order)}</Text></View>
+          <ChevronRight size={17} color={muted} style={{transform:[{rotate:expanded?'90deg':'0deg'}]}} aria-hidden/>
+        </Pressable>
+        {expanded&&<View style={{borderTopWidth:1,borderTopColor:line,marginTop:10,paddingTop:9}}>
+          <Text style={{fontSize:12,color:muted,marginBottom:7}}>{pickup} · {order.pickup_mode==='curbside'?'Curbside pickup':'Counter pickup'}{rest?.address?` · ${rest.address}`:''}</Text>
+          {items.map((item:any,index:number)=>{
+            const optionCombos=recentOrderOptionCombos(item.options_snapshot,item.quantity);
+            const steps=Array.isArray(item.prep_steps_snapshot)?item.prep_steps_snapshot:[];
+            const prepKey=`${order.id}:${item.item_id}:${index}`;
+            const prepExpanded=expandedPrep.has(prepKey);
+            return <View key={`${item.item_id}-${index}`} style={{paddingVertical:7,borderBottomWidth:index<items.length-1?1:0,borderBottomColor:line}}>
+              <Text style={s.historyDish}>{item.quantity}× {item.name_snapshot}</Text>
+              {optionCombos.filter(combo=>combo.label).map((combo,comboIndex)=><Text key={`${item.item_id}-option-${comboIndex}`} style={s.historyPrefs}>{combo.quantity}× {combo.label}</Text>)}
+              {steps.length>0&&<View>
+                <Pressable accessibilityRole="button" accessibilityLabel={`${prepExpanded?'Hide':'Show'} preparation instructions for ${item.name_snapshot}`}
+                  accessibilityState={{expanded:prepExpanded}} aria-expanded={prepExpanded} onPress={()=>togglePrep(prepKey)} style={{minHeight:44,flexDirection:'row',alignItems:'center',gap:5}}>
+                  <ChevronRight size={15} color={maroon} style={{transform:[{rotate:prepExpanded?'90deg':'0deg'}]}} aria-hidden/>
+                  <Text style={{fontSize:13,color:maroon,fontWeight:'500'}}>Preparation instructions</Text>
+                  <Text style={{fontSize:12,color:muted}}>({steps.length})</Text>
+                </Pressable>
+                {prepExpanded&&steps.map((step:string,stepIndex:number)=><Text key={`${prepKey}-prep-${stepIndex}`} style={[s.historyPrefs,{marginLeft:20,lineHeight:19}]}>• {step}</Text>)}
+              </View>}
+            </View>;
+          })}
+          {order.discount_cents>0&&<Text style={[s.historyPrefs,{color:green,marginTop:9}]}>{order.promo_code_snapshot?order.promo_code_snapshot+' · ':''}You saved {dollars(order.discount_cents/100)}</Text>}
+          <Text style={[s.statusCode,{marginTop:8,marginLeft:0}]}>Order {order.id.slice(0,8).toUpperCase()}</Text>
+        </View>}
+      </View>;
+    })}
+  </View>);
+
   return <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingHorizontal:22,paddingTop:topSpace+20,paddingBottom:120}}>
-    <Text style={s.eyebrow}>YOUR CENA MOMENTS</Text><Text style={s.pageTitle}>Orders</Text>
+    <Text style={s.pageTitle}>Orders</Text>
     {orders.length===0?<View style={s.profileHero}><View style={s.historyIcon}><PackageCheck size={21} color={green}/></View><View style={{flex:1}}><Text style={s.historyName}>No orders yet</Text><Text style={s.historyDate}>Your pickup orders and prep instructions will show here.</Text></View></View>
-      :groups.map(group=><View key={group.key}>
-        <Text accessibilityRole="header" style={{fontSize:18,lineHeight:23,fontWeight:'500',color:ink,marginTop:8,marginBottom:10}}>{groupLabel(group)}</Text>
-        {group.orders.map(order=>{
-          const rest=Array.isArray(order.restaurants)?order.restaurants[0]:order.restaurants;
-          const items=order.order_items||[];
-          const timezone=safeOrderTimezone(order.restaurant_timezone);
-          const pickup=new Intl.DateTimeFormat('en-US',{timeZone:timezone,weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(order.pickup_starts_at));
-          return <View key={order.id} style={s.orderHistoryCard}>
-            <View style={s.historyHead}>
-              <View style={s.historyIcon}><PackageCheck size={21} color={green}/></View>
-              <View style={{flex:1}}><Text style={s.historyName}>{rest?.name||'Cena kitchen'}</Text><Text style={s.historyDate}>{pickup} · {order.pickup_mode==='curbside'?'Curbside':'Pickup'}</Text></View>
-              <Text style={s.historyPrice}>{dollars((order.total_cents??order.subtotal_cents)/100)}</Text>
-            </View>
-            {items.map((item:any,index:number)=>{
-              const optionCombos=recentOrderOptionCombos(item.options_snapshot,item.quantity);
-              return <View key={`${item.item_id}-${index}`} style={s.historyDishes}>
-                <Text style={s.historyDish}>{item.quantity}× {item.name_snapshot}</Text>
-                {optionCombos.filter(combo=>combo.label).map((combo,comboIndex)=><Text key={`${item.item_id}-option-${comboIndex}`} style={s.historyPrefs}>{combo.quantity}× {combo.label}</Text>)}
-                {(item.prep_steps_snapshot||[]).map((step:string,stepIndex:number)=><Text key={`${item.item_id}-prep-${stepIndex}`} style={s.historyPrefs}>• {step}</Text>)}
-              </View>;
-            })}
-            {order.discount_cents>0&&<Text style={[s.historyPrefs,{color:green,marginLeft:48}]}>{order.promo_code_snapshot?order.promo_code_snapshot+' · ':''}You saved {dollars(order.discount_cents/100)}</Text>}
-            <View style={s.orderStatus}><View style={[s.statusDot,order.payment_status==='refunded'&&{backgroundColor:'#A1382C'}]}/><Text style={[s.statusText,order.payment_status==='refunded'&&{color:'#A1382C'}]}>{customerOrderStatus(order)}</Text><Text style={s.statusCode}>{order.id.slice(0,8).toUpperCase()}</Text></View>
-          </View>;
-        })}
-      </View>)}
+      :<>
+        {upcomingGroups.length>0&&<View><Text accessibilityRole="header" style={{fontSize:20,lineHeight:25,fontWeight:'600',color:deepMaroon,marginTop:4,marginBottom:8}}>Upcoming</Text>{renderGroups(upcomingGroups)}</View>}
+        {historyGroups.length>0&&<View><Text accessibilityRole="header" style={{fontSize:18,lineHeight:23,fontWeight:'500',color:muted,marginTop:16,marginBottom:8}}>Order history</Text>{renderGroups(historyGroups)}</View>}
+      </>}
   </ScrollView>;
 }
 
-const s=StyleSheet.create({homeSectionTitle:{fontSize:22,lineHeight:27,fontWeight:'500',color:ink,marginBottom:12},featuredName:{fontSize:14,lineHeight:18,fontWeight:'500',color:ink,marginTop:7},featuredPrice:{fontSize:13,color:maroon,fontWeight:'500',marginTop:4},screen:{flex:1,backgroundColor:ivory,overflow:'hidden'},topbar:{flexDirection:'row',alignItems:'center'},brand:{flexDirection:'row',alignItems:'center'},wordmark:{fontSize:31,fontWeight:'700',letterSpacing:-2,color:maroon},logodot:{width:6,height:6,borderRadius:4,backgroundColor:'#C57760',marginTop:17,marginLeft:2},avatarInitial:{fontSize:17,fontWeight:'500',color:deepMaroon},avatarTxt:{fontSize:14,fontWeight:'500',color:maroon},eyebrow:{fontSize:10,fontWeight:'500',letterSpacing:1.7,color:muted,marginTop:9,marginBottom:9},heroTitle:{fontSize:36,lineHeight:39,letterSpacing:-.5,color:ink,marginBottom:17},searchbox:{height:50,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',borderRadius:12,alignItems:'center',flexDirection:'row',paddingHorizontal:14,gap:10,marginBottom:17},searchInput:{flex:1,minWidth:0,fontSize:16,color:ink},offer:{height:176,backgroundColor:maroon,borderRadius:15,overflow:'hidden',flexDirection:'row',marginBottom:19},offerCopy:{flex:1,padding:16,justifyContent:'center'},offerPill:{alignSelf:'flex-start',flexDirection:'row',alignItems:'center',gap:5,backgroundColor:'#773128',borderRadius:20,paddingVertical:5,paddingHorizontal:8,marginBottom:8},offerPillText:{fontSize:8,fontWeight:'500',letterSpacing:1,color:'#FFF'},offerTitle:{fontSize:25,lineHeight:26,color:'#FFF',fontWeight:'500'},offerSub:{fontSize:10,color:'#F0DCD6',marginTop:6},offerDiscount:{borderWidth:1,borderColor:'#BD938A',paddingHorizontal:8,paddingVertical:4,borderRadius:5,alignSelf:'flex-start',marginTop:9},offerDiscountText:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:'#FFF'},offerImage:{width:'38%',height:'100%'},categories:{flexDirection:'row',gap:8,marginBottom:21},category:{minHeight:44,borderRadius:22,borderWidth:1,borderColor:line,paddingVertical:8,paddingHorizontal:13,flexDirection:'row',alignItems:'center',gap:5,backgroundColor:'#FFFDFA'},categoryActive:{backgroundColor:maroon,borderColor:maroon},categoryText:{fontSize:13,color:ink,fontWeight:'500'},categoryTextActive:{color:'#FFF'},sectionHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:12,marginTop:3},sectionTitle:{ fontWeight: '500', fontSize:21,color:ink,letterSpacing:-.4},sectionHint:{fontSize:14,color:muted,marginTop:4},seeAll:{fontSize:11,color:maroon,fontWeight:'500'},recentScroll:{gap:11,paddingRight:22,paddingBottom:23},recentCard:{width:177,borderRadius:12,backgroundColor:'#FFFDFA',borderWidth:1,borderColor:line,overflow:'hidden'},recentImage:{width:'100%',height:100,backgroundColor:'#E9CFC4'},recentBody:{padding:10},pastTag:{flexDirection:'row',alignItems:'center',gap:4},pastText:{fontSize:8,fontWeight:'500',letterSpacing:.7,color:green},recentName:{fontSize:13,fontWeight:'500',color:ink,marginTop:6},recentRestaurant:{fontSize:10,color:muted,marginTop:2},recentBottom:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:7},recentPrice:{fontSize:13,fontWeight:'500',color:maroon},quickAdd:{width:26,height:26,borderRadius:13,borderWidth:1,borderColor:'#E2D2CD',alignItems:'center',justifyContent:'center'},kitchenCard:{backgroundColor:'#FFFDFA',borderRadius:14,overflow:'hidden',borderWidth:1,borderColor:line,marginBottom:14},kitchenImage:{width:'100%',backgroundColor:'#E9CFC4'},kitchenDeal:{position:'absolute',bottom:9,left:10,backgroundColor:maroon,borderRadius:5,paddingVertical:5,paddingHorizontal:8},kitchenDealText:{color:'#FFF',fontSize:8,fontWeight:'500',letterSpacing:.8},heartBtn:{position:'absolute',right:10,top:10,width:32,height:32,borderRadius:16,backgroundColor:'rgba(30,20,15,.40)',alignItems:'center',justifyContent:'center'},kitchenBody:{flexDirection:'row',alignItems:'center',paddingHorizontal:13,paddingTop:12},kitchenName:{fontSize:18,color:ink,fontWeight:'500'},kitchenCuisine:{fontSize:11,color:muted,marginTop:3},rating:{flexDirection:'row',gap:4,alignItems:'center',backgroundColor:'#FBF4EB',paddingHorizontal:8,paddingVertical:6,borderRadius:8},ratingText:{fontSize:11,fontWeight:'500',color:ink},kitchenFoot:{flexDirection:'row',alignItems:'center',padding:13,paddingTop:10,gap:7},metaItem:{flexDirection:'row',alignItems:'center',gap:5},metaText:{fontSize:10,color:muted},dotSep:{color:'#C9BCB6'},fromPrice:{fontSize:10,fontWeight:'500',color:maroon,marginLeft:'auto'},bottomNav:{position:'absolute',bottom:0,left:0,right:0,backgroundColor:'#FFFDFA',borderTopWidth:1,borderTopColor:line,height:73,flexDirection:'row',justifyContent:'space-around',alignItems:'center',paddingTop:6},navItem:{alignItems:'center',justifyContent:'center',position:'relative'},navIconWrap:{height:25},navText:{fontSize:13,color:muted,marginTop:2},navTextActive:{color:deepMaroon,fontWeight:'500'},navBadge:{position:'absolute',top:-3,right:-9,backgroundColor:maroon,width:15,height:15,borderRadius:8,alignItems:'center',justifyContent:'center'},navBadgeTxt:{fontSize:9,color:'#FFF',fontWeight:'500'},modalPage:{flex:1,backgroundColor:ivory},modalTop:{height:51,paddingHorizontal:21,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},backBtn:{width:44,height:44,borderRadius:22,backgroundColor:'#FFFFFF',alignItems:'center',justifyContent:'center'},modalBrand:{fontWeight:'700',fontSize:23,color:maroon,letterSpacing:-1},restaurantHero:{justifyContent:'flex-end'},imageShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(20,9,6,.30)'},restaurantHeroBottom:{padding:19},restaurantLabel:{color:'#F3DDD3',fontSize:8,fontWeight:'500',letterSpacing:1.4},restaurantName:{ fontWeight: '500', fontSize:34,color:'#FFF',marginTop:3},restaurantDesc:{fontSize:12,color:'#FFF',marginTop:2},restaurantMeta:{height:48,flexDirection:'row',alignItems:'center',paddingHorizontal:19,gap:19,borderBottomWidth:1,borderBottomColor:line},cutoff:{margin:15,marginBottom:18,padding:12,borderRadius:10,borderWidth:1,borderColor:'#A6C2A9',backgroundColor:'#F4F8F2',flexDirection:'row',alignItems:'center',gap:9},cutoffTitle:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:green},cutoffSub:{fontSize:10,color:'#617464',marginTop:3},countdown:{fontSize:11,color:green,fontWeight:'500',fontVariant:['tabular-nums']},menuTitleRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:18,marginBottom:11},dealBadge:{fontSize:8,color:green,fontWeight:'500',borderWidth:1,borderColor:'#B8CCB8',borderRadius:5,paddingHorizontal:7,paddingVertical:5},reorderBox:{marginHorizontal:15,marginBottom:10,padding:12,backgroundColor:'#F1F6EF',borderWidth:1,borderColor:'#D7E5D6',borderRadius:11,flexDirection:'row',gap:9},reorderIcon:{width:29,height:29,borderRadius:15,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},reorderTitle:{fontSize:17,fontWeight:'500',color:green},reorderSub:{fontSize:12,color:'#617464',marginTop:3,marginBottom:9},savedOrderRow:{borderTopWidth:1,borderTopColor:'#D9E7D7',paddingTop:8,marginTop:2,marginBottom:1},savedOrderName:{fontSize:14,fontWeight:'500',color:ink},savedOrderOpts:{fontSize:9,color:muted,marginTop:2},reorderBtn:{minHeight:44,alignSelf:'flex-start',marginTop:7,backgroundColor:green,borderRadius:7,flexDirection:'row',alignItems:'center',paddingHorizontal:9,gap:5},reorderBtnText:{fontSize:13,color:'#FFF',fontWeight:'500'},mealRow:{minHeight:130,paddingVertical:14,paddingHorizontal:18,borderBottomWidth:1,borderColor:line,flexDirection:'row',alignItems:'center',gap:12},mealText:{flex:1},mealTags:{flexDirection:'row',gap:5,marginBottom:4},mealTag:{fontSize:8,color:'#9B6233',fontWeight:'500',letterSpacing:.7},equipmentTag:{fontSize:8,color:'#A1382C',fontWeight:'500',letterSpacing:.6,backgroundColor:'#FCEBE8',paddingHorizontal:5,paddingVertical:3,borderRadius:3},mealName:{fontSize:15,fontWeight:'500',color:ink},mealDesc:{fontSize:14,color:muted,marginTop:4,lineHeight:19},prices:{flexDirection:'row',alignItems:'center',gap:7,marginTop:7},mealPrice:{fontSize:12,color:maroon,fontWeight:'500'},oldPrice:{fontSize:10,color:'#9B908A',textDecorationLine:'line-through'},inCart:{fontSize:9,color:green,fontWeight:'500',marginTop:5},mealImage:{width:92,height:92,borderRadius:9,backgroundColor:'#E9CFC4'},cartBar:{position:'absolute',bottom:12,left:16,right:16,height:53,borderRadius:12,backgroundColor:maroon,flexDirection:'row',alignItems:'center',paddingHorizontal:14,gap:10,elevation:4},cartBubble:{width:23,height:23,borderRadius:12,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},cartBubbleText:{fontSize:11,fontWeight:'500',color:maroon},cartBarLabel:{fontSize:13,color:'#FFF',fontWeight:'500',flex:1},cartBarPrice:{fontSize:13,color:'#FFF',fontWeight:'500'},checkoutContent:{flex:1,paddingHorizontal:23,paddingTop:12,paddingBottom:13},steps:{flexDirection:'row',gap:13,marginBottom:25},stepDone:{fontSize:9,color:green,fontWeight:'500',letterSpacing:.7},stepCurrent:{fontSize:9,color:maroon,fontWeight:'500',letterSpacing:.7},stepIdle:{fontSize:9,color:'#B4A9A4',fontWeight:'500',letterSpacing:.7},checkoutTitle:{ fontWeight: '500', fontSize:30,lineHeight:34,color:ink,letterSpacing:-.6},checkoutSub:{fontSize:15,color:muted,lineHeight:21,marginTop:8,marginBottom:23},dateOption:{minHeight:69,borderWidth:1,borderColor:line,borderRadius:11,backgroundColor:'#FFFDFA',marginBottom:9,paddingHorizontal:13,flexDirection:'row',alignItems:'center',gap:11},dateOptionActive:{borderColor:maroon,backgroundColor:'#FFF0E8'},radio:{width:19,height:19,borderRadius:10,borderWidth:1.5,borderColor:'#CBBDB6',alignItems:'center',justifyContent:'center'},radioActive:{borderColor:maroon},radioInner:{width:9,height:9,borderRadius:5,backgroundColor:maroon},dateDay:{fontSize:13,fontWeight:'500',color:ink},dateAvailability:{fontSize:13,color:muted,marginTop:4},datePill:{fontSize:8,color:green,fontWeight:'500',letterSpacing:.5},pickupSummary:{height:56,borderTopWidth:1,borderTopColor:line,flexDirection:'row',alignItems:'center',gap:10,marginBottom:9},pickupSummaryTitle:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:ink},pickupSummarySub:{fontSize:10,color:muted,marginTop:3},summaryEdit:{fontSize:9,color:maroon,fontWeight:'500',letterSpacing:.5},primaryBtn:{height:52,backgroundColor:maroon,borderRadius:11,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8},primaryBtnText:{fontSize:13,color:'#FFF',fontWeight:'500'},timeGrid:{flexDirection:'row',flexWrap:'wrap',gap:9,marginBottom:22},timeOption:{height:51,width:'31.5%',borderRadius:9,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},timeOptionActive:{borderColor:maroon,backgroundColor:'#FFF0E8'},timeText:{fontSize:11,color:ink,fontWeight:'500'},timeTextActive:{color:maroon,fontWeight:'500'},fewLeft:{fontSize:7,color:'#9D6843',fontWeight:'500',marginTop:3},curbRow:{minHeight:74,borderWidth:1,borderColor:line,borderRadius:10,backgroundColor:'#FFFDFA',padding:12,flexDirection:'row',alignItems:'center',gap:10},checkbox:{width:20,height:20,borderWidth:1,borderColor:'#C6BAB4',borderRadius:5,alignItems:'center',justifyContent:'center'},checkboxOn:{backgroundColor:maroon,borderColor:maroon},curbTitleRow:{flexDirection:'row',alignItems:'center',gap:6},curbTitle:{fontSize:12,fontWeight:'500',color:ink},curbSub:{fontSize:10,color:muted,marginTop:4},curbFree:{fontSize:9,color:green,fontWeight:'500'},totalRow:{height:42,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},totalLabel:{fontSize:11,color:muted},totalPrice:{fontSize:16,fontWeight:'500',color:ink},finePrint:{fontSize:12,color:muted,textAlign:'center',marginTop:9},inputWrap:{height:51,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',borderRadius:10,marginBottom:10,paddingHorizontal:14,flexDirection:'row',alignItems:'center',gap:10},contactInput:{fontSize:13,color:ink,flex:1},checkoutInfo:{flexDirection:'row',gap:9,backgroundColor:'#F0F6EF',padding:12,borderRadius:9,marginTop:5,alignItems:'center'},checkoutInfoText:{fontSize:13,lineHeight:18,color:'#526557',flex:1},doneView:{flex:1,paddingHorizontal:24,paddingTop:30,paddingBottom:19,alignItems:'center'},doneIcon:{width:58,height:58,borderRadius:29,backgroundColor:green,alignItems:'center',justifyContent:'center',marginBottom:19},doneEyebrow:{fontSize:9,fontWeight:'500',letterSpacing:1.4,color:green},doneTitle:{ fontWeight: '500', fontSize:42,lineHeight:44,color:ink,textAlign:'center',marginTop:8},doneSub:{fontSize:12,lineHeight:18,color:muted,textAlign:'center',marginTop:11,maxWidth:290},doneCard:{width:'100%',borderWidth:1,borderColor:line,borderRadius:12,backgroundColor:'#FFFDFA',padding:15,marginTop:22,marginBottom:20},doneCardRow:{flexDirection:'row',alignItems:'center',gap:9,marginVertical:5},doneCardText:{fontSize:11,fontWeight:'500',color:ink},prepTimeline:{borderTopWidth:1,borderColor:line,marginTop:10,paddingTop:10},timelineRow:{flexDirection:'row',alignItems:'center',gap:9,minHeight:33},timelineIcon:{width:20,alignItems:'center'},timelineText:{fontSize:10,color:muted},doneLink:{padding:12},doneLinkText:{fontSize:11,color:maroon,fontWeight:'500'},pageTitle:{ fontWeight: '500', fontSize:35,color:ink,letterSpacing:-.8,marginBottom:20},orderHistoryCard:{borderWidth:1,borderColor:line,borderRadius:13,backgroundColor:'#FFFDFA',padding:14,marginBottom:13},historyHead:{flexDirection:'row',alignItems:'center',gap:10},historyIcon:{width:38,height:38,borderRadius:10,backgroundColor:'#EFF5ED',alignItems:'center',justifyContent:'center'},historyName:{fontSize:14,fontWeight:'500',color:ink},historyDate:{fontSize:13,color:muted,marginTop:3},historyPrice:{fontSize:12,fontWeight:'500',color:ink},historyDishes:{marginLeft:48,marginTop:12},historyDish:{fontSize:11,color:ink,fontWeight:'500'},historyPrefs:{fontSize:13,color:muted,marginTop:4},orderStatus:{borderTopWidth:1,borderColor:line,marginTop:12,paddingTop:11,flexDirection:'row',alignItems:'center',gap:6},statusDot:{width:7,height:7,borderRadius:4,backgroundColor:green},statusText:{fontSize:10,color:green,fontWeight:'500'},statusCode:{fontSize:9,color:muted,marginLeft:'auto'},reorderWide:{height:37,borderWidth:1,borderColor:'#E2D1CB',borderRadius:8,marginTop:11,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:5},reorderWideText:{fontSize:11,color:maroon,fontWeight:'500'},profileHero:{flexDirection:'row',alignItems:'center',gap:12,padding:14,backgroundColor:'#FFFDFA',borderRadius:12,borderWidth:1,borderColor:line,marginBottom:21},profileAvatar:{width:46,height:46,borderRadius:23,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},profileInitial:{fontSize:19,color:maroon,fontWeight:'500'},profileName:{fontSize:17,color:ink,fontWeight:'500'},profileHint:{fontSize:10,color:muted,marginTop:3},settingsSection:{fontSize:9,fontWeight:'500',letterSpacing:1.1,color:muted,marginTop:12,marginBottom:7},settingRow:{minHeight:61,flexDirection:'row',alignItems:'center',gap:10,borderBottomWidth:1,borderBottomColor:line},settingIcon:{width:34,height:34,borderRadius:9,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},settingTitle:{fontSize:12,fontWeight:'500',color:ink},settingDesc:{fontSize:10,color:muted,marginTop:3},accountFooter:{fontStyle:'italic',textAlign:'center',color:'#9A8981',fontSize:13,marginTop:32}});
+const s=StyleSheet.create({homeSectionTitle:{fontSize:22,lineHeight:27,fontWeight:'500',color:ink,marginBottom:12},featuredName:{fontSize:14,lineHeight:18,fontWeight:'500',color:ink,marginTop:7},featuredPrice:{fontSize:13,color:maroon,fontWeight:'500',marginTop:4},screen:{flex:1,backgroundColor:ivory,overflow:'hidden'},topbar:{flexDirection:'row',alignItems:'center'},brand:{flexDirection:'row',alignItems:'center'},wordmark:{fontSize:31,fontWeight:'700',letterSpacing:-2,color:maroon},logodot:{width:6,height:6,borderRadius:4,backgroundColor:'#C57760',marginTop:17,marginLeft:2},avatarInitial:{fontSize:17,fontWeight:'500',color:deepMaroon},avatarTxt:{fontSize:14,fontWeight:'500',color:maroon},eyebrow:{fontSize:10,fontWeight:'500',letterSpacing:1.7,color:muted,marginTop:9,marginBottom:9},heroTitle:{fontSize:36,lineHeight:39,letterSpacing:-.5,color:ink,marginBottom:17},searchbox:{height:50,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',borderRadius:12,alignItems:'center',flexDirection:'row',paddingHorizontal:14,gap:10,marginBottom:17},searchInput:{flex:1,minWidth:0,fontSize:16,color:ink},offer:{height:176,backgroundColor:maroon,borderRadius:15,overflow:'hidden',flexDirection:'row',marginBottom:19},offerCopy:{flex:1,padding:16,justifyContent:'center'},offerPill:{alignSelf:'flex-start',flexDirection:'row',alignItems:'center',gap:5,backgroundColor:'#773128',borderRadius:20,paddingVertical:5,paddingHorizontal:8,marginBottom:8},offerPillText:{fontSize:8,fontWeight:'500',letterSpacing:1,color:'#FFF'},offerTitle:{fontSize:25,lineHeight:26,color:'#FFF',fontWeight:'500'},offerSub:{fontSize:10,color:'#F0DCD6',marginTop:6},offerDiscount:{borderWidth:1,borderColor:'#BD938A',paddingHorizontal:8,paddingVertical:4,borderRadius:5,alignSelf:'flex-start',marginTop:9},offerDiscountText:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:'#FFF'},offerImage:{width:'38%',height:'100%'},categories:{flexDirection:'row',gap:8,marginBottom:21},category:{minHeight:44,borderRadius:22,borderWidth:1,borderColor:line,paddingVertical:8,paddingHorizontal:13,flexDirection:'row',alignItems:'center',gap:5,backgroundColor:'#FFFDFA'},categoryActive:{backgroundColor:maroon,borderColor:maroon},categoryText:{fontSize:13,color:ink,fontWeight:'500'},categoryTextActive:{color:'#FFF'},sectionHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:12,marginTop:3},sectionTitle:{ fontWeight: '500', fontSize:21,color:ink,letterSpacing:-.4},sectionHint:{fontSize:14,color:muted,marginTop:4},seeAll:{fontSize:11,color:maroon,fontWeight:'500'},recentScroll:{gap:11,paddingRight:22,paddingBottom:23},recentCard:{width:177,borderRadius:12,backgroundColor:'#FFFDFA',borderWidth:1,borderColor:line,overflow:'hidden'},recentImage:{width:'100%',height:100,backgroundColor:'#E9CFC4'},recentBody:{padding:10},pastTag:{flexDirection:'row',alignItems:'center',gap:4},pastText:{fontSize:8,fontWeight:'500',letterSpacing:.7,color:green},recentName:{fontSize:13,fontWeight:'500',color:ink,marginTop:6},recentRestaurant:{fontSize:10,color:muted,marginTop:2},recentBottom:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:7},recentPrice:{fontSize:13,fontWeight:'500',color:maroon},quickAdd:{width:26,height:26,borderRadius:13,borderWidth:1,borderColor:'#E2D2CD',alignItems:'center',justifyContent:'center'},kitchenCard:{backgroundColor:'#FFFDFA',borderRadius:14,overflow:'hidden',borderWidth:1,borderColor:line,marginBottom:14},kitchenImage:{width:'100%',backgroundColor:'#E9CFC4'},kitchenDeal:{position:'absolute',bottom:9,left:10,backgroundColor:maroon,borderRadius:5,paddingVertical:5,paddingHorizontal:8},kitchenDealText:{color:'#FFF',fontSize:8,fontWeight:'500',letterSpacing:.8},heartBtn:{position:'absolute',right:10,top:10,width:32,height:32,borderRadius:16,backgroundColor:'rgba(30,20,15,.40)',alignItems:'center',justifyContent:'center'},kitchenBody:{flexDirection:'row',alignItems:'center',paddingHorizontal:13,paddingTop:12},kitchenName:{fontSize:18,color:ink,fontWeight:'500'},kitchenCuisine:{fontSize:11,color:muted,marginTop:3},rating:{flexDirection:'row',gap:4,alignItems:'center',backgroundColor:'#FBF4EB',paddingHorizontal:8,paddingVertical:6,borderRadius:8},ratingText:{fontSize:11,fontWeight:'500',color:ink},kitchenFoot:{flexDirection:'row',alignItems:'center',padding:13,paddingTop:10,gap:7},metaItem:{flexDirection:'row',alignItems:'center',gap:5},metaText:{fontSize:10,color:muted},dotSep:{color:'#C9BCB6'},fromPrice:{fontSize:10,fontWeight:'500',color:maroon,marginLeft:'auto'},bottomNav:{position:'absolute',bottom:0,left:0,right:0,backgroundColor:'#FFFDFA',borderTopWidth:1,borderTopColor:line,height:73,flexDirection:'row',justifyContent:'space-around',alignItems:'center',paddingTop:6},navItem:{alignItems:'center',justifyContent:'center',position:'relative'},navIconWrap:{height:25},navText:{fontSize:13,color:muted,marginTop:2},navTextActive:{color:deepMaroon,fontWeight:'500'},navBadge:{position:'absolute',top:-3,right:-9,backgroundColor:maroon,width:15,height:15,borderRadius:8,alignItems:'center',justifyContent:'center'},navBadgeTxt:{fontSize:9,color:'#FFF',fontWeight:'500'},modalPage:{flex:1,backgroundColor:ivory},modalTop:{height:51,paddingHorizontal:21,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},backBtn:{width:44,height:44,borderRadius:22,backgroundColor:'#FFFFFF',alignItems:'center',justifyContent:'center'},modalBrand:{fontWeight:'700',fontSize:23,color:maroon,letterSpacing:-1},restaurantHero:{justifyContent:'flex-end'},imageShade:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(20,9,6,.30)'},restaurantHeroBottom:{padding:19,alignItems:'flex-start'},restaurantTitleBacking:{backgroundColor:'rgba(0,0,0,.72)',borderRadius:8,paddingHorizontal:12,paddingVertical:8},menuMetaText:{fontSize:14,color:muted},restaurantLabel:{color:'#F3DDD3',fontSize:8,fontWeight:'500',letterSpacing:1.4},restaurantName:{ fontWeight: '500', fontSize:34,color:'#FFF',marginTop:3},restaurantDesc:{fontSize:12,color:'#FFF',marginTop:2},restaurantMeta:{height:48,flexDirection:'row',alignItems:'center',paddingHorizontal:19,gap:19,borderBottomWidth:1,borderBottomColor:line},cutoff:{margin:15,marginBottom:18,padding:12,borderRadius:10,borderWidth:1,borderColor:'#A6C2A9',backgroundColor:'#F4F8F2',flexDirection:'row',alignItems:'center',gap:9},cutoffTitle:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:green},cutoffSub:{fontSize:10,color:'#617464',marginTop:3},countdown:{fontSize:11,color:green,fontWeight:'500',fontVariant:['tabular-nums']},menuTitleRow:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:18,marginBottom:11},dealBadge:{fontSize:8,color:green,fontWeight:'500',borderWidth:1,borderColor:'#B8CCB8',borderRadius:5,paddingHorizontal:7,paddingVertical:5},reorderBox:{marginHorizontal:15,marginBottom:10,padding:12,backgroundColor:'#F1F6EF',borderWidth:1,borderColor:'#D7E5D6',borderRadius:11,flexDirection:'row',gap:9},reorderIcon:{width:29,height:29,borderRadius:15,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},reorderTitle:{fontSize:17,fontWeight:'500',color:green},reorderSub:{fontSize:12,color:'#617464',marginTop:3,marginBottom:9},savedOrderRow:{borderTopWidth:1,borderTopColor:'#D9E7D7',paddingTop:8,marginTop:2,marginBottom:1},savedOrderName:{fontSize:14,fontWeight:'500',color:ink},savedOrderOpts:{fontSize:9,color:muted,marginTop:2},reorderBtn:{minHeight:44,alignSelf:'flex-start',marginTop:7,backgroundColor:green,borderRadius:7,flexDirection:'row',alignItems:'center',paddingHorizontal:9,gap:5},reorderBtnText:{fontSize:13,color:'#FFF',fontWeight:'500'},mealRow:{minHeight:130,paddingVertical:14,paddingHorizontal:18,borderBottomWidth:1,borderColor:line,flexDirection:'row',alignItems:'center',gap:12},mealText:{flex:1},mealTags:{flexDirection:'row',gap:5,marginBottom:4},mealTag:{fontSize:8,color:'#9B6233',fontWeight:'500',letterSpacing:.7},equipmentTag:{fontSize:8,color:'#A1382C',fontWeight:'500',letterSpacing:.6,backgroundColor:'#FCEBE8',paddingHorizontal:5,paddingVertical:3,borderRadius:3},mealName:{fontSize:15,fontWeight:'500',color:ink},mealDesc:{fontSize:14,color:muted,marginTop:4,lineHeight:19},prices:{flexDirection:'row',alignItems:'center',gap:7,marginTop:7},mealPrice:{fontSize:12,color:maroon,fontWeight:'500'},oldPrice:{fontSize:10,color:'#9B908A',textDecorationLine:'line-through'},inCart:{fontSize:9,color:green,fontWeight:'500',marginTop:5},mealImage:{width:92,height:92,borderRadius:9,backgroundColor:'#E9CFC4'},cartBar:{position:'absolute',bottom:12,left:16,right:16,height:53,borderRadius:12,backgroundColor:maroon,flexDirection:'row',alignItems:'center',paddingHorizontal:14,gap:10,elevation:4},cartBubble:{width:23,height:23,borderRadius:12,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},cartBubbleText:{fontSize:11,fontWeight:'500',color:maroon},cartBarLabel:{fontSize:13,color:'#FFF',fontWeight:'500',flex:1},cartBarPrice:{fontSize:13,color:'#FFF',fontWeight:'500'},checkoutContent:{flex:1,paddingHorizontal:23,paddingTop:12,paddingBottom:13},steps:{flexDirection:'row',gap:13,marginBottom:25},stepDone:{fontSize:9,color:green,fontWeight:'500',letterSpacing:.7},stepCurrent:{fontSize:9,color:maroon,fontWeight:'500',letterSpacing:.7},stepIdle:{fontSize:9,color:'#B4A9A4',fontWeight:'500',letterSpacing:.7},checkoutTitle:{ fontWeight: '500', fontSize:30,lineHeight:34,color:ink,letterSpacing:-.6},checkoutSub:{fontSize:15,color:muted,lineHeight:21,marginTop:8,marginBottom:23},dateOption:{minHeight:69,borderWidth:1,borderColor:line,borderRadius:11,backgroundColor:'#FFFDFA',marginBottom:9,paddingHorizontal:13,flexDirection:'row',alignItems:'center',gap:11},dateOptionActive:{borderColor:maroon,backgroundColor:'#FFF0E8'},radio:{width:19,height:19,borderRadius:10,borderWidth:1.5,borderColor:'#CBBDB6',alignItems:'center',justifyContent:'center'},radioActive:{borderColor:maroon},radioInner:{width:9,height:9,borderRadius:5,backgroundColor:maroon},dateDay:{fontSize:13,fontWeight:'500',color:ink},dateAvailability:{fontSize:13,color:muted,marginTop:4},datePill:{fontSize:8,color:green,fontWeight:'500',letterSpacing:.5},pickupSummary:{height:56,borderTopWidth:1,borderTopColor:line,flexDirection:'row',alignItems:'center',gap:10,marginBottom:9},pickupSummaryTitle:{fontSize:9,fontWeight:'500',letterSpacing:.7,color:ink},pickupSummarySub:{fontSize:10,color:muted,marginTop:3},summaryEdit:{fontSize:9,color:maroon,fontWeight:'500',letterSpacing:.5},primaryBtn:{height:52,backgroundColor:maroon,borderRadius:11,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:8},primaryBtnText:{fontSize:13,color:'#FFF',fontWeight:'500'},timeGrid:{flexDirection:'row',flexWrap:'wrap',gap:9,marginBottom:22},timeOption:{height:51,width:'31.5%',borderRadius:9,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',alignItems:'center',justifyContent:'center'},timeOptionActive:{borderColor:maroon,backgroundColor:'#FFF0E8'},timeText:{fontSize:11,color:ink,fontWeight:'500'},timeTextActive:{color:maroon,fontWeight:'500'},fewLeft:{fontSize:7,color:'#9D6843',fontWeight:'500',marginTop:3},curbRow:{minHeight:74,borderWidth:1,borderColor:line,borderRadius:10,backgroundColor:'#FFFDFA',padding:12,flexDirection:'row',alignItems:'center',gap:10},checkbox:{width:20,height:20,borderWidth:1,borderColor:'#C6BAB4',borderRadius:5,alignItems:'center',justifyContent:'center'},checkboxOn:{backgroundColor:maroon,borderColor:maroon},curbTitleRow:{flexDirection:'row',alignItems:'center',gap:6},curbTitle:{fontSize:12,fontWeight:'500',color:ink},curbSub:{fontSize:10,color:muted,marginTop:4},curbFree:{fontSize:9,color:green,fontWeight:'500'},totalRow:{height:42,flexDirection:'row',alignItems:'center',justifyContent:'space-between'},totalLabel:{fontSize:11,color:muted},totalPrice:{fontSize:16,fontWeight:'500',color:ink},finePrint:{fontSize:12,color:muted,textAlign:'center',marginTop:9},inputWrap:{height:51,borderWidth:1,borderColor:line,backgroundColor:'#FFFDFA',borderRadius:10,marginBottom:10,paddingHorizontal:14,flexDirection:'row',alignItems:'center',gap:10},contactInput:{fontSize:13,color:ink,flex:1},checkoutInfo:{flexDirection:'row',gap:9,backgroundColor:'#F0F6EF',padding:12,borderRadius:9,marginTop:5,alignItems:'center'},checkoutInfoText:{fontSize:13,lineHeight:18,color:'#526557',flex:1},doneView:{flex:1,paddingHorizontal:24,paddingTop:30,paddingBottom:19,alignItems:'center'},doneIcon:{width:58,height:58,borderRadius:29,backgroundColor:green,alignItems:'center',justifyContent:'center',marginBottom:19},doneEyebrow:{fontSize:9,fontWeight:'500',letterSpacing:1.4,color:green},doneTitle:{ fontWeight: '500', fontSize:42,lineHeight:44,color:ink,textAlign:'center',marginTop:8},doneSub:{fontSize:12,lineHeight:18,color:muted,textAlign:'center',marginTop:11,maxWidth:290},doneCard:{width:'100%',borderWidth:1,borderColor:line,borderRadius:12,backgroundColor:'#FFFDFA',padding:15,marginTop:22,marginBottom:20},doneCardRow:{flexDirection:'row',alignItems:'center',gap:9,marginVertical:5},doneCardText:{fontSize:11,fontWeight:'500',color:ink},prepTimeline:{borderTopWidth:1,borderColor:line,marginTop:10,paddingTop:10},timelineRow:{flexDirection:'row',alignItems:'center',gap:9,minHeight:33},timelineIcon:{width:20,alignItems:'center'},timelineText:{fontSize:10,color:muted},doneLink:{padding:12},doneLinkText:{fontSize:11,color:maroon,fontWeight:'500'},pageTitle:{ fontWeight: '500', fontSize:35,color:ink,letterSpacing:-.8,marginBottom:20},orderHistoryCard:{borderWidth:1,borderColor:line,borderRadius:13,backgroundColor:'#FFFDFA',padding:14,marginBottom:13},historyHead:{flexDirection:'row',alignItems:'center',gap:10},historyIcon:{width:38,height:38,borderRadius:10,backgroundColor:'#EFF5ED',alignItems:'center',justifyContent:'center'},historyName:{fontSize:14,fontWeight:'500',color:ink},historyDate:{fontSize:13,color:muted,marginTop:3},historyPrice:{fontSize:12,fontWeight:'500',color:ink},historyDishes:{marginLeft:48,marginTop:12},historyDish:{fontSize:11,color:ink,fontWeight:'500'},historyPrefs:{fontSize:13,color:muted,marginTop:4},orderStatus:{borderTopWidth:1,borderColor:line,marginTop:12,paddingTop:11,flexDirection:'row',alignItems:'center',gap:6},statusDot:{width:7,height:7,borderRadius:4,backgroundColor:green},statusText:{fontSize:10,color:green,fontWeight:'500'},statusCode:{fontSize:9,color:muted,marginLeft:'auto'},reorderWide:{height:37,borderWidth:1,borderColor:'#E2D1CB',borderRadius:8,marginTop:11,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:5},reorderWideText:{fontSize:11,color:maroon,fontWeight:'500'},profileHero:{flexDirection:'row',alignItems:'center',gap:12,padding:14,backgroundColor:'#FFFDFA',borderRadius:12,borderWidth:1,borderColor:line,marginBottom:21},profileAvatar:{width:46,height:46,borderRadius:23,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},profileInitial:{fontSize:19,color:maroon,fontWeight:'500'},profileName:{fontSize:17,color:ink,fontWeight:'500'},profileHint:{fontSize:10,color:muted,marginTop:3},settingsSection:{fontSize:9,fontWeight:'500',letterSpacing:1.1,color:muted,marginTop:12,marginBottom:7},settingRow:{minHeight:61,flexDirection:'row',alignItems:'center',gap:10,borderBottomWidth:1,borderBottomColor:line},settingIcon:{width:34,height:34,borderRadius:9,backgroundColor:'#F0E1D9',alignItems:'center',justifyContent:'center'},settingTitle:{fontSize:12,fontWeight:'500',color:ink},settingDesc:{fontSize:10,color:muted,marginTop:3},accountFooter:{fontStyle:'italic',textAlign:'center',color:'#9A8981',fontSize:13,marginTop:32}});

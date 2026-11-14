@@ -12,9 +12,14 @@ const muted = '#77645B';
 const legalSite = (process.env.EXPO_PUBLIC_CENA_SITE_URL || 'https://cena-xi.vercel.app').replace(/\/$/, '');
 type Screen = 'welcome' | 'sign-in' | 'sign-up' | 'verify';
 
-export function AuthScreen({ topInset, bottomInset }: { topInset: number; bottomInset: number }) {
+export function AuthScreen({ topInset, bottomInset, startAt = 'welcome', onBack }: {
+  topInset: number;
+  bottomInset: number;
+  startAt?: 'welcome' | 'sign-in';
+  onBack?: () => void;
+}) {
   const { width, height } = useWindowDimensions();
-  const [screen, setScreen] = useState<Screen>('welcome');
+  const [screen, setScreen] = useState<Screen>(startAt);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -114,7 +119,7 @@ export function AuthScreen({ topInset, bottomInset }: { topInset: number; bottom
       contentContainerStyle={[s.body, { paddingTop: topInset + 22, paddingBottom: Math.max(bottomInset, 24) }]}>
       <View style={s.form}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back" disabled={busy}
-          onPress={() => show(verifying ? 'sign-up' : 'welcome')} style={s.back}>
+          onPress={() => { if (screen === startAt && onBack) onBack(); else show(verifying ? 'sign-up' : 'welcome'); }} style={s.back}>
           <ArrowLeft size={23} color={maroon} />
         </Pressable>
         <Text accessibilityRole="header" style={s.title}>{title}</Text>

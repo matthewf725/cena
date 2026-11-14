@@ -57,6 +57,16 @@ on conflict (restaurant_id,lower(name)) do update set description=excluded.descr
  price_cents=excluded.price_cents,regular_price_cents=excluded.regular_price_cents,image_key=excluded.image_key,
  equipment=excluded.equipment,option_groups=excluded.option_groups,active=true,published_at=excluded.published_at;
 
+-- Prepared-menu comparisons for the four San Luis Obispo demo restaurants.
+-- City rate effective October 1, 2026: https://cdtfa.ca.gov/taxes-and-fees/rates.aspx
+update public.catalog_items i
+set prepared_meal_total_cents=round(i.regular_price_cents*1.0875)
+from public.restaurants r
+where i.restaurant_id=r.id
+  and r.slug in ('cal-poly-luna-red','cal-poly-mamas-meatball','cal-poly-piadina','cal-poly-giuseppes')
+  and i.regular_price_cents>0 and i.published_at is not null and i.prepared_meal_total_cents is null;
+-- End prepared-menu comparisons for the demo restaurants.
+
 insert into public.pickup_slots (restaurant_id,starts_at,ends_at,cutoff_at,capacity,active)
 select r.id,s.starts_at,s.starts_at+interval '30 minutes',s.starts_at-interval '30 minutes',16,true
 from public.restaurants r cross join generate_series(0,35) as d(day_offset)
@@ -75,6 +85,53 @@ join cal_poly_demo_menu m on m.slug=r.slug
 join public.catalog_items i on i.restaurant_id=r.id and i.name=m.name
 where s.active and s.cutoff_at>now()
 on conflict (slot_id,item_id) do nothing;
+
+-- Cal Poly demo walkthrough refresh.
+insert into public.profiles (id,display_name,equipment)
+select id,'Jeffrey Armstrong',array['Oven','Stovetop'] from auth.users
+where email='demo-calpoly-customer@cena.test' and raw_user_meta_data->>'cena_demo'='cal-poly'
+on conflict (id) do update set
+  display_name=case when nullif(trim(profiles.display_name),'') is null then excluded.display_name else profiles.display_name end,
+  equipment=case when cardinality(profiles.equipment)=0 then excluded.equipment else profiles.equipment end;
+
+-- Add one visible, non-charged upcoming pickup using the normal reservation
+-- path. This only books the next available Luna Red slot for the fixed demo
+-- customer and is skipped on re-runs once a future demo order exists.
+do $$
+declare
+  v_customer uuid;
+  v_restaurant uuid;
+  v_slot uuid;
+  v_item uuid;
+  v_order uuid;
+begin
+  select id into v_customer from auth.users where email='demo-calpoly-customer@cena.test'
+    and raw_user_meta_data->>'cena_demo'='cal-poly';
+  if v_customer is null or exists (
+    select 1 from public.orders o join public.restaurants r on r.id=o.restaurant_id
+    where o.user_id=v_customer and o.request_hash='cal-poly-demo'
+      and o.payment_method='pay_at_pickup' and o.status in ('placed','accepted','preparing','ready')
+      and o.pickup_ends_at>now() and r.slug in
+        ('cal-poly-luna-red','cal-poly-mamas-meatball','cal-poly-piadina','cal-poly-giuseppes')
+  ) then return; end if;
+
+  select r.id,s.id,i.id into v_restaurant,v_slot,v_item
+  from public.restaurants r
+  join public.pickup_slots s on s.restaurant_id=r.id and s.active and s.cutoff_at>now()
+    and s.starts_at>now()+interval '32 minutes' and s.reserved_count<s.capacity
+  join public.slot_item_inventory inv on inv.slot_id=s.id and inv.available_qty>inv.reserved_qty
+  join public.catalog_items i on i.id=inv.item_id and i.restaurant_id=r.id and i.active and i.published_at is not null
+  where r.slug='cal-poly-luna-red'
+  order by s.starts_at,i.name limit 1;
+  if v_slot is null then raise exception 'No available future Cal Poly demo pickup slot'; end if;
+
+  perform set_config('request.jwt.claim.sub',v_customer::text,true);
+  select id into v_order from public.create_order(v_restaurant,v_slot,
+    'cal-poly-preview-'||v_slot::text,'counter','{}'::jsonb,
+    jsonb_build_array(jsonb_build_object('item_id',v_item,'quantity',1)));
+  update public.orders set request_hash='cal-poly-demo' where id=v_order and user_id=v_customer;
+end $$;
+-- End Cal Poly demo walkthrough refresh.
 
 with cal_poly_demo_menu as (
  select * from jsonb_to_recordset(current_setting('cena.cal_poly_demo_menu')::jsonb) as menu(slug text,sample_order_day integer)
@@ -108,6 +165,35 @@ select o.id,i.id,i.name,i.price_cents,1,i.published_steps,
 from inserted o join public.restaurants r on r.id=o.restaurant_id
 join cal_poly_demo_menu m on m.slug=r.slug and m.sample_order_day is not null
 join public.catalog_items i on i.restaurant_id=r.id and i.name=m.name;
+
+-- Sample prep snapshots for the demo walkthrough.
+update public.order_items oi
+set prep_steps_snapshot = case r.cuisine
+  when 'Pizza' then array[
+    'Follow the kit label for oven settings and heating time.',
+    'Arrange the pizza on the recommended tray and heat as directed.',
+    'Finish with any toppings packed separately, then slice.'
+  ]
+  when 'Latin' then array[
+    'Check the kit label for the reheating directions for each container.',
+    'Warm the paella as directed on the kit and stir gently before serving.',
+    'Add the finishing ingredients packed with the kit.'
+  ]
+  else array[
+    'Check the kit label for the reheating directions for each container.',
+    'Warm the pasta and sauce as directed, then toss just before serving.',
+    'Finish with the garnish packed separately.'
+  ]
+end
+from public.orders o
+join public.restaurants r on r.id=o.restaurant_id
+join auth.users u on u.id=o.user_id
+where oi.order_id=o.id
+  and u.email='demo-calpoly-customer@cena.test' and u.raw_user_meta_data->>'cena_demo'='cal-poly'
+  and o.request_hash='cal-poly-demo' and o.payment_method='pay_at_pickup'
+  and r.slug in ('cal-poly-luna-red','cal-poly-mamas-meatball','cal-poly-piadina','cal-poly-giuseppes')
+  and cardinality(oi.prep_steps_snapshot)=0;
+-- End sample prep snapshots for the demo walkthrough.
 
 -- Retire the previous San Francisco fixtures while preserving any history that refers to them.
 update public.restaurants set active=false

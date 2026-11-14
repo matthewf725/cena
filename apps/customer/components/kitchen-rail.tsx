@@ -61,7 +61,7 @@ export const KitchenCard = memo(function KitchenCard({ kitchen, width, radius, o
             <Text accessibilityLabel={`${rating} out of 5 stars`} style={styles.ratingValue}>{rating}</Text>
           </View>}
         </View>
-        <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
+        <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine].filter(Boolean).join(' · ')}</Text>
       </View>
     {kitchen.pickupSlots !== undefined && <View pointerEvents="none" style={styles.countdown}>
       <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} suspended={suspended} />

@@ -13,11 +13,12 @@ const publicAreas: AddressLocation[] = [
   { label: 'Downtown Berkeley', latitude: 37.8716, longitude: -122.2727 },
 ];
 
-export function LocationPicker({ close, useDevice, useAddress, reset, locating, currentLabel, recentAddresses, deviceError }: {
+export function LocationPicker({ close, useDevice, useAddress, reset, resetLabel = 'Use San Francisco', locating, currentLabel, recentAddresses, deviceError }: {
   close: () => void;
   useDevice: () => void;
   useAddress: (address: AddressLocation) => void;
   reset: () => void;
+  resetLabel?: string;
   locating: boolean;
   currentLabel: string;
   recentAddresses: AddressLocation[];
@@ -57,7 +58,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
   useEffect(() => {
     mounted.current=true;
     if (Platform.OS !== 'web') return ()=>{mounted.current=false;lookupAbort.current?.abort();};
-    addressInput.current?.focus();
+    if (typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches) addressInput.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -97,7 +98,8 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
 
   async function findAddress() {
     if (busy || dismissed.current || address.trim().length < 8) return;
-    const api = process.env.EXPO_PUBLIC_CENA_GEOCODE_URL || process.env.EXPO_PUBLIC_CENA_API_URL;
+    const api = process.env.EXPO_PUBLIC_CENA_API_URL || process.env.EXPO_PUBLIC_CENA_GEOCODE_URL;
+    const useWorker = !process.env.EXPO_PUBLIC_CENA_API_URL && !!process.env.EXPO_PUBLIC_CENA_GEOCODE_URL;
     if (!api) {
       setError('Address lookup is unavailable in this preview. You can still use your device location.');
       return;
@@ -107,8 +109,12 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
     setSelected(null);
     const controller=new AbortController();
     lookupAbort.current=controller;
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await fetch(`${api.replace(/\/$/, '')}/v1/geocode?address=${encodeURIComponent(address.trim())}`,{signal:controller.signal});
+      const endpoint = `${api.replace(/\/$/, '')}/v1/geocode`;
+      const response = await fetch(useWorker ? endpoint : `${endpoint}?address=${encodeURIComponent(address.trim())}`, useWorker
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: address.trim() }), signal: controller.signal }
+        : { signal: controller.signal });
       if(dismissed.current)return;
       if (response.status === 404 || response.status === 422) {
         setError('Enter a California street address with a city or ZIP code.');
@@ -124,6 +130,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
     } catch {
       if(!dismissed.current&&mounted.current)setError('Couldn’t look up that address. Try again or use your current location.');
     } finally {
+      clearTimeout(timeout);
       if(lookupAbort.current===controller)lookupAbort.current=null;
       if(!dismissed.current&&mounted.current)setSearching(false);
     }
@@ -167,7 +174,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
             <Text style={styles.deviceText}>Use my current location</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={reset} disabled={busy} style={styles.resetButton}>
-            <Text style={styles.resetText}>Use San Francisco</Text>
+            <Text style={styles.resetText}>{resetLabel}</Text>
           </Pressable>
 
           {!!recentSuggestions.length&&<View style={styles.suggestions}>
@@ -198,7 +205,7 @@ function Suggestion({item,onPress,disabled}:{item:AddressLocation;onPress:()=>vo
 const maroon = '#5D100A';
 const green = '#245C40';
 const styles = StyleSheet.create({
-  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 25, backgroundColor:'#FAF6F3' },
+  overlay: { flex: 1, backgroundColor:'#FAF6F3' },
   screen: { flex:1, backgroundColor:'#FAF6F3' },
   scrollContent: { flexGrow:1, paddingBottom:24 },
   heading: { minHeight:64, flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:20 },
