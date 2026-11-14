@@ -93,6 +93,8 @@ struct CustomerHome: View {
     @State private var analyticsConsentSaving = false
     @State private var analyticsConsentNotice: String?
     @State private var analyticsConsentRequestID = UUID()
+    @State private var discoveryQuery = ""
+    @State private var hasDiscoveryQuery = false
     private var subtotal: Int { cart.reduce(0) { sum, entry in sum + entry.value * (cartItemDetails[entry.key].map { int($0["price_cents"]) } ?? 0) } }
     private var cartCount: Int { cart.values.reduce(0, +) }
     private var cartFingerprint: String { "\(str(checkoutRestaurant?["id"]))|\(str(checkoutSlot?["id"]))|" + cart.keys.sorted().map { "\($0):\(cart[$0, default: 0])" }.joined(separator: ",") }
@@ -139,10 +141,25 @@ struct CustomerHome: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if orderNumber == nil && pendingCheckoutID == nil && !checkoutVisible {
-                    HStack { tabButton("Discover", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
-                        .padding(.vertical, 7)
-                        .background(CenaStyle.paper)
-                        .overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
+                    VStack(spacing: 0) {
+                        if restaurant == nil && tab == 0 && orderNumber == nil {
+                            HStack(spacing: 9) {
+                                Image(systemName: "magnifyingglass").foregroundStyle(CenaStyle.clay)
+                                TextField("Search kitchens", text: $discoveryQuery)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .accessibilityIdentifier("customer.home.search")
+                                if !discoveryQuery.isEmpty { Button { discoveryQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(CenaStyle.clay) }.accessibilityLabel("Clear search") }
+                            }
+                            .padding(.horizontal, 14).frame(height: 46)
+                            .background(Color.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(CenaStyle.rose, lineWidth: 1))
+                            .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 5)
+                        }
+                        HStack { tabButton("Discover", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
+                            .padding(.vertical, 7)
+                    }
+                    .background(CenaStyle.paper)
+                    .overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
                 }
             }
             .background(CenaStyle.cream)
@@ -153,6 +170,7 @@ struct CustomerHome: View {
                 restoreIdempotencyKey()
                 restorePendingCheckoutForCurrentIdentity(allowLegacyClaim: true)
                 await load()
+                if api.signedIn { await loadProfile() }
                 if pendingCheckoutID != nil { await refreshPendingCheckout() }
             }
             .onChange(of: scenePhase) { _, phase in
@@ -173,15 +191,22 @@ struct CustomerHome: View {
     private var homeScreen: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Dinner, made\na little easier.").font(.largeTitle.weight(.bold)).fontDesign(.default).foregroundStyle(CenaStyle.ink).accessibilityIdentifier("customer.home.title")
+                GeometryReader { geometry in
+                    let progress = reduceMotion ? 0 : min(1, max(0, -geometry.frame(in: .named("customer.home.scroll")).minY / 150))
+                    VStack(alignment: .leading, spacing: 7) {
+                    Text(welcomeGreeting).font(.largeTitle.weight(.bold)).fontDesign(.default).foregroundStyle(CenaStyle.ink).accessibilityIdentifier("customer.home.title")
                     Text("Local meal kits, prepared by neighborhood kitchens.").foregroundStyle(CenaStyle.clay)
                     if !api.configured { Label("Connect Supabase to browse live menus.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
                     else { Text("Approximate miles from \(pickupAreaLabel).").font(.caption).foregroundStyle(CenaStyle.clay) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.vertical, 17 - 6 * progress)
+                    .cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose)
+                    .scaleEffect(1 - 0.035 * progress, anchor: .topLeading)
+                    .opacity(1 - 0.28 * progress)
+                    .blur(radius: progress * 2)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20).padding(.vertical, 17)
-                .cenaCardBackground(CenaStyle.peach, outline: CenaStyle.rose)
+                .frame(height: 150)
                 .padding(.horizontal, 20).padding(.top, 12)
                 recentRail
                 mealExploreRail
@@ -203,8 +228,33 @@ struct CustomerHome: View {
                 else if nearbyRestaurants.isEmpty && exploreMeals.isEmpty && recentRestaurants.isEmpty { Text("No kitchens with upcoming pickup are available yet. Check back soon.").foregroundStyle(.secondary).padding(.horizontal, 20) }
             }.padding(.bottom, 24)
         }
+        .coordinateSpace(name: "customer.home.scroll")
         .scrollIndicators(.hidden)
         .refreshable { await load() }
+        .task(id: discoveryQuery.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            guard api.configured, hasDiscoveryQuery || !discoveryQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            hasDiscoveryQuery = true
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await refreshDiscoveryForQuery()
+        }
+    }
+
+    private var welcomeGreeting: String {
+        guard api.signedIn else { return "Welcome to Cena" }
+        let saved = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return saved.isEmpty ? "Welcome back" : "Welcome back, \(saved)"
+    }
+
+    @MainActor private func refreshDiscoveryForQuery() async {
+        do {
+            let feed = try await fetchDiscovery(after: nil)
+            guard !Task.isCancelled else { return }
+            nearbyRestaurants = feed["nearby"] as? [[String: Any]] ?? []
+            categoryRails = validCategories(feed["categories"] as? [[String: Any]] ?? [])
+            nextFeedCursor = feed["next_cursor"] as? String
+            moreError = nil
+        } catch { if !Task.isCancelled { message = error.localizedDescription } }
     }
 
     private var locationEditor: some View {
@@ -309,7 +359,7 @@ struct CustomerHome: View {
                     }.foregroundStyle(CenaStyle.clay).lineLimit(1)
                     cutoffBadge(kitchen["next_slot"] as? [String: Any])
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(width: width).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose)
+            }.frame(width: width).cenaCardBackground(Color.white, outline: CenaStyle.rose)
         }.buttonStyle(.plain).accessibilityLabel("\(str(kitchen["name"])), \(str(kitchen["cuisine"])), view menu")
     }
 
@@ -927,7 +977,7 @@ struct CustomerHome: View {
     private func fetchDiscovery(after cursor: String?) async throws -> [String: Any] {
         let response = try await api.rpc("discover_pickup_feed", body: [
             "p_latitude": pickupLatitude, "p_longitude": pickupLongitude,
-            "p_after": cursor as Any? ?? NSNull(), "p_query": NSNull(), "p_cuisine": NSNull(),
+            "p_after": cursor as Any? ?? NSNull(), "p_query": discoveryQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? NSNull() : discoveryQuery.trimmingCharacters(in: .whitespacesAndNewlines) as Any, "p_cuisine": NSNull(),
             "p_recent_ids": recentRestaurantIDs
         ], authenticated: false)
         guard let feed = response as? [String: Any] else { throw CenaBackendError.invalidResponse }
