@@ -42,9 +42,6 @@ function tomorrowAtServiceTime(iso, timezone) {
 
 await context.route('**/*', async route => {
   const url = new URL(route.request().url());
-  if (url.origin === 'https://tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname)) {
-    return route.abort('blockedbyclient');
-  }
   if (['http:', 'https:'].includes(url.protocol) && !loopback.includes(url.hostname)) {
     blocked.push(url.origin);
     return route.abort('blockedbyclient');
@@ -139,20 +136,23 @@ try {
   // This is a loopback response override; it performs no order, auth, or database write.
   await page.getByRole('button', { name: firstKitchenLabel, exact: true }).first().click();
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-  const addButton = page.getByRole('button', { name: /^Add .+ to bag$/ }).first();
-  await addButton.waitFor({ timeout: 15000 });
-  const firstMealName = (await addButton.getAttribute('aria-label')).replace(/^Add | to bag$/g, '');
-  await addButton.click();
+  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
+  await chooseOptions.waitFor({ timeout: 15000 });
+  const firstMealName = (await chooseOptions.getAttribute('aria-label')).replace(/^Choose options for /, '');
+  await chooseOptions.click();
+  await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
   await page.getByRole('button', { name: 'View bag', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Go back', exact: true }).click();
   const kitchenLabels = await page.getByRole('button', { name: /^View .+ menu$/ }).evaluateAll(cards => cards.map(card => card.getAttribute('aria-label')));
   const alternateLabel = kitchenLabels.find(label => label && label !== firstKitchenLabel);
   assert.ok(alternateLabel, 'Two stocked restaurants are needed to test the bag conflict');
   await page.getByRole('button', { name: alternateLabel, exact: true }).first().click();
-  const otherAdd = page.getByRole('button', { name: /^Add .+ to bag$/ }).first();
-  await otherAdd.click({ timeout: 15000 });
+  const otherOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
+  await otherOptions.click({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
   await page.getByText('One kitchen at a time', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('Got it', { exact: true }).click();
+  await page.getByRole('button', { name: 'Close meal options', exact: true }).click();
 
   // Reopen the original kitchen, then enter the saved bag. The fixture shifts all
   // returned pickup slots to the next calendar day in that restaurant's timezone.
@@ -160,7 +160,9 @@ try {
   await page.getByRole('tab', { name: /Bag, 1 item/ }).click();
   await page.getByText(firstMealName, { exact: true }).waitFor();
   forceTomorrowPickup = true;
-  await page.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+  await page.getByText('Checkout', { exact: true }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Edit pickup date and time', exact: true }).click();
   await page.getByText('When would you', { exact: false }).waitFor({ timeout: 30000 });
   assert.ok(shiftedPickupSlots > 0, 'The loopback fixture should have shifted at least one available slot');
   const radioStates = await page.getByRole('radio').evaluateAll(radios => radios.map(radio => ({

@@ -1,77 +1,118 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
-import { Search, X } from 'lucide-react-native';
+import { MapPin, Search, X } from 'lucide-react-native';
 import { Text, TextInput } from './type';
 
-export const welcomeHeight = 60;
-export const welcomeFadeEnd = 140;
 export const searchGap = 12;
 export const homeContentMaxWidth = 760;
 
 const maroon = '#46110E';
 const muted = '#77645B';
 const greetingFont = Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' });
-const headerTail = 40;
+const controlSize = 44;
 
 function gradient(image: string) {
   return Platform.OS === 'web' ? { backgroundImage: image } as ViewStyle : { experimental_backgroundImage: image };
 }
 
-const creamSurface = gradient('linear-gradient(180deg, #FAF6F3 0%, #FAF6F3 64%, rgba(250, 246, 243, .96) 73%, rgba(250, 246, 243, .71) 84%, rgba(250, 246, 243, .29) 94%, rgba(250, 246, 243, 0) 100%)');
-const warmSurface = gradient('linear-gradient(180deg, #FFDACE 0%, #F9E3DA 49%, #FAF6F3 73%, rgba(250, 246, 243, .74) 84%, rgba(250, 246, 243, .29) 94%, rgba(250, 246, 243, 0) 100%)');
+const warmSurface = gradient('linear-gradient(180deg, #FFDACE 0%, #F9E4DC 43%, #FAF2ED 76%, #FAF6F3 100%)');
 
-export function PageHeader({ children, identityHeight, topInset }: {
+export function PageHeader({ children, identityHeight, topInset, expanded = false, reduced = true }: {
   children: ReactNode;
   identityHeight: number;
   topInset: number;
+  expanded?: boolean;
+  reduced?: boolean;
 }) {
-  return <View pointerEvents="box-none" style={s.pageHeader}>
-    <HeaderSurface height={identityHeight + topInset + headerTail + 14} topInset={topInset} />
+  const extra = useRef(new Animated.Value(expanded ? 72 : 0)).current;
+  useEffect(() => {
+    const toValue = expanded ? 72 : 0;
+    if (reduced) { extra.setValue(toValue); return; }
+    const animation = Animated.timing(extra, { toValue, duration: 240, useNativeDriver: false });
+    animation.start();
+    return () => animation.stop();
+  }, [expanded, extra, reduced]);
+
+  return <View pointerEvents="box-none" style={{ minHeight: identityHeight + 12 }}>
+    <Animated.View pointerEvents="none" style={[s.surface, warmSurface, {
+      top: -topInset, height: Animated.add(extra, identityHeight + topInset + 12),
+    }]} />
     {children}
   </View>;
-}
-
-function HeaderSurface({ height, topInset, warmOpacity = 1 }: {
-  height: number | Animated.AnimatedInterpolation<number>;
-  topInset: number;
-  warmOpacity?: number | Animated.AnimatedInterpolation<number>;
-}) {
-  return <Animated.View pointerEvents="none" style={[s.headerSurface, creamSurface, { top: -topInset, height }]}>
-    <Animated.View style={[StyleSheet.absoluteFillObject, warmSurface, { opacity: warmOpacity }]} />
-  </Animated.View>;
 }
 
 export function HomeWelcome({ greeting }: { greeting: string }) {
-  return <Text accessibilityRole="header" numberOfLines={1} style={s.staticGreeting}>{greeting}</Text>;
+  return <Text accessibilityRole="header" numberOfLines={1} style={s.greeting}>{greeting}</Text>;
 }
 
-export function HomeHeader({ children, scrollY, reduced, greeting, collapsed, side, identityHeight, topInset }: {
+export function HeaderWordmark({ children, hidden, reduced }: {
   children: ReactNode;
-  scrollY: Animated.Value;
+  hidden: boolean;
   reduced: boolean;
-  greeting: string;
-  collapsed: boolean;
-  side: number;
-  identityHeight: number;
-  topInset: number;
 }) {
-  const collapse = (start: number, end: number) => scrollY.interpolate({
-    inputRange: [0, 20, welcomeFadeEnd], outputRange: [start, start, end], extrapolate: 'clamp',
-  });
+  const opacity = useRef(new Animated.Value(hidden ? 0 : 1)).current;
+  useEffect(() => {
+    const toValue = hidden ? 0 : 1;
+    if (reduced) { opacity.setValue(toValue); return; }
+    const animation = Animated.timing(opacity, { toValue, duration: 240, useNativeDriver: Platform.OS !== 'web' });
+    animation.start();
+    return () => animation.stop();
+  }, [hidden, opacity, reduced]);
 
-  return <View pointerEvents="box-none" style={s.header}>
-    <HeaderSurface topInset={topInset}
-      height={reduced ? identityHeight + topInset + welcomeHeight + headerTail : collapse(identityHeight + topInset + welcomeHeight + headerTail, identityHeight + topInset + headerTail)}
-      warmOpacity={reduced ? 1 : collapse(1, 0)} />
-    {children}
-    {!reduced && <Animated.View pointerEvents="none" aria-hidden={collapsed}
-      accessibilityElementsHidden={collapsed} importantForAccessibility={collapsed ? 'no-hide-descendants' : 'auto'}
-      style={[s.welcome, { height: collapse(welcomeHeight, 0), paddingHorizontal: side }]}>
-      <Animated.Text accessibilityRole="header" numberOfLines={1} style={[s.greeting, {
-        opacity: collapse(1, 0), fontSize: collapse(32, 22), transform: [{ translateY: collapse(0, -14) }],
-      }]}>{greeting}</Animated.Text>
-    </Animated.View>}
-  </View>;
+  return <Animated.View pointerEvents="none" aria-hidden={hidden} accessibilityElementsHidden={hidden}
+    importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'} style={[s.wordmark, { opacity }]}>{children}</Animated.View>;
+}
+
+export function HeaderButton({ ref, label, onPress, children, reduced }: {
+  ref?: Ref<ComponentRef<typeof Pressable>>;
+  label: string;
+  onPress: () => void;
+  children: ReactNode;
+  reduced: boolean;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (reduced) scale.setValue(1);
+    return () => scale.stopAnimation();
+  }, [reduced, scale]);
+
+  const press = (toValue: number) => {
+    if (reduced) return;
+    Animated.timing(scale, { toValue, duration: 130, useNativeDriver: Platform.OS !== 'web' }).start();
+  };
+
+  return <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
+    onPressIn={() => press(0.92)} onPressOut={() => press(1)} style={s.pressTarget}>
+    <Animated.View style={[s.control, { transform: [{ scale }] }]}>{children}</Animated.View>
+  </Pressable>;
+}
+
+export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onPress }: {
+  ref?: Ref<ComponentRef<typeof Pressable>>;
+  label: string;
+  compact: boolean;
+  labelWidth: number;
+  reduced: boolean;
+  onPress: () => void;
+}) {
+  const progress = useRef(new Animated.Value(compact ? 0 : 1)).current;
+  useEffect(() => {
+    const toValue = compact ? 0 : 1;
+    if (reduced) { progress.setValue(toValue); return; }
+    const animation = Animated.timing(progress, { toValue, duration: 240, useNativeDriver: false });
+    animation.start();
+    return () => animation.stop();
+  }, [compact, progress, reduced]);
+
+  return <HeaderButton ref={ref} label={`Change pickup area, ${label}`} onPress={onPress} reduced={reduced}>
+    <MapPin size={19} color={maroon} aria-hidden />
+    <Animated.View aria-hidden style={[s.pickupLabelClip, {
+      maxWidth: progress.interpolate({ inputRange: [0, 1], outputRange: [0, labelWidth] }),
+      opacity: progress,
+    }]}>
+      <Text numberOfLines={1} style={s.pickupLabel}>{label}</Text>
+    </Animated.View>
+  </HeaderButton>;
 }
 
 export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
@@ -82,11 +123,13 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
   side: number;
   height: number;
 }) {
+  const [focused,setFocused] = useState(false);
   return <View pointerEvents="box-none" style={[s.searchDock, { bottom, left: side, right: side }]}>
-    <View style={[s.search, { borderRadius: radius, height }]}>
+    <View style={[s.search, { borderRadius: radius, height }, focused && s.searchFocused]}>
       <Search size={18} color={maroon} aria-hidden />
       <TextInput accessibilityLabel="Search restaurants" value={query} onChangeText={setQuery}
         placeholder="Search restaurants" placeholderTextColor={muted} style={s.input} maxLength={120}
+        onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
         autoCorrect={false} returnKeyType="search" clearButtonMode="never" />
       {!!query && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={s.clear}>
         <X size={18} color={maroon} aria-hidden />
@@ -96,14 +139,16 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
 }
 
 const s = StyleSheet.create({
-  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 },
-  pageHeader: { zIndex: 1 },
-  headerSurface: { position: 'absolute', left: 0, right: 0, overflow: 'hidden' },
-  welcome: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', overflow: 'hidden' },
-  greeting: { color: maroon, fontFamily: greetingFont, fontWeight: '400', lineHeight: 42, letterSpacing: -0.7 },
-  staticGreeting: { color: maroon, fontFamily: greetingFont, fontSize: 32, fontWeight: '400', lineHeight: 42, letterSpacing: -0.7, marginBottom: 16 },
+  surface: { position: 'absolute', left: 0, right: 0 },
+  wordmark: { marginRight: 'auto' },
+  greeting: { color: maroon, fontFamily: greetingFont, fontSize: 32, fontWeight: '400', lineHeight: 42, includeFontPadding: false, letterSpacing: -0.7, marginTop: 16, marginBottom: 24 },
+  pressTarget: { flexShrink: 0 },
+  control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
+  pickupLabelClip: { overflow: 'hidden' },
+  pickupLabel: { color: maroon, fontSize: 14, marginLeft: 7, lineHeight: 20 },
   searchDock: { position: 'absolute', alignItems: 'center', zIndex: 1 },
   search: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 1, borderColor: '#DCCAC1', backgroundColor: '#FFFFFF', paddingLeft: 13, paddingRight: 4, boxShadow: '0 4px 16px rgba(39,29,25,.10)' },
-  input: { minWidth: 0, flex: 1, height: '100%', fontSize: 16, color: '#271D19', paddingRight: 8 },
+  searchFocused: { borderColor: '#A46E64' },
+  input: { minWidth: 0, flex: 1, height: '100%', fontSize: 16, color: '#271D19', paddingRight: 8, ...(Platform.OS==='web'?{outlineWidth:0}:{}) },
   clear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { toMeal, type Kitchen } from './data';
+import { toMeal, type CatalogMealRow, type Kitchen, type MealSelections } from './data';
 import { createAuthTimeoutFetch } from './auth-timeout-fetch';
 import { validateCheckoutQuote, type CheckoutQuote } from './checkout-quote';
 export type { CheckoutQuote } from './checkout-quote';
@@ -36,8 +36,7 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
   if (!supabase || !kitchen.backendId) return kitchen;
   const restaurantId = kitchen.backendId;
   const [menu, availability] = await Promise.all([
-    supabase.from('catalog_items').select('id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key')
-      .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null).order('name'),
+    fetchMenuItems(supabase, restaurantId),
     fetchPickupAvailability(restaurantId),
   ]);
   if (menu.error || availability.error) throw menu.error ?? availability.error;
@@ -53,6 +52,14 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
   };
 }
 
+async function fetchMenuItems(client: SupabaseClient, restaurantId: string) {
+  const fields = 'id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key';
+  const query = (columns: string) => client.from('catalog_items').select(columns)
+    .eq('restaurant_id', restaurantId).eq('active', true).not('published_at', 'is', null).order('name').returns<CatalogMealRow[]>();
+  const result = await query(`${fields},option_groups`);
+  return result.error?.code === '42703' ? query(fields) : result;
+}
+
 export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.from('restaurants')
@@ -66,7 +73,8 @@ export async function fetchKitchenBySlug(slug: string): Promise<Kitchen | null> 
   } : null;
 }
 
-export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: { item_id: string; quantity: number }[]; promoCode?: string; expectedAmountCents: number };
+export type CheckoutItem = { item_id: string; quantity: number; selections?: MealSelections };
+export type CheckoutInput = { restaurantId: string; slotId: string; idempotencyKey: string; pickupMode: 'counter'|'curbside'; vehicle?: Record<string, string>; items: CheckoutItem[]; promoCode?: string; expectedAmountCents: number };
 export type CheckoutSession = { order_id: string; checkout_url: string; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null } | { order_id: string; status: 'paid'; subtotal_cents?:number;discount_cents?:number;amount_cents?:number;currency?:string;promo_code?:string|null };
 export function isTrustedCheckoutURL(value: string) {
   try {

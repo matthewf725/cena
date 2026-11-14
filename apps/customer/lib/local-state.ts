@@ -1,3 +1,5 @@
+import { mealOptionGroups, normalizeMealSelections } from './data.ts';
+
 export type CustomerLocalSnapshot = {
   cart: Record<string, unknown>;
   cartRevision: string;
@@ -37,6 +39,8 @@ function sanitizedCart(value: unknown): Record<string, unknown> {
     const line = candidate as Record<string, unknown>;
     if (!line.meal || typeof line.meal !== 'object' || Array.isArray(line.meal)) continue;
     const meal = line.meal as Record<string, unknown>;
+    const optionGroups = mealOptionGroups(meal.optionGroups);
+    const selections = normalizeMealSelections(line.selections);
     const quantity = Number(line.qty);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 50 || typeof line.restaurantId !== 'string' || !line.restaurantId
       || typeof meal.id !== 'string' || typeof meal.name !== 'string' || typeof meal.image !== 'string') continue;
@@ -47,6 +51,7 @@ function sanitizedCart(value: unknown): Record<string, unknown> {
       price: Number.isFinite(Number(meal.price)) && Number(meal.price) >= 0 ? Number(meal.price) : 0,
       ...(Number.isFinite(Number(meal.preparedMealTotalCents)) ? { preparedMealTotalCents: Number(meal.preparedMealTotalCents) } : {}),
       image: meal.image,
+      ...(optionGroups.length ? { optionGroups } : {}),
       ...(typeof meal.tag === 'string' ? { tag: meal.tag } : {}),
       ...(typeof meal.equipment === 'string' ? { equipment: meal.equipment } : {}),
       ...(typeof meal.backendItemId === 'string' ? { backendItemId: meal.backendItemId } : {}),
@@ -56,6 +61,7 @@ function sanitizedCart(value: unknown): Record<string, unknown> {
       meal: safeMeal,
       qty: quantity,
       options: typeof line.options === 'string' ? line.options : '',
+      ...(Object.keys(selections).length ? { selections } : {}),
       restaurantId: line.restaurantId,
     };
   }

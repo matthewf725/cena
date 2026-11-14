@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 import type { Kitchen } from '../lib/data';
 import { KitchenRail } from './kitchen-rail';
 
-export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, headerHeight, bottomSpace, onScroll, welcome }: {
+export function DiscoveryFeed({ width, side, radius, query, reduced, origin, recentIds, open, bottomSpace, onScroll, welcome }: {
   width: number;
   side: number;
   radius: number;
@@ -15,7 +15,6 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   origin: PickupOrigin;
   recentIds: string[];
   open: (kitchen: Kitchen) => void;
-  headerHeight: number;
   bottomSpace: number;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   welcome?: ReactNode;
@@ -136,7 +135,7 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
       onScroll={onScroll} scrollEventThrottle={16}
       showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
       initialNumToRender={4} maxToRenderPerBatch={4} windowSize={5}
-      contentContainerStyle={{ paddingHorizontal: side, paddingTop: headerHeight + 12, paddingBottom: bottomSpace }}
+      contentContainerStyle={{ paddingHorizontal: side, paddingBottom: bottomSpace, minHeight: welcome && viewportHeight ? viewportHeight + 12 : undefined }}
     />
   );
 }

@@ -66,7 +66,13 @@ export async function refundOrder(id:string):Promise<OrderRefundResult>{
 export async function fetchOrders(restaurantId:string) {
   if(!supabase) return null;
   const from=new Date(Date.now()-30*24*60*60_000).toISOString();
-  const {data,error}=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
+  const select='id,status,pickup_mode,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity,options_snapshot),user_id';
+  const {data,error}=await supabase.from('orders').select(select).eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
+  if(error && /options_snapshot|column .* does not exist/i.test(error.message)) {
+    const legacy=await supabase.from('orders').select('id,status,pickup_mode,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,vehicle,payment_method,payment_status,application_fee_cents,items:order_items(name_snapshot,quantity),user_id').eq('restaurant_id',restaurantId).or(`status.in.(placed,accepted,preparing,ready),pickup_starts_at.gte.${from}`).order('pickup_starts_at',{ascending:true});
+    if(legacy.error)throw legacy.error;
+    return legacy.data;
+  }
   if(error) throw error; return data;
 }
 export async function setOrderStatus(id:string,status:string) {
@@ -97,6 +103,21 @@ export async function fetchCatalog(restaurantId:string) {
   if(draftError) throw draftError;
   return (data||[]).map(item=>{const d=(drafts||[]).find((x:any)=>x.catalog_item_id===item.id);return{...item,source_steps:d?.source_steps||[],generated_steps:d?.generated_steps||[],draft_id:d?.id||null,draft_updated_at:d?.updated_at||null}});
 }
+export async function saveCatalogOptionGroups(itemId:string,restaurantId:string,groups:unknown[]) {
+  if(!supabase) return;
+  const {error}=await supabase.rpc('save_catalog_option_groups',{
+    p_catalog_item_id:itemId,
+    p_restaurant_id:restaurantId,
+    p_option_groups:groups,
+  });
+  if(error?.code==='PGRST202') {
+    const legacy=await supabase.from('catalog_items').update({option_groups:groups}).eq('id',itemId).eq('restaurant_id',restaurantId).select('id').maybeSingle();
+    if(legacy.error)throw legacy.error;
+    if(!legacy.data)throw new Error('This restaurant account cannot edit options for this item.');
+    return;
+  }
+  if(error) throw error;
+}
 export async function saveCatalogItem(id:string,restaurantId:string,values:Record<string,unknown>,sourceSteps:string[]) {
   if(!supabase) return;
   const {data,error}=await supabase.rpc('save_catalog_item_draft',{
@@ -119,7 +140,7 @@ export async function saveCatalogItem(id:string,restaurantId:string,values:Recor
 }
 export async function createCatalogItem(restaurantId:string,values:Record<string,unknown>,sourceSteps:string[]) {
   if(!supabase)return;
-  const {error}=await supabase.rpc('create_catalog_item_draft',{
+  const {data,error}=await supabase.rpc('create_catalog_item_draft',{
     p_restaurant_id:restaurantId,
     p_name:String(values.name||'New menu item'),
     p_description:String(values.description||''),
@@ -132,6 +153,9 @@ export async function createCatalogItem(restaurantId:string,values:Record<string
     p_source_steps:sourceSteps,
   });
   if(error)throw error;
+  const saved=Array.isArray(data)?data[0]:data;
+  if(!saved?.catalog_item_id)throw new Error('The catalog item was not created.');
+  return {id:saved.catalog_item_id,draftId:saved.prep_draft_id,updatedAt:saved.draft_updated_at};
 }
 export async function generatePrep(itemId:string) {
   if(!supabase)throw new Error('Configure Supabase before generating chef steps.');

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, View, type TextInput as TextInputHandle } from 'react-native';
-import { MapPin, LocateFixed, Minus, Plus, X } from 'lucide-react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View, type TextInput as TextInputHandle } from 'react-native';
+import { MapPin, LocateFixed, X } from 'lucide-react-native';
 import { Text, TextInput } from './type';
 import { PageHeader } from './home-chrome';
-import type { PickupOrigin } from '../lib/discovery';
 
-type AddressLocation = PickupOrigin & { label: string };
+type AddressLocation = { latitude: number; longitude: number; label: string };
 type SelectionKind = 'address' | 'recent' | 'suggestion';
 
 const publicAreas: AddressLocation[] = [
@@ -14,30 +13,12 @@ const publicAreas: AddressLocation[] = [
   { label: 'Downtown Berkeley', latitude: 37.8716, longitude: -122.2727 },
 ];
 
-function openMapPreview(location: PickupOrigin, zoom: number) {
-  // Send only a generalized map tile (coordinates rounded to about 1 km) to OSM.
-  const latitude = Math.max(-85, Math.min(85, Math.round(location.latitude * 100) / 100));
-  const longitude = Math.max(-180, Math.min(180, Math.round(location.longitude * 100) / 100));
-  const scale = 2 ** zoom;
-  const worldX = ((longitude + 180) / 360) * scale;
-  const x = Math.max(0, Math.min(scale - 1, Math.floor(worldX)));
-  const radians = latitude * Math.PI / 180;
-  const worldY = (1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * scale;
-  const y = Math.max(0, Math.min(scale - 1, Math.floor(worldY)));
-  return {
-    uri: `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`,
-    markerX: worldX - x,
-    markerY: worldY - y,
-  };
-}
-
-export function LocationPicker({ close, useDevice, useAddress, reset, locating, origin, currentLabel, recentAddresses, deviceError }: {
+export function LocationPicker({ close, useDevice, useAddress, reset, locating, currentLabel, recentAddresses, deviceError }: {
   close: () => void;
   useDevice: () => void;
   useAddress: (address: AddressLocation) => void;
   reset: () => void;
   locating: boolean;
-  origin: PickupOrigin;
   currentLabel: string;
   recentAddresses: AddressLocation[];
   deviceError?: string;
@@ -50,17 +31,12 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
   const dismissed = useRef(false);
   const mounted = useRef(false);
   const lookupAbort = useRef<AbortController|null>(null);
-  const currentLocation = useMemo<AddressLocation>(() => ({ label: currentLabel, ...origin }), [currentLabel, origin.latitude, origin.longitude]);
   const [address, setAddress] = useState('');
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState<AddressLocation>(currentLocation);
   const [selected, setSelected] = useState<AddressLocation|null>(null);
   const [selectionKind, setSelectionKind] = useState<SelectionKind|null>(null);
-  const [zoom, setZoom] = useState(11);
-  const [mapFailed, setMapFailed] = useState(false);
   const busy = locating || searching;
-  const mapPreview = useMemo(() => openMapPreview(preview, zoom), [preview.latitude, preview.longitude, zoom]);
   const recentSuggestions = useMemo(() => {
     const seen = new Set<string>();
     return recentAddresses.filter(item => {
@@ -107,12 +83,10 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
 
   function chooseLocation(location: AddressLocation, kind: SelectionKind) {
     if (busy || dismissed.current) return;
-    setPreview(location);
     setSelected(location);
     setSelectionKind(kind);
     setAddress(kind === 'address' ? location.label : '');
     setError('');
-    setMapFailed(false);
   }
 
   function applyLocation() {
@@ -123,7 +97,7 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
 
   async function findAddress() {
     if (busy || dismissed.current || address.trim().length < 8) return;
-    const api = process.env.EXPO_PUBLIC_CENA_API_URL;
+    const api = process.env.EXPO_PUBLIC_CENA_GEOCODE_URL || process.env.EXPO_PUBLIC_CENA_API_URL;
     if (!api) {
       setError('Address lookup is unavailable in this preview. You can still use your device location.');
       return;
@@ -145,10 +119,8 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
       if(dismissed.current)return;
       if (!result.label || !Number.isFinite(result.latitude) || !Number.isFinite(result.longitude)) throw new Error('Invalid address result');
       setAddress(result.label);
-      setPreview(result);
       setSelected(result);
       setSelectionKind('address');
-      setMapFailed(false);
     } catch {
       if(!dismissed.current&&mounted.current)setError('Couldn’t look up that address. Try again or use your current location.');
     } finally {
@@ -170,34 +142,18 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating, 
           </View>
         </PageHeader>
         <View style={styles.body}>
+          <Text style={styles.helper}>Choose an area or enter an address to find nearby pickup kitchens.</Text>
+          <View accessible accessibilityLabel={`Current pickup area, ${currentLabel}`} style={styles.currentArea}>
+            <View style={styles.currentAreaIcon}><MapPin size={18} color={maroon}/></View>
+            <View style={{flex:1}}><Text style={styles.currentAreaLabel}>Current pickup area</Text><Text style={styles.currentAreaName}>{currentLabel}</Text></View>
+          </View>
           <TextInput ref={addressInput} accessibilityLabel="Street address, city or ZIP code" style={styles.input} value={address}
             onChangeText={value => { setAddress(value); setError(''); setSelected(null); setSelectionKind(null); }} editable={!busy} maxLength={200}
             placeholder="Street address, city or ZIP code" placeholderTextColor="#77645B" returnKeyType="search"
             onSubmitEditing={() => void findAddress()} />
-          <Text style={styles.privacy}>Address lookup sends the entered address to the U.S. Census geocoder. OpenStreetMap receives only a coarse map tile for this preview.</Text>
+          <Text style={styles.privacy}>Address lookup sends the entered address to the U.S. Census geocoder. It isn’t shared with restaurants.</Text>
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
           {!!deviceError && <Text accessibilityRole="alert" style={styles.error}>{deviceError}</Text>}
-
-          <View style={styles.mapCard}>
-            <View style={styles.map}>
-              <View pointerEvents="none" style={styles.mapFallback}>
-                <View style={styles.park}/><View style={styles.roadOne}/><View style={styles.roadTwo}/><View style={styles.roadThree}/>
-                <View style={styles.blockOne}/><View style={styles.blockTwo}/><View style={styles.blockThree}/>
-              </View>
-              {!mapFailed&&<Image accessibilityLabel="OpenStreetMap area preview" source={{uri:mapPreview.uri,...(Platform.OS==='web'?{}:{headers:{'User-Agent':'Cena pickup area map preview'}})}}
-                resizeMode="cover" onError={()=>setMapFailed(true)} style={styles.mapImage}/>}
-              <View pointerEvents="none" style={[styles.centerPin,{left:`${mapPreview.markerX*100}%`,top:`${mapPreview.markerY*100}%`}]}><MapPin size={25} color={maroon} fill="#FAF6F3" strokeWidth={2.5}/></View>
-              <View style={styles.mapLabel}><Text style={styles.mapLabelText}>Approximate area · {preview.label}</Text></View>
-              <View style={styles.zoomControls}>
-                <Pressable accessibilityRole="button" accessibilityLabel="Zoom in on map" disabled={zoom>=12} onPress={()=>{setZoom(value=>Math.min(12,value+1));setMapFailed(false);}} style={[styles.zoomButton,zoom>=12&&styles.disabled]}><Plus size={17} color={maroon}/></Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="Zoom out on map" disabled={zoom<=10} onPress={()=>{setZoom(value=>Math.max(10,value-1));setMapFailed(false);}} style={[styles.zoomButton,zoom<=10&&styles.disabled]}><Minus size={17} color={maroon}/></Pressable>
-              </View>
-              <Pressable accessibilityRole="link" accessibilityLabel="OpenStreetMap attribution" onPress={()=>void Linking.openURL('https://www.openstreetmap.org/copyright').catch(()=>{})} style={styles.attribution}>
-                <Text style={styles.attributionText}>© OpenStreetMap contributors</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.previewLabel}>Map preview for {preview.label}</Text>
-          </View>
 
           <Pressable accessibilityRole="button" onPress={selected?applyLocation:()=>void findAddress()} disabled={busy || (!selected && address.trim().length < 8)}
             style={[styles.primary, (busy || (!selected && address.trim().length < 8)) && styles.disabled]}>
@@ -248,27 +204,13 @@ const styles = StyleSheet.create({
   heading: { minHeight:64, flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:20 },
   title: { fontWeight:'500', color:'#271D19', fontSize:24 },
   close: { width:44, height:44, alignItems:'center', justifyContent:'center' },
-  body: { paddingHorizontal:20, paddingTop:26, gap:12 },
-  mapCard: { overflow:'hidden', borderRadius:18, borderWidth:1, borderColor:'#E8DCD5', backgroundColor:'#EAE9DC' },
-  map: { width:'100%', maxWidth:340, aspectRatio:1, alignSelf:'center', overflow:'hidden', backgroundColor:'#EAE9DC' },
-  mapFallback: { ...StyleSheet.absoluteFillObject, backgroundColor:'#E8E7D8', overflow:'hidden' },
-  park: { position:'absolute', left:'8%',top:'12%',width:'30%',height:'30%',borderRadius:22,backgroundColor:'#C8D8BE' },
-  roadOne: { position:'absolute',left:'-8%',top:'49%',width:'120%',height:20,backgroundColor:'#FAF6F3',transform:[{rotate:'-9deg'}] },
-  roadTwo: { position:'absolute',left:'48%',top:'-20%',width:18,height:'140%',backgroundColor:'#FAF6F3',transform:[{rotate:'12deg'}] },
-  roadThree: { position:'absolute',left:'12%',top:'8%',width:'100%',height:8,backgroundColor:'#D2C9B9',transform:[{rotate:'31deg'}] },
-  blockOne: { position:'absolute',left:'10%',bottom:'10%',width:'22%',height:'17%',backgroundColor:'#DDD6C9',borderRadius:5 },
-  blockTwo: { position:'absolute',right:'9%',top:'14%',width:'20%',height:'21%',backgroundColor:'#DDD6C9',borderRadius:5 },
-  blockThree: { position:'absolute',right:'13%',bottom:'8%',width:'24%',height:'18%',backgroundColor:'#DDD6C9',borderRadius:5 },
-  mapImage: { ...StyleSheet.absoluteFillObject, width:'100%',height:'100%' },
-  centerPin: { position:'absolute',marginLeft:-13,marginTop:-23,alignItems:'center',justifyContent:'center' },
-  mapLabel: { position:'absolute',left:10,top:10,maxWidth:'72%',backgroundColor:'rgba(250,246,243,.94)',borderRadius:10,paddingHorizontal:10,paddingVertical:7 },
-  mapLabelText: { color:'#271D19',fontSize:11,fontWeight:'500' },
-  zoomControls: { position:'absolute',right:10,top:10,gap:6 },
-  zoomButton: { width:38,height:38,alignItems:'center',justifyContent:'center',backgroundColor:'#FAF6F3',borderRadius:10,borderWidth:1,borderColor:'#E8DCD5' },
+  body: { paddingHorizontal:20, paddingTop:18, gap:12 },
+  helper: { color:'#77645B',fontSize:15,lineHeight:21 },
+  currentArea: { minHeight:60,flexDirection:'row',alignItems:'center',gap:11,paddingHorizontal:12,backgroundColor:'#FFFDFA',borderRadius:13,borderWidth:1,borderColor:'#E8DCD5' },
+  currentAreaIcon: { width:34,height:34,alignItems:'center',justifyContent:'center',borderRadius:17,backgroundColor:'#F5E9E1' },
+  currentAreaLabel: { color:'#77645B',fontSize:11 },
+  currentAreaName: { color:'#271D19',fontSize:14,fontWeight:'500',marginTop:2 },
   disabled: { opacity:.45 },
-  attribution: { position:'absolute',left:6,bottom:5,paddingHorizontal:5,paddingVertical:3,backgroundColor:'rgba(250,246,243,.88)',borderRadius:4 },
-  attributionText: { color:'#51453E',fontSize:9 },
-  previewLabel: { color:'#77645B',fontSize:12,paddingHorizontal:11,paddingVertical:8 },
   input: { minHeight:50, backgroundColor:'#FFFDFA', borderWidth:1, borderColor:'#D8CBC3', borderRadius:13, paddingHorizontal:14, color:'#271D19', fontSize:16 },
   privacy: { color:'#77645B',fontSize:11,lineHeight:15,marginTop:-5 },
   error: { color:maroon,fontSize:13,lineHeight:18 },

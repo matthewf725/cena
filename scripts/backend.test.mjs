@@ -249,6 +249,67 @@ test('online checkout reserves once, hides unpaid orders, and finalizes idempote
   assert.equal(wrongAccount.result, null, 'refund webhook lookup must reject a mismatched connected account');
 });
 
+test('meal options validate at checkout, snapshot distinct variants, and release aggregate stock', async () => {
+  const groups = [{
+    id: 'size', name: 'Size', min: 1, max: 1,
+    choices: [{ id: 'small', name: 'Small' }, { id: 'large', name: 'Large' }],
+  }];
+  const saveGroups = (tx, value) => tx.query(
+    'select save_catalog_option_groups($1,$2,$3) as item',
+    [fixture.item, fixture.restaurant, JSON.stringify(value)],
+  );
+  const startsAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
+  let slotId;
+  try {
+    await withRole('authenticated', merchant, (tx) => saveGroups(tx, groups));
+    assert.equal(await database.query('select catalog_option_groups_valid($1::jsonb) as valid', [JSON.stringify([
+      { ...groups[0], max: 21 },
+    ])]).then(({ rows: [row] }) => row.valid), false, 'group selection maximum is capped at 20');
+    assert.equal(await database.query('select catalog_option_groups_valid($1::jsonb) as valid', [JSON.stringify(Array(13).fill(groups[0]).map((g, i) => ({ ...g, id: `size-${i}` })))]).then(({ rows: [row] }) => row.valid), false, 'catalog is capped at 12 groups');
+
+    const { rows: [slot] } = await withRole('authenticated', merchant, (tx) => tx.query(
+      'select create_pickup_slot_with_inventory($1,$2,$3,15,25,8) as slot_id',
+      [fixture.restaurant, [fixture.item], startsAt],
+    ));
+    slotId = slot.slot_id;
+    const items = [
+      { item_id: fixture.item, quantity: 1, selections: { size: ['small'] } },
+      { item_id: fixture.item, quantity: 2, selections: { size: ['large'] } },
+    ];
+    const quote = await withServiceRole((tx) => tx.query(
+      'select quote_checkout_order($1,$2,$3,$4::jsonb,null) as result',
+      [customer, fixture.restaurant, slotId, JSON.stringify(items)],
+    )).then(({ rows: [row] }) => row.result);
+    assert.equal(quote.subtotal_cents, fixture.price_cents * 3, 'options cannot change catalog pricing');
+    const reserve = (tx, key, lines) => tx.query(
+      'select reserve_checkout_order($1,$2,$3,$4,$5,$6,$7::jsonb,null,$8) as result',
+      [customer, fixture.restaurant, slotId, key, 'counter', '{}', JSON.stringify(lines), quote.amount_cents],
+    ).then(({ rows: [row] }) => row.result);
+    const first = await withServiceRole((tx) => reserve(tx, 'meal-options-unique-1', items));
+    const replay = await withServiceRole((tx) => reserve(tx, 'meal-options-unique-1', [...items].reverse()));
+    assert.equal(replay.order_id, first.order_id, 'reordered option lines replay the same idempotent order');
+    const { rows: [line] } = await database.query(
+      'select quantity,unit_price_cents,options_snapshot from order_items where order_id=$1', [first.order_id],
+    );
+    assert.equal(line.quantity, 3, 'one order item aggregates stock across variants');
+    assert.equal(line.unit_price_cents, fixture.price_cents);
+    assert.deepEqual(line.options_snapshot, [
+      { quantity: 2, groups: [{ group_id: 'size', group_name: 'Size', choices: [{ id: 'large', name: 'Large' }] }] },
+      { quantity: 1, groups: [{ group_id: 'size', group_name: 'Size', choices: [{ id: 'small', name: 'Small' }] }] },
+    ]);
+    await assert.rejects(withServiceRole((tx) => reserve(tx, 'meal-options-missing-1', [
+      { item_id: fixture.item, quantity: 1 },
+    ])), /meal options need review/);
+    await withServiceRole((tx) => tx.query('select release_checkout_reservation($1,\'failed\')', [first.order_id]));
+    const { rows: [stock] } = await database.query(
+      'select reserved_qty from slot_item_inventory where slot_id=$1 and item_id=$2', [slotId, fixture.item],
+    );
+    assert.equal(stock.reserved_qty, 0, 'release restores the aggregate reserved quantity');
+  } finally {
+    await withRole('authenticated', merchant, (tx) => saveGroups(tx, []));
+  }
+});
+
 test('merchant can create pickup windows and inventory updates cannot undercut live reservations', async () => {
   const { rows: [slot] } = await withRole('authenticated', merchant, (tx) => tx.query(`
     insert into pickup_slots(restaurant_id,starts_at,ends_at,cutoff_at,capacity)

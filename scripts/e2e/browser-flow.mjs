@@ -287,9 +287,13 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const bagTab = page.getByRole('tab', { name: /Bag, 2 items/ });
     if (await bagTab.count()) await bagTab.click();
     else await page.getByRole('button', { name: 'View bag', exact: true }).click();
-    await page.getByText('Continue to pickup', { exact: true }).click();
+    await page.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+    await page.getByText('Checkout', { exact: true }).waitFor({ timeout: 30000 });
+    await page.getByRole('button', { name: 'Edit pickup date and time', exact: true }).click();
+    await page.getByText('When would you', { exact: false }).waitFor({ timeout: 30000 });
     await page.getByText('Choose pickup time', { exact: true }).click();
     await page.getByText('Continue to details', { exact: true }).click();
+    await page.getByText('Checkout', { exact: true }).waitFor({ timeout: 15000 });
   }
 
   async function getLocalAppPage(port, fallback, origin) {
@@ -436,9 +440,12 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await restaurantCard.waitFor({ timeout: 45000 });
     await restaurantCard.click();
     await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-    await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).waitFor({ timeout: 30000 });
-    await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
-    await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
+    const chooseOptions = customerPage.getByRole('button', { name: `Choose options for ${mealName}`, exact: true });
+    await chooseOptions.waitFor({ timeout: 30000 });
+    await chooseOptions.click();
+    await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
+    await chooseOptions.click();
+    await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
     await customerPage.reload({ waitUntil: 'domcontentloaded' });
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).click();
@@ -601,13 +608,15 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('button', { name: 'Return to bag and refresh availability', exact: true }).click();
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
     await customerPage.getByRole('button', { name: `Decrease ${mealName} quantity`, exact: true }).waitFor();
-    await customerPage.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+    await customerPage.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
     await customerPage.getByText('No pickup time fits this bag', { exact: true }).waitFor({ timeout: 30000 });
     await clickGotIt(customerPage);
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor();
     await customerPage.getByRole('button', { name: `Decrease ${mealName} quantity`, exact: true }).waitFor();
     await reduceFixtureStock(fixture.availableQty);
-    await customerPage.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+    await customerPage.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+    await customerPage.getByText('Checkout', { exact: true }).waitFor({ timeout: 30000 });
+    await customerPage.getByRole('button', { name: 'Edit pickup date and time', exact: true }).click();
     await customerPage.getByText('When would you', { exact: false }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('button', { name: 'Choose pickup time', exact: true }).click();
     await customerPage.getByText('Pick a time that', { exact: false }).waitFor({ timeout: 10000 });
@@ -815,9 +824,12 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       await customerPage.getByText('Matching restaurants', { exact: true }).waitFor({ timeout: 15000 });
       await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).first().click();
       await customerPage.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-      const addItem = customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true });
-      await addItem.waitFor({ timeout: 30000 });
-      for (let i = bagCount; i < 2; i += 1) await addItem.click();
+      const chooseItem = customerPage.getByRole('button', { name: `Choose options for ${mealName}`, exact: true });
+      await chooseItem.waitFor({ timeout: 30000 });
+      for (let i = bagCount; i < 2; i += 1) {
+        await chooseItem.click();
+        await customerPage.getByRole('button', { name: 'Add to bag', exact: true }).click();
+      }
       bagCount = 2;
     }
     await startPickupFlow(customerPage);

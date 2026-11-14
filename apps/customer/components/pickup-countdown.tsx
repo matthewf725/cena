@@ -26,8 +26,9 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
 
   return (
     <View style={styles.row}>
-      <Clock3 size={16} color={green} aria-hidden={Platform.OS==='web'?true:undefined}
-        {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:true,importantForAccessibility:'no'})} />
+      <View style={styles.clock} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <Clock3 size={16} color={green} />
+      </View>
       <Text style={styles.label}>Order cutoff for pickup today</Text>
       <Text style={styles.counter} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
         {clock}
@@ -37,11 +38,15 @@ export function PickupCountdown({ slots, timezone }: { slots: Kitchen['pickupSlo
 }
 
 const green = '#245C40';
-const lineHeight = 18;
+const textStyle = {
+  color: green, fontFamily: Platform.select({ ios: 'System', android: 'sans-serif', default: 'system-ui' }),
+  fontSize: 13, lineHeight: 20, fontWeight: '400', includeFontPadding: false,
+} as const;
 
 const styles = StyleSheet.create({
   row: { minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  label: { color: green, fontSize: 13, lineHeight, includeFontPadding: false, flex: 1 },
-  counter: { color: green, fontSize: 14, lineHeight, includeFontPadding: false, fontWeight: '500', fontVariant: ['tabular-nums'], minWidth: 64, textAlign: 'right', flexShrink: 0 },
+  clock: { width: 16, height: 20, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  label: { ...textStyle, flex: 1 },
+  counter: { ...textStyle, fontVariant: ['tabular-nums'], minWidth: 60, textAlign: 'right', flexShrink: 0 },
   unavailable: { color: '#77645B', fontSize: 14 },
 });

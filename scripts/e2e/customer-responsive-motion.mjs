@@ -23,11 +23,12 @@ async function openAndAddMeal(page) {
   assert.ok(await kitchen.count(), 'A kitchen menu should be available');
   await kitchen.click();
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 20000 });
-  const addButton = page.getByRole('button', { name: /^Add .+ to bag$/ }).first();
-  await addButton.waitFor({ timeout: 15000 });
-  await addButton.waitFor({ state: 'visible' });
-  await page.waitForFunction(button => !button.hasAttribute('disabled') && button.getAttribute('aria-disabled') !== 'true', await addButton.elementHandle(), { timeout: 15000 });
-  await addButton.click();
+  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
+  await chooseOptions.waitFor({ timeout: 15000 });
+  await chooseOptions.waitFor({ state: 'visible' });
+  await page.waitForFunction(button => !button.hasAttribute('disabled') && button.getAttribute('aria-disabled') !== 'true', await chooseOptions.elementHandle(), { timeout: 15000 });
+  await chooseOptions.click();
+  await page.getByRole('button', { name: 'Add to bag', exact: true }).click();
   await page.getByRole('button', { name: 'View bag', exact: true }).waitFor();
 }
 
@@ -81,7 +82,9 @@ try {
 
     await openAndAddMeal(page);
     await page.getByRole('button', { name: 'View bag' }).click();
-    await page.getByRole('button', { name: 'Continue to pickup', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue to checkout', exact: true }).click();
+    await page.getByText('Checkout', { exact: true }).waitFor({ timeout: 30000 });
+    await page.getByRole('button', { name: 'Edit pickup date and time', exact: true }).click();
     await page.getByText('When would you', { exact: false }).waitFor({ timeout: 30000 });
     await page.waitForTimeout(250);
     await verifyNoOverflow(page, viewport, 'pickup date');

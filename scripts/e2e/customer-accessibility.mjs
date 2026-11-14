@@ -72,9 +72,6 @@ await context.route('**/*', async route => {
             : [];
     return route.fulfill({ status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
   }
-  if (url.origin === 'https://tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname)) {
-    return route.abort('blockedbyclient');
-  }
   if (['http:', 'https:'].includes(url.protocol) && !loopback.includes(url.hostname)) {
     externalRequests.push(url.origin);
     return route.abort('blockedbyclient');
@@ -122,7 +119,6 @@ try {
   await address.waitFor();
   assert.equal(await address.evaluate(element => element === document.activeElement), true, 'Opening location picker should focus its address input');
   await dialog.getByRole('heading', { name: 'Suggested areas', exact: true }).waitFor();
-  await dialog.getByRole('link', { name: 'OpenStreetMap attribution', exact: true }).waitFor();
   const focusables = dialog.locator('input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])');
   const focusableCount = await focusables.count();
   assert.ok(focusableCount >= 3, `Expected address, close, and location actions in dialog; found ${focusableCount}`);
@@ -155,16 +151,22 @@ try {
   const kitchen = page.getByRole('button', { name: /^View .+ menu$/ }).first();
   await activateWithKeyboard(kitchen);
   await page.getByText('Finish-at-home favorites', { exact: true }).waitFor({ timeout: 15000 });
-  const add = page.getByRole('button', { name: /^Add .+ to bag$/ }).first();
-  await activateWithKeyboard(add, 'Space');
+  const chooseOptions = page.getByRole('button', { name: /^Choose options for .+$/ }).first();
+  await activateWithKeyboard(chooseOptions, 'Space');
+  const addToBag = page.getByRole('button', { name: 'Add to bag', exact: true });
+  await addToBag.waitFor();
+  await activateWithKeyboard(addToBag, 'Space');
   const viewBag = page.getByRole('button', { name: 'View bag', exact: true });
   await viewBag.waitFor();
   await activateWithKeyboard(viewBag);
   const increase = page.getByRole('button', { name: /^Increase .+ quantity$/ }).first();
   await activateWithKeyboard(increase, 'Space');
   await page.getByText('2', { exact: true }).first().waitFor({ timeout: 3000 });
-  const continuePickup = page.getByRole('button', { name: 'Continue to pickup', exact: true });
-  await activateWithKeyboard(continuePickup);
+  const continueCheckout = page.getByRole('button', { name: 'Continue to checkout', exact: true });
+  await activateWithKeyboard(continueCheckout);
+  await page.getByText('Checkout', { exact: true }).waitFor({ timeout: 20000 });
+  const editPickup = page.getByRole('button', { name: 'Edit pickup date and time', exact: true });
+  await activateWithKeyboard(editPickup);
   await page.getByText('When would you', { exact: false }).waitFor({ timeout: 20000 });
 
   const dates = page.getByRole('radio');
