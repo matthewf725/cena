@@ -3,13 +3,14 @@ import SwiftUI
 import Security
 
 enum CenaBackendError: LocalizedError {
-    case notConfigured, invalidResponse, server(String), conflict(String), sessionExpired
+    case notConfigured, invalidResponse, server(String), conflict(String), safeCheckoutRejection(code: String, message: String), sessionExpired
     var errorDescription: String? {
         switch self {
         case .notConfigured: return "Set SUPABASE_URL and SUPABASE_ANON_KEY at build time to connect Cena."
         case .invalidResponse: return "Cena received an invalid response. Please try again."
         case .server(let message): return message
         case .conflict(let message): return message
+        case .safeCheckoutRejection(_, let message): return message
         case .sessionExpired: return "Your Cena sign-in expired. Sign in again to continue."
         }
     }
@@ -297,6 +298,16 @@ enum CenaBackendError: LocalizedError {
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let message = (obj?["error"] as? String) ?? "Cena API request failed (HTTP \(http.statusCode))."
             if http.statusCode == 409 { throw CenaBackendError.conflict(message) }
+            // Only Go's enumerated, transactional pre-reservation rejections are safe to retry.
+            // Keep transport/upstream errors generic because the reservation outcome may be unknown.
+            let safeCheckoutCodes: Set<String> = ["promo_unavailable", "pickup_unavailable", "item_unavailable", "restaurant_unavailable", "curbside_unavailable", "order_total_too_low"]
+            if http.statusCode == 422,
+               method == "POST",
+               (path == "/v1/checkout" || path == "/v1/checkout/quote"),
+               let code = obj?["code"] as? String,
+               safeCheckoutCodes.contains(code) {
+                throw CenaBackendError.safeCheckoutRejection(code: code, message: message)
+            }
             throw CenaBackendError.server(message)
         }
         throw CenaBackendError.invalidResponse

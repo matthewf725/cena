@@ -980,6 +980,10 @@ struct CustomerHome: View {
                 quoteFingerprint = fingerprint
                 quoteMessage = "Price confirmed by Cena."
             }
+        } catch let CenaBackendError.safeCheckoutRejection(code, detail) {
+            checkoutQuote = nil
+            quoteFingerprint = nil
+            quoteMessage = checkoutCorrection(for: code, detail: detail)
         } catch { quoteMessage = "Couldn’t get a current Cena quote: \(error.localizedDescription)" }
     }
 
@@ -1031,7 +1035,27 @@ struct CustomerHome: View {
             checkoutQuote = nil; quoteFingerprint = nil
             await requestCheckoutQuote()
             message = "Cena changed or ended the previous quote. \(detail) Review the current total before trying again."
+        } catch let CenaBackendError.safeCheckoutRejection(code, detail) {
+            // Go emits this only for enumerated 422 failures before reservation. Keep the
+            // bag, invalidate its quote, and rotate the key for the corrected attempt.
+            checkoutQuote = nil
+            quoteFingerprint = nil
+            idempotencyKey = UUID().uuidString
+            UserDefaults.standard.set(idempotencyKey, forKey: idempotencyStorageKey)
+            message = checkoutCorrection(for: code, detail: detail)
         } catch { message = error.localizedDescription }
+    }
+
+    private func checkoutCorrection(for code: String, detail: String) -> String {
+        switch code {
+        case "promo_unavailable": return "That promo code is no longer available. Edit or remove it, then request a new quote."
+        case "pickup_unavailable": return "That pickup time is no longer available. Your bag is saved; return to Kitchens to choose another time."
+        case "item_unavailable": return "A meal kit is unavailable for this pickup time. Update your bag or choose another time."
+        case "restaurant_unavailable": return "This restaurant isn’t taking online orders right now. Your bag is saved; choose another kitchen."
+        case "curbside_unavailable": return "Curbside is unavailable. Turn it off to continue with counter pickup."
+        case "order_total_too_low": return "The order total is too low for online payment. Update your bag or remove the promo code."
+        default: return detail
+        }
     }
     private func loadHistory() async {
         guard api.signedIn else { return }
