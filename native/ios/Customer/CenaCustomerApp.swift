@@ -941,7 +941,7 @@ struct CustomerHome: View {
     private func validatedStripeURL(_ raw: String?) -> URL? {
         guard let raw, let url = URL(string: raw), let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https", components.host?.lowercased() == "checkout.stripe.com",
-              components.user == nil, components.password == nil, components.fragment == nil,
+              components.user == nil, components.password == nil,
               components.port == nil || components.port == 443 else { return nil }
         return url
     }
