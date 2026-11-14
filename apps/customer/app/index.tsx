@@ -23,6 +23,7 @@ import { dateLabel, dayOffset } from '../lib/pickup-days';
 import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStatus, fetchKitchenBySlug, fetchOrderHistory, fetchRestaurantRecentOrders, isTrustedCheckoutURL, loadKitchenMenu, quoteCheckout, sendEmailCode, supabase, trackEvent, verifyEmailCode, type CheckoutItem, type CheckoutQuote } from '../lib/supabase';
 import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
 import { loadCustomerDisplayName } from '../lib/profile';
+import { calPolyDemo, calPolyPickupArea, loadSampleOrders, type DemoOrder } from '../lib/cal-poly-demo';
 
 const footerTabs = [{ name: 'Home', Icon: House }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
 type Tab = typeof footerTabs[number]['name'] | 'Account';
@@ -95,8 +96,8 @@ export default function Home() {
   const cartRef=useRef(cart);
   cartRef.current=cart;
   const flowRef=useRef(flow);flowRef.current=flow;
-  const [origin,setOrigin]=useState<PickupOrigin>(sanFrancisco);
-  const [locationLabel,setLocationLabel]=useState('From San Francisco');
+  const [origin,setOrigin]=useState<PickupOrigin>(calPolyDemo?calPolyPickupArea:sanFrancisco);
+  const [locationLabel,setLocationLabel]=useState(calPolyDemo?calPolyPickupArea.label:'From San Francisco');
   const [showLocation,setShowLocation]=useState(false);
   const pickupAreaButtonRef=useRef<any>(null);
   const locationRequest=useRef(0);
@@ -108,6 +109,7 @@ export default function Home() {
   const [authenticated,setAuthenticated]=useState(false);
   const [authUserId,setAuthUserId]=useState<string|null>(null);
   const [savedName,setSavedName]=useState<{userId:string;name:string}|null>(null);
+  const [demoOrders,setDemoOrders]=useState<DemoOrder[]>([]);
   const [profileRevision,setProfileRevision]=useState(0);
   const currentAuthUserId=useRef<string|null>(null);
   const initialAuthEvent=useRef(true);
@@ -142,11 +144,11 @@ export default function Home() {
   const menuRequest=useRef(0);
   const bagRequest=useRef(0);
   const idempotency=useRef({ fingerprint:'', key:'' });
-  const navShown=!active&&!showLocation&&(!supabase||authenticated);
+  const navShown=!active&&!showLocation&&(!supabase||authenticated||calPolyDemo);
   const navOffset=useMenuTabOffset(navShown,reduceMotion,navHeight);
   const submitting=useRef(false);
   const profileName=authUserId&&savedName?.userId===authUserId?savedName.name:'';
-  const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
+  const profileInitial=calPolyDemo?'J':Array.from(profileName)[0]?.toLocaleUpperCase();
   const updateHomeScroll=(event:NativeSyntheticEvent<NativeScrollEvent>)=>{
     const scrolled=event.nativeEvent.contentOffset.y>0;
     if(homeCompactRef.current!==scrolled){
@@ -169,6 +171,12 @@ export default function Home() {
   },[authUserId,profileRevision]);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[]);
   useEffect(()=>{
+    if(calPolyDemo){
+      let current=true;
+      setAuthResolved(true);
+      void loadSampleOrders().then(orders=>{if(current)setDemoOrders(orders);}).catch(()=>{});
+      return ()=>{current=false;};
+    }
     if(!supabase)return;
     let request=0;
     let pending: ReturnType<typeof setTimeout> | undefined;
@@ -382,10 +390,10 @@ export default function Home() {
   },[authUserId,tab,active]);
   useEffect(()=>{if(supabase&&analyticsConsented&&query.trim()){const timer=setTimeout(()=>void trackEvent('search',undefined,{query_length:query.trim().length}),700);return ()=>clearTimeout(timer);}},[query,analyticsConsented]);
   const cartCount=Object.values(cart).reduce((n,x)=>n+x.qty,0), subtotal=Object.values(cart).reduce((n,x)=>n+x.qty*x.meal.price,0);
-  const visibleOrders=useMemo(()=>backendOrders.filter(order=>
+  const visibleOrders=useMemo(()=>calPolyDemo?demoOrders:backendOrders.filter(order=>
     (['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status))
     ||(order.payment_method==='stripe_checkout'&&order.payment_status==='refunded'&&order.status==='cancelled')
-  ),[backendOrders]);
+  ),[backendOrders,demoOrders]);
   const reorderOrders=useMemo(()=>visibleOrders.filter(order=>['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status)),[visibleOrders]);
   const mealQuantities=quantityByMeal(Object.values(cart));
   const eligibleSlots=active?.pickupSlots?.filter(x=>Date.parse(x.cutoffAt)>now&&Date.parse(x.startsAt)>=now+checkoutLeadMs&&Object.entries(mealQuantities).every(([id,qty])=>(x.remaining[id]||0)>=qty));
@@ -551,6 +559,10 @@ export default function Home() {
     }
   }
   async function continueBag() {
+    if(calPolyDemo){
+      setNotice({title:'Demo bag',message:'This preview does not place orders or take payments.'});
+      return;
+    }
     const lines: BagLine[]=Object.values(cart);
     if(!hydrated||checkingBag||!lines.length)return;
     const request=++bagRequest.current;
@@ -800,8 +812,8 @@ export default function Home() {
   const onAccount=tab==='Account';
   const compactLocation=tab!=='Home'||homeCompact;
   const topSpace=identityHeight+headerContentGap;
-  const requiresSignIn = Boolean(supabase) && !authenticated;
-  const checkingAccount = Boolean(supabase) && !authResolved;
+  const requiresSignIn = !calPolyDemo && Boolean(supabase) && !authenticated;
+  const checkingAccount = !calPolyDemo && Boolean(supabase) && !authResolved;
   if (authResolved && requiresSignIn) {
     return <AuthScreen topInset={insets.top} bottomInset={insets.bottom}/>;
   }
@@ -836,7 +848,14 @@ export default function Home() {
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll}
-      open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<Account
+      open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo?
+        <View style={{paddingTop:topSpace+20,paddingHorizontal:22}}>
+          <Text accessibilityRole="header" style={s.pageTitle}>Profile</Text>
+          <View style={s.profileHero}>
+            <View style={s.profileAvatar}><Text style={s.profileInitial}>J</Text></View>
+            <View><Text style={s.profileName}>Jeffrey Armstrong</Text><Text style={s.profileHint}>Cal Poly demo</Text></View>
+          </View>
+        </View>:<Account
           userId={authUserId} topSpace={topSpace} equipment={equipment} setEquipment={setEquipment} analyticsConsented={analyticsConsented}
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
           displayName={displayName} setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
@@ -852,7 +871,7 @@ export default function Home() {
         <View style={s.menuTitleRow}><View><Text style={s.sectionTitle}>Finish-at-home favorites</Text><Text style={s.sectionHint}>Everything you need, already prepped.</Text></View><Text style={s.dealBadge}>~25% OFF</Text></View>
         {menuLoading&&<ActivityIndicator color={maroon} accessibilityLabel="Loading menu"/>}
         {!menuLoading&&!active.meals.length&&<Text style={[s.sectionHint,{marginHorizontal:18}]}>No meal kits are available for pickup at this kitchen right now.</Text>}
-        {authUserId&&<LiveMenuReorder key={authUserId} userId={authUserId} kitchen={active} add={(m,q,selections={})=>m.optionGroups?.length?openMeal(m,q,selections):add(m,q,{})}/>}
+        {(authUserId||calPolyDemo)&&<LiveMenuReorder key={authUserId??'demo'} userId={authUserId} demoOrders={calPolyDemo?demoOrders:undefined} kitchen={active} add={(m,q,selections={})=>m.optionGroups?.length?openMeal(m,q,selections):add(m,q,{})}/>}
         {active.meals.map(m=>{
           const selections=quickMealSelections(m);
           const quickLineKey=selections===null?null:lineKey(m.id,selections);
@@ -934,18 +953,18 @@ function recentOrderOptionCombos(snapshot: unknown, quantity: number): { quantit
   return combos.length?combos:fallback;
 }
 
-function LiveMenuReorder({kitchen,userId,add}:{kitchen:Kitchen;userId:string;add:(m:Meal,q:number,selections?:MealSelections)=>void}) {
+function LiveMenuReorder({kitchen,userId,demoOrders,add}:{kitchen:Kitchen;userId:string|null;demoOrders?:DemoOrder[];add:(m:Meal,q:number,selections?:MealSelections)=>void}) {
   const restaurantId = kitchen.backendId;
   const [orders, setOrders] = useState<Awaited<ReturnType<typeof fetchRestaurantRecentOrders>>>(null);
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId || !userId || demoOrders) return;
     let current = true;
     void fetchRestaurantRecentOrders(userId,restaurantId).then(data => {
       if (current) setOrders(data);
     }).catch(() => {});
     return () => { current = false; };
-  }, [restaurantId,userId]);
-  const recent = orders?.filter(order => order.order_items.length) ?? [];
+  }, [restaurantId,userId,demoOrders]);
+  const recent = (demoOrders?.filter(order => order.restaurant_id===restaurantId) ?? orders)?.filter(order => order.order_items.length) ?? [];
   if (!recent.length) return null;
   const date = new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:kitchen.timezone});
 

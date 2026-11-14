@@ -8,7 +8,7 @@ const mimeTypes = {
   webp: 'image/webp', ttf: 'font/ttf',
 };
 
-async function packagePreview(app, exportDir, siteDir, siteOrigin) {
+async function packagePreview(app, exportDir, siteDir, siteOrigin, manifestOrigin) {
   if (!['customer', 'restaurant'].includes(app)) throw new Error('Choose customer or restaurant');
   const origin = new URL(siteOrigin);
   if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash
@@ -48,7 +48,11 @@ async function packagePreview(app, exportDir, siteDir, siteOrigin) {
   };
   await writeFile(path.join(dest, 'manifest.json'), JSON.stringify(manifest));
 
-  const deepLink = `exps://${origin.host}/ios-preview/manifest.json`;
+  const manifestUrl = new URL(`/${app}/ios-preview/manifest.json`, manifestOrigin);
+  if (manifestUrl.protocol !== 'https:' || manifestUrl.username || manifestUrl.password) {
+    throw new Error('Use the HTTPS Expo Updates manifest server origin');
+  }
+  const deepLink = `exps://${manifestUrl.host}${manifestUrl.pathname}`;
   const appStore = 'https://apps.apple.com/us/app/expo-go/id982107779';
   await writeFile(path.join(dest, 'index.html'), `<!doctype html>
 <html lang="en">
@@ -66,7 +70,7 @@ a{color:#5D100A}
 <h1>${expo.name} iPhone demo</h1>
 <p>Install <a href="${appStore}">Expo Go from the App Store</a>, then open Cena with the button below.</p>
 <p><a class="launch" href="${deepLink}">Open in Expo Go</a></p>
-<p>Use your Cena demo login after the app opens.</p>
+<p>${app === 'customer' ? 'The Cal Poly demo opens directly to Home.' : 'Use your restaurant demo login after the app opens.'}</p>
 </main>
 </html>`);
   console.log(`${app}: ${assets.length} assets and iOS JavaScript bundle packaged at ${deepLink}`);
