@@ -98,7 +98,8 @@ for each row execute function public.protect_booked_slot_schedule();
 create table public.order_items (
   id uuid primary key default gen_random_uuid(), order_id uuid not null references public.orders(id) on delete cascade,
   item_id uuid not null references public.catalog_items(id), name_snapshot text not null,
-  unit_price_cents integer not null check(unit_price_cents >= 0), quantity integer not null check(quantity between 1 and 50)
+  unit_price_cents integer not null check(unit_price_cents >= 0), quantity integer not null check(quantity between 1 and 50),
+  prep_steps_snapshot text[] not null default '{}'
 );
 create index orders_user_created_idx on public.orders(user_id,created_at desc);
 create index orders_merchant_created_idx on public.orders(restaurant_id,created_at desc);
@@ -145,17 +146,28 @@ create or replace function public.create_order(
 ) returns public.orders language plpgsql security definer set search_path=public,auth as $$
 declare v_uid uuid := auth.uid(); v_slot public.pickup_slots%rowtype; v_rest public.restaurants%rowtype;
  v_order public.orders%rowtype; v_subtotal integer := 0; v_row record; v_item public.catalog_items%rowtype;
- v_qty integer; v_request_hash text; v_canonical_items jsonb;
+ v_qty integer; v_request_hash text; v_canonical_items jsonb; v_vehicle jsonb := '{}'::jsonb;
 begin
  if v_uid is null then raise exception 'authentication required' using errcode='42501'; end if;
  if p_idempotency_key is null or length(trim(p_idempotency_key)) not between 8 and 128 then raise exception 'invalid idempotency key'; end if;
  perform pg_advisory_xact_lock(hashtextextended(v_uid::text||':'||p_idempotency_key,0));
- if p_pickup_mode not in ('counter','curbside') then raise exception 'invalid pickup mode'; end if;
- if jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items)=0 then raise exception 'order requires items'; end if;
+ if p_pickup_mode is null or p_pickup_mode not in ('counter','curbside') then raise exception 'invalid pickup mode'; end if;
+ if jsonb_typeof(p_items) is distinct from 'array' then raise exception 'order requires items'; end if;
+ if jsonb_array_length(p_items) not between 1 and 30 then raise exception 'order requires 1–30 items'; end if;
+ if exists(select 1 from jsonb_array_elements(p_items) x where coalesce(x->>'quantity','') !~ '^[1-9][0-9]?$' or x->>'item_id' is null) then
+   raise exception 'invalid item quantity or ID';
+ end if;
+ if p_pickup_mode='curbside' then
+   if jsonb_typeof(p_vehicle) is distinct from 'object' or exists(
+     select 1 from unnest(array['make','model','color']) field
+     where jsonb_typeof(p_vehicle->field) is distinct from 'string' or length(trim(p_vehicle->>field)) not between 1 and 60
+   ) then raise exception 'vehicle make, model, and color required'; end if;
+   v_vehicle := jsonb_build_object('make',trim(p_vehicle->>'make'),'model',trim(p_vehicle->>'model'),'color',trim(p_vehicle->>'color'));
+ end if;
  select jsonb_agg(jsonb_build_object('item_id',x.item_id,'quantity',x.quantity) order by x.item_id) into v_canonical_items
  from (select (x->>'item_id')::uuid item_id,sum((x->>'quantity')::int)::int quantity from jsonb_array_elements(p_items) x group by 1) x;
  v_request_hash := encode(extensions.digest(convert_to(jsonb_build_object('restaurant_id',p_restaurant_id,'slot_id',p_slot_id,
-   'pickup_mode',p_pickup_mode,'vehicle',case when p_pickup_mode='curbside' then coalesce(p_vehicle,'{}'::jsonb) else '{}'::jsonb end,
+   'pickup_mode',p_pickup_mode,'vehicle',v_vehicle,
    'items',v_canonical_items)::text,'UTF8'),'sha256'),'hex');
  select * into v_order from public.orders where user_id=v_uid and idempotency_key=p_idempotency_key;
  if found then
@@ -166,7 +178,6 @@ begin
  if not found then raise exception 'restaurant unavailable'; end if;
  if p_pickup_mode='curbside' then
    if not v_rest.curbside_enabled then raise exception 'curbside unavailable'; end if;
-   if coalesce(trim(p_vehicle->>'make'),'')='' or coalesce(trim(p_vehicle->>'model'),'')='' or coalesce(trim(p_vehicle->>'color'),'')='' then raise exception 'vehicle make, model, and color required'; end if;
  end if;
  select * into v_slot from public.pickup_slots where id=p_slot_id and restaurant_id=p_restaurant_id for update;
  if not found or not v_slot.active or v_slot.starts_at <= clock_timestamp() or v_slot.cutoff_at <= clock_timestamp() then raise exception 'pickup slot closed'; end if;
@@ -176,7 +187,7 @@ begin
    from jsonb_array_elements(p_items) x group by 1 order by 1 loop
    v_qty := v_row.quantity;
    if v_qty < 1 or v_qty > 50 then raise exception 'invalid item quantity'; end if;
-   select * into v_item from public.catalog_items where id=v_row.item_id and restaurant_id=p_restaurant_id and active and published_at is not null;
+   select * into v_item from public.catalog_items where id=v_row.item_id and restaurant_id=p_restaurant_id and active and published_at is not null for share;
    if not found then raise exception 'menu item unavailable'; end if;
    perform 1 from public.slot_item_inventory where slot_id=p_slot_id and item_id=v_item.id for update;
    if not found then raise exception 'item unavailable for selected slot'; end if;
@@ -184,13 +195,13 @@ begin
    v_subtotal := v_subtotal + v_item.price_cents*v_qty;
  end loop;
  insert into public.orders(user_id,restaurant_id,slot_id,idempotency_key,request_hash,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,vehicle,subtotal_cents)
- values(v_uid,p_restaurant_id,p_slot_id,p_idempotency_key,v_request_hash,v_slot.starts_at,v_slot.ends_at,v_rest.timezone,p_pickup_mode,case when p_pickup_mode='curbside' then p_vehicle else '{}'::jsonb end,v_subtotal)
+ values(v_uid,p_restaurant_id,p_slot_id,p_idempotency_key,v_request_hash,v_slot.starts_at,v_slot.ends_at,v_rest.timezone,p_pickup_mode,v_vehicle,v_subtotal)
  returning * into v_order;
  for v_row in select (x->>'item_id')::uuid item_id, sum((x->>'quantity')::int)::int quantity
    from jsonb_array_elements(p_items) x group by 1 order by 1 loop
    select * into v_item from public.catalog_items where id=v_row.item_id;
-   insert into public.order_items(order_id,item_id,name_snapshot,unit_price_cents,quantity)
-   values(v_order.id,v_item.id,v_item.name,v_item.price_cents,v_row.quantity);
+   insert into public.order_items(order_id,item_id,name_snapshot,unit_price_cents,quantity,prep_steps_snapshot)
+   values(v_order.id,v_item.id,v_item.name,v_item.price_cents,v_row.quantity,v_item.published_steps);
    update public.slot_item_inventory set reserved_qty=reserved_qty+v_row.quantity where slot_id=p_slot_id and item_id=v_item.id;
  end loop;
  update public.pickup_slots set reserved_count=reserved_count+1 where id=p_slot_id;
@@ -225,9 +236,9 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v_id uuid;
 begin
  if auth.uid() is null then raise exception 'authentication required' using errcode='42501'; end if;
- if p_event_type not in ('restaurant_view','menu_view','item_view','search','order_placed','order_completed') then raise exception 'unsupported event'; end if;
+ if p_event_type not in ('restaurant_view','menu_view','item_view','search') then raise exception 'unsupported event'; end if;
  if coalesce((select c.consent_action from public.consent_records c where c.user_id=auth.uid() and c.consent_type='analytics' order by c.created_at desc,c.id desc limit 1),'revoked') <> 'granted' then raise exception 'analytics consent required'; end if;
- insert into public.analytics_events(user_id,restaurant_id,event_type,payload) values(auth.uid(),p_restaurant_id,p_event_type,coalesce(p_payload,'{}')) returning id into v_id;
+ insert into public.analytics_events(user_id,restaurant_id,event_type) values(auth.uid(),p_restaurant_id,p_event_type) returning id into v_id;
  return v_id;
 end $$;
 
@@ -252,14 +263,15 @@ begin
    raise exception 'not authorized' using errcode='42501';
  end if;
  if d.updated_at is distinct from p_expected_updated_at then raise exception 'draft changed; reload before publishing'; end if;
- if cardinality(coalesce(p_reviewed_steps,'{}'::text[]))=0 then raise exception 'reviewed steps are required before publishing'; end if;
+ if cardinality(coalesce(p_reviewed_steps,'{}'::text[])) not between 1 and 80 or exists(
+   select 1 from unnest(p_reviewed_steps) step where step is null or length(trim(step)) not between 1 and 2000
+ ) then raise exception 'reviewed steps are required before publishing'; end if;
  if d.catalog_item_id is null then
    insert into public.catalog_items(restaurant_id,name,description,price_cents,image_key,image_url,category,active,published_steps,published_at)
    values(d.restaurant_id,d.name,d.description,d.price_cents,d.image_key,d.image_url,d.category,d.active,p_reviewed_steps,now()) returning * into i;
    update public.prep_drafts set catalog_item_id=i.id where id=d.id;
  else
-   update public.catalog_items set name=d.name,description=d.description,price_cents=d.price_cents,image_key=d.image_key,image_url=d.image_url,
-     category=d.category,active=d.active,published_steps=p_reviewed_steps,published_at=now(),updated_at=now()
+   update public.catalog_items set active=d.active,published_steps=p_reviewed_steps,published_at=now(),updated_at=now()
    where id=d.catalog_item_id and restaurant_id=d.restaurant_id returning * into i;
    if not found then raise exception 'catalog item unavailable'; end if;
  end if;

@@ -94,7 +94,7 @@ test('an order reserves stock once, prices on the server and is visible only to 
 test('checkout rejects sold-out stock, a missed cutoff and unavailable curbside', async () => {
   await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-stock-1', { quantity: 50 })), /stock|availability/);
   await database.query('update restaurants set curbside_enabled=false where id=$1', [fixture.restaurant]);
-  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-curbside-1', { mode: 'curbside' })), /curbside/);
+  await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-curbside-1', { mode: 'curbside', vehicle: { make: 'Toyota', model: 'Corolla', color: 'Blue' } })), /curbside/);
   await assert.rejects(database.query(`update pickup_slots set cutoff_at=now()-interval '1 second' where id=$1`, [fixture.slot]), /cannot reschedule/);
   const { rows: [closed] } = await database.query(`
     insert into pickup_slots (restaurant_id, starts_at, ends_at, cutoff_at, capacity)
@@ -102,6 +102,27 @@ test('checkout rejects sold-out stock, a missed cutoff and unavailable curbside'
     returning id
   `, [fixture.restaurant]);
   await assert.rejects(withRole('authenticated', customer, (tx) => order(tx, 'test-cutoff-1', { slot: closed.id })), /closed|cutoff/);
+});
+
+test('a curbside order completes through restaurant pickup and the customer sees the result', async () => {
+  await withRole('authenticated', merchant, (tx) => tx.query('update restaurants set curbside_enabled=true where id=$1', [fixture.restaurant]));
+  const created = await withRole('authenticated', customer, (tx) => order(tx, 'test-curbside-full', {
+    mode: 'curbside', vehicle: { make: ' Toyota ', model: 'Corolla', color: 'Blue', unrelated: 'Discarded' },
+  }));
+  assert.deepEqual(created.vehicle, { make: 'Toyota', model: 'Corolla', color: 'Blue' });
+  assert.equal(created.payment_method, 'pay_at_pickup');
+  assert.ok(created.pickup_starts_at);
+  await withRole('authenticated', merchant, async (tx) => {
+    for (const status of ['accepted', 'preparing', 'ready', 'completed']) {
+      const { rows: [updated] } = await tx.query('select * from update_order_status($1,$2)', [created.id, status]);
+      assert.equal(updated.status, status);
+    }
+  });
+  const { rows: [customerOrder] } = await withRole('authenticated', customer, (tx) => tx.query(`
+    select o.status, i.prep_steps_snapshot from orders o join order_items i on i.order_id=o.id where o.id=$1
+  `, [created.id]));
+  assert.equal(customerOrder.status, 'completed');
+  assert.ok(customerOrder.prep_steps_snapshot.length > 0);
 });
 
 test('behavioral analytics requires an explicit opt-in', async () => {
