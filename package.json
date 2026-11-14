@@ -1,0 +1,17 @@
+{
+  "name": "cena",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "customer": "pnpm --dir apps/customer exec expo start --web --port 8081",
+    "restaurant": "pnpm --dir apps/restaurant exec expo start --web --port 8082",
+    "site": "node scripts/serve-site.mjs",
+    "site:build": "pnpm --dir apps/site build",
+    "site:typecheck": "pnpm --dir apps/site typecheck",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.16"
+  }
+}

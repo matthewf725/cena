@@ -1,0 +1,1 @@
+{ "expo": { "name": "Cena for Restaurants", "slug": "cena-restaurant", "scheme": "cenarestaurant", "version": "1.0.0", "userInterfaceStyle": "light", "newArchEnabled": true, "ios": { "bundleIdentifier": "com.cena.restaurant", "supportsTablet": true }, "android": { "package": "com.cena.restaurant" }, "plugins": ["expo-router"], "experiments": { "typedRoutes": true } } }

@@ -1,0 +1,1 @@
+{ "expo": { "name": "Cena", "slug": "cena-customer", "scheme": "cena", "version": "1.0.0", "orientation": "portrait", "userInterfaceStyle": "light", "plugins": ["expo-router"], "ios": { "bundleIdentifier": "com.cena.customer", "supportsTablet": true }, "android": { "package": "com.cena.customer" } } }
