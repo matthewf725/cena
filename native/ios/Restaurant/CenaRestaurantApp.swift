@@ -9,7 +9,8 @@ struct RestaurantHome: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var api = CenaBackend.shared
-    @State private var email = "", password = ""
+    @State private var email = ""
+    @State private var password = ""
     @State private var restaurants: [[String: Any]] = []
     @State private var selectedRestaurant: [String: Any]?
     @State private var orders: [[String: Any]] = []

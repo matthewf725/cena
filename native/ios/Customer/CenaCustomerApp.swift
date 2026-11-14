@@ -39,11 +39,19 @@ struct CustomerHome: View {
     @State private var cartQuantityLimit: [String: Int] = [:]
     @State private var checkoutVisible = false
     @State private var tab = 0
-    @State private var email = "", code = "", phone = ""
+    @State private var email = ""
+    @State private var code = ""
+    @State private var phone = ""
     @State private var pickupAreaLabel = "San Francisco pickup area"
-    @State private var pickupLatitude = 37.77, pickupLongitude = -122.42
-    @State private var locationQuery = "", showLocationEditor = false, locationBusy = false
-    @State private var curbside = false, vehicleMake = "", vehicleModel = "", vehicleColor = ""
+    @State private var pickupLatitude = 37.77
+    @State private var pickupLongitude = -122.42
+    @State private var locationQuery = ""
+    @State private var showLocationEditor = false
+    @State private var locationBusy = false
+    @State private var curbside = false
+    @State private var vehicleMake = ""
+    @State private var vehicleModel = ""
+    @State private var vehicleColor = ""
     @State private var codeSent = false
     @State private var idempotencyKey = UserDefaults.standard.string(forKey: "cena.checkout.idempotencyKey") ?? UUID().uuidString
     @State private var pendingCheckoutID = UserDefaults.standard.string(forKey: "cena.checkout.pendingOrderID")
@@ -61,8 +69,12 @@ struct CustomerHome: View {
     @State private var busy = false
     @State private var message: String?
     @State private var orderNumber: String?
-    @State private var profileName = "", profilePhone = "", profileEquipment: [String] = []
-    @State private var profileLoading = false, profileSaving = false, profileEditRevision = 0
+    @State private var profileName = ""
+    @State private var profilePhone = ""
+    @State private var profileEquipment: [String] = []
+    @State private var profileLoading = false
+    @State private var profileSaving = false
+    @State private var profileEditRevision = 0
     @State private var profileNotice: String?
     private var subtotal: Int { cart.reduce(0) { sum, entry in sum + entry.value * (cartItemDetails[entry.key].map { int($0["price_cents"]) } ?? 0) } }
     private var cartCount: Int { cart.values.reduce(0, +) }
