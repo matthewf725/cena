@@ -12,6 +12,7 @@ const artifactsDir = path.join(root, 'artifacts', 'e2e');
 const apiPort = Number(process.env.CENA_E2E_API_PORT || 8180);
 const customerPort = Number(process.env.CENA_E2E_CUSTOMER_PORT || 8081);
 const restaurantPort = Number(process.env.CENA_E2E_RESTAURANT_PORT || 8082);
+const metroWorkers = Number(process.env.CENA_E2E_METRO_MAX_WORKERS || 2);
 const customerOrigin = process.env.CENA_E2E_CUSTOMER_ORIGIN || `http://127.0.0.1:${customerPort}`;
 const restaurantOrigin = process.env.CENA_E2E_RESTAURANT_ORIGIN || `http://127.0.0.1:${restaurantPort}`;
 const childProcesses = [];
@@ -73,6 +74,7 @@ function pnpmBin() { return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'; 
 
 async function main() {
   await mkdir(artifactsDir, { recursive: true });
+  if (!Number.isInteger(metroWorkers) || metroWorkers < 1) throw new Error('CENA_E2E_METRO_MAX_WORKERS must be a positive integer');
   if (Number(loopback(customerOrigin, 'Customer preview URL').port) !== customerPort) throw new Error('Customer preview URL port must match CENA_E2E_CUSTOMER_PORT');
   if (Number(loopback(restaurantOrigin, 'Restaurant preview URL').port) !== restaurantPort) throw new Error('Restaurant preview URL port must match CENA_E2E_RESTAURANT_PORT');
   const status = command(pnpmBin(), ['dlx', 'supabase@3.1.0', 'status', '--output', 'env']);
@@ -122,8 +124,8 @@ async function main() {
 
   const appEnv = { EXPO_NO_DOTENV: '1', EXPO_PUBLIC_SUPABASE_URL: supabase.apiUrl, EXPO_PUBLIC_SUPABASE_ANON_KEY: supabase.anonKey, EXPO_PUBLIC_CENA_API_URL: apiOrigin, CI: '1' };
   const previews = [
-    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--clear'] },
-    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--clear'] },
+    { port: customerPort, origin: customerOrigin, args: ['--dir', 'apps/customer', 'exec', 'expo', 'start', '--web', '--port', String(customerPort), '--clear', '--max-workers', String(metroWorkers)] },
+    { port: restaurantPort, origin: restaurantOrigin, args: ['--dir', 'apps/restaurant', 'exec', 'expo', 'start', '--web', '--port', String(restaurantPort), '--clear', '--max-workers', String(metroWorkers)] },
   ];
   for (const preview of previews) {
     if (!await portAvailable(preview.port)) throw new Error(`Preview port ${preview.port} is occupied. Set CENA_E2E_CUSTOMER_PORT and CENA_E2E_RESTAURANT_PORT to free ports; the runner never reuses potentially stale preview bundles.`);
