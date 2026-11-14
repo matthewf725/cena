@@ -55,6 +55,7 @@ export default function Home() {
   const [origin,setOrigin]=useState<PickupOrigin>(sanFrancisco);
   const [locationLabel,setLocationLabel]=useState('From San Francisco');
   const [showLocation,setShowLocation]=useState(false);
+  const pickupAreaButtonRef=useRef<any>(null);
   const [locating,setLocating]=useState(false);
   const [menuLoading,setMenuLoading]=useState(false);
   const [demoRecentIds,setDemoRecentIds]=useState<string[]>([]);
@@ -487,6 +488,7 @@ export default function Home() {
   }
   const openMeal=(m:Meal)=>{setSelectedQuantity(1);setSelectedOptions([]);setSelected(m);if(supabase&&analyticsConsented&&active?.backendId)void trackEvent('item_view',active.backendId,m.backendItemId?{item_id:m.backendItemId}:{});};
   const openPolicy=async(path:'consumer-terms'|'privacy-policy')=>{const base=process.env.EXPO_PUBLIC_CENA_SITE_URL;if(base){try{await Linking.openURL(`${base.replace(/\/$/,'')}/${path==='consumer-terms'?'terms.html':'privacy.html'}`);return;}catch{}}setNotice({title:path==='consumer-terms'?'Consumer terms':'Privacy policy',message:path==='consumer-terms'?'Orders reserve restaurant-prepared items for pickup after secure payment. Restaurants are responsible for menu and allergen details.':`We use your email and optional phone to link and manage pickup orders. Anonymous browsing analytics are optional and off until you choose to share them.`});};
+  const closeLocationPicker=()=>{setShowLocation(false);if(Platform.OS==='web')requestAnimationFrame(()=>pickupAreaButtonRef.current?.focus?.());};
   const closeFlow=()=>{if(flow==='time')setFlow('date');else if(flow==='contact')setFlow('time');else closeKitchen();};
   const recoverKnownCheckoutError=()=>{
     const reason=quoteRecovery;
@@ -622,9 +624,9 @@ export default function Home() {
     }
   };
   return <View style={[s.screen,{paddingTop:insets.top}]}><View style={{flex:1,width:'100%',maxWidth:560,alignSelf:'center'}}>
-    <View style={{flex:1}} pointerEvents={active?'none':'auto'} aria-hidden={Boolean(active)}
-      {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:Boolean(active),importantForAccessibility:active?'no-hide-descendants':'auto'})}>
-      <View style={[s.topbar,{paddingHorizontal:width<390?14:22,gap:width<390?8:14}]}><View style={s.brand}><Text style={s.wordmark}>cena</Text><View style={s.logodot}/></View><Pressable accessibilityRole="button" accessibilityLabel={`Change pickup area, ${locationLabel}`}
+    <View style={{flex:1}} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
+      {...(Platform.OS==='web'?showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
+      <View style={[s.topbar,{paddingHorizontal:width<390?14:22,gap:width<390?8:14}]}><View style={s.brand}><Text style={s.wordmark}>cena</Text><View style={s.logodot}/></View><Pressable ref={pickupAreaButtonRef} accessibilityRole="button" accessibilityLabel={`Change pickup area, ${locationLabel}`}
         onPress={()=>setShowLocation(true)} style={[s.location,{flexShrink:1,minWidth:0}]}>
           <MapPin size={15} color={maroon}/><Text numberOfLines={1} style={[s.locText,{flexShrink:1}]}>{locating?'Finding location…':locationLabel}</Text>
         </Pressable><Pressable accessibilityRole="button" accessibilityLabel="Open account" onPress={()=>navigate('Account')} style={[s.avatar,{flexShrink:0}]}><UserRound size={17} color={maroon}/></Pressable></View>
@@ -663,9 +665,9 @@ export default function Home() {
       <Text style={[s.navText,tab===name&&s.navTextActive]}>{name}</Text>
       {name==='Bag'&&cartCount>0&&<View style={s.navBadge}><Text style={s.navBadgeTxt}>{cartCount>99?'99+':cartCount}</Text></View>}
     </Pressable>)}</View>}
-    {showLocation&&<LocationPicker close={()=>setShowLocation(false)} locating={locating} useDevice={()=>void usePickupLocation()}
-      useAddress={({label,latitude,longitude})=>{setOrigin({latitude,longitude});setLocationLabel(label);setShowLocation(false);}}
-      reset={()=>{setOrigin(sanFrancisco);setLocationLabel('From San Francisco');setShowLocation(false);}}/>}
+    {showLocation&&<LocationPicker close={closeLocationPicker} locating={locating} useDevice={()=>void usePickupLocation()}
+      useAddress={({label,latitude,longitude})=>{setOrigin({latitude,longitude});setLocationLabel(label);closeLocationPicker();}}
+      reset={()=>{setOrigin(sanFrancisco);setLocationLabel('From San Francisco');closeLocationPicker();}}/>}
     {checkout&&showCheckoutRecovery&&flow!=='contact'&&<View style={{...StyleSheet.absoluteFillObject,justifyContent:'center',zIndex:25}}><View style={{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(28,18,14,.4)'}}/><View style={{marginHorizontal:24,backgroundColor:ivory,borderRadius:contentRadius,padding:20,borderWidth:1,borderColor:line}}><Text style={{fontSize:21,fontWeight:'700',color:ink}}>Finish secure payment</Text><Text style={{fontSize:12,color:muted,lineHeight:18,marginTop:8,marginBottom:16}}>Your bag is saved. Your order is not confirmed until payment status shows paid.</Text><Pressable accessibilityRole="button" onPress={()=>void Linking.openURL(checkout.url).catch(()=>setNotice({title:'Couldn’t open checkout',message:'Try opening secure checkout again or check your connection.'}))} style={s.primaryBtn}><Text style={s.primaryBtnText}>Open secure checkout</Text></Pressable><View style={{flexDirection:'row',justifyContent:'space-between',marginTop:14}}><Pressable accessibilityRole="button" onPress={()=>void refreshPaymentStatus(checkout)}><Text style={s.summaryEdit}>Check payment status</Text></Pressable><Pressable accessibilityRole="button" onPress={()=>void cancelPendingPayment()}><Text style={[s.summaryEdit,{color:'#A1382C'}]}>Cancel checkout</Text></Pressable></View><Pressable accessibilityRole="button" onPress={()=>setShowCheckoutRecovery(false)} style={{alignSelf:'center',paddingVertical:14}}><Text style={s.summaryEdit}>Keep browsing</Text></Pressable></View></View>}
     {notice&&<View accessibilityViewIsModal style={{...StyleSheet.absoluteFillObject,justifyContent:'center',zIndex:30}}><Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={()=>setNotice(null)} style={{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(28,18,14,.4)'}}/><View style={{marginHorizontal:28,backgroundColor:ivory,borderRadius:16,padding:21,borderWidth:1,borderColor:line}}><Text style={{fontSize:23,fontWeight:'700',color:ink}}>{notice.title}</Text><Text style={{fontSize:12,color:muted,lineHeight:18,marginTop:9,marginBottom:18}}>{notice.message}</Text><Pressable accessibilityRole="button" onPress={()=>setNotice(null)} style={s.primaryBtn}><Text style={s.primaryBtnText}>Got it</Text></Pressable></View></View>}
     {selected&&<View style={s.sheetOverlay}><Pressable style={s.scrim} onPress={()=>setSelected(null)}/><Enter key={selected.id} reduced={reduceMotion} distance={22} style={[s.sheet,{flex:0,paddingBottom:Math.max(insets.bottom+18,28)}]}><View style={s.sheetHandle}/><View style={s.sheetHead}><View><Text style={s.sheetTitle}>{selected.name}</Text><Text style={s.sheetSub}>{selected.subtitle}</Text><MealPrice meal={selected}/></View></View>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { LocateFixed, X } from 'lucide-react-native';
 import type { PickupOrigin } from '../lib/discovery';
@@ -12,13 +12,53 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating }
   reset: () => void;
   locating: boolean;
 }) {
+  const addressInput = useRef<TextInput>(null);
+  const cardRef = useRef<View>(null);
+  const closeRef = useRef(close);closeRef.current=close;
+  const dismissRef = useRef<()=>void>(()=>{});
+  const dismissed = useRef(false);
+  const mounted = useRef(false);
+  const lookupAbort = useRef<AbortController|null>(null);
   const [address, setAddress] = useState('');
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const busy = locating || searching;
+  dismissRef.current=()=>{
+    if(dismissed.current)return;
+    dismissed.current=true;
+    lookupAbort.current?.abort();
+    closeRef.current();
+  };
+
+  useEffect(() => {
+    mounted.current=true;
+    if (Platform.OS !== 'web') return ()=>{mounted.current=false;lookupAbort.current?.abort();};
+    addressInput.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        dismissRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const card = cardRef.current as unknown as HTMLElement | null;
+      const focusable = card?.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const current = document.activeElement;
+      if (event.shiftKey && (current === first || !card?.contains(current))) {
+        event.preventDefault();last.focus();
+      } else if (!event.shiftKey && (current === last || !card?.contains(current))) {
+        event.preventDefault();first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {mounted.current=false;document.removeEventListener('keydown', onKeyDown);lookupAbort.current?.abort();};
+  }, []);
 
   async function findAddress() {
-    if (busy || address.trim().length < 8) return;
+    if (busy || dismissed.current || address.trim().length < 8) return;
     const api = process.env.EXPO_PUBLIC_CENA_API_URL;
     if (!api) {
       setError('Address lookup is unavailable in this preview. You can still use your device location.');
@@ -26,35 +66,42 @@ export function LocationPicker({ close, useDevice, useAddress, reset, locating }
     }
     setSearching(true);
     setError('');
+    const controller=new AbortController();
+    lookupAbort.current=controller;
     try {
-      const response = await fetch(`${api.replace(/\/$/, '')}/v1/geocode?address=${encodeURIComponent(address.trim())}`);
+      const response = await fetch(`${api.replace(/\/$/, '')}/v1/geocode?address=${encodeURIComponent(address.trim())}`,{signal:controller.signal});
+      if(dismissed.current)return;
       if (response.status === 404 || response.status === 422) {
         setError('Enter a California street address with a city or ZIP code.');
         return;
       }
       if (!response.ok) throw new Error('Address lookup failed');
       const result: AddressLocation = await response.json();
+      if(dismissed.current)return;
       if (!result.label || !Number.isFinite(result.latitude) || !Number.isFinite(result.longitude)) throw new Error('Invalid address result');
+      dismissed.current=true;
       useAddress(result);
     } catch {
-      setError('Couldn’t look up that address. Try again or use your current location.');
+      if(!dismissed.current&&mounted.current)setError('Couldn’t look up that address. Try again or use your current location.');
     } finally {
-      setSearching(false);
+      if(lookupAbort.current===controller)lookupAbort.current=null;
+      if(!dismissed.current&&mounted.current)setSearching(false);
     }
   }
 
   return <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-    <Pressable style={styles.scrim} onPress={close} disabled={busy} aria-hidden={Platform.OS==='web'?true:undefined}
+    <Pressable style={styles.scrim} onPress={()=>dismissRef.current()} disabled={busy} aria-hidden={Platform.OS==='web'?true:undefined}
       {...(Platform.OS==='web'?{}:{accessibilityElementsHidden:true,importantForAccessibility:'no'})} />
-    <View style={styles.card} accessibilityViewIsModal>
+    <View ref={cardRef} style={styles.card}
+      {...(Platform.OS==='web'?({role:'dialog','aria-modal':true} as any):{accessibilityViewIsModal:true})}>
       <View style={styles.heading}>
         <Text accessibilityRole="header" style={styles.title}>Pickup area</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close pickup area" onPress={close} disabled={busy} style={styles.close}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close pickup area" onPress={()=>dismissRef.current()} disabled={busy} style={styles.close}>
           <X size={21} color={maroon} />
         </Pressable>
       </View>
       <Text style={styles.helper}>Enter an address to see kitchens and pickup distances near it.</Text>
-      <TextInput accessibilityLabel="Street address, city or ZIP code" style={styles.input} value={address}
+      <TextInput ref={addressInput} accessibilityLabel="Street address, city or ZIP code" style={styles.input} value={address}
         onChangeText={value => { setAddress(value); setError(''); }} editable={!busy} maxLength={200}
         placeholder="Street address, city or ZIP code" placeholderTextColor="#77645B" returnKeyType="search"
         onSubmitEditing={() => void findAddress()} />
