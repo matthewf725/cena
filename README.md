@@ -1,8 +1,6 @@
 # Cena
 
-## Color scheme
+## Primary app colors
 
-| Color | Hex | Usage |
-| --- | --- | --- |
-| Deep Maroon | `#5D100A` | Left side of the wordmark |
-| Warm Off-White / Soft Ivory | `#FAF6F3` | Approximate background color |
+- Deep Maroon (`#5D100A`)
+- Warm Off-White / Soft Ivory (`#FAF6F3`)
