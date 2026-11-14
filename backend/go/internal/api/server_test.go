@@ -51,6 +51,64 @@ func TestCORSRejectsUnlistedOriginAndSupportsOverride(t *testing.T) {
 		t.Fatalf("override: %d %#v", w.Code, w.Header())
 	}
 }
+
+func TestDiscoveryForwardsOptionalAnonymousFilters(t *testing.T) {
+	h := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/v1/rpc/discover_pickup_feed" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected auth header %q", r.Header.Get("Authorization"))
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["p_latitude"] != 37.7 || body["p_longitude"] != -122.4 || body["p_query"] != "pasta" {
+			t.Errorf("RPC args: %#v", body)
+		}
+		if _, ok := body["p_recent_ids"].([]any); !ok {
+			t.Errorf("recent IDs should be an array: %#v", body)
+		}
+		io.WriteString(w, `{"recent":[],"explore":[],"nearby":[],"categories":[],"next_cursor":null}`)
+	})
+	r := httptest.NewRequest("POST", "/v1/discovery", strings.NewReader(`{"p_latitude":37.7,"p_longitude":-122.4,"p_query":"pasta"}`))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"explore":[]`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDiscoveryForwardsOptionalBearerAndValidatesCoordinates(t *testing.T) {
+	calls := 0
+	h := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Authorization") != "Bearer user-jwt" {
+			t.Errorf("auth not forwarded: %q", r.Header.Get("Authorization"))
+		}
+		io.WriteString(w, `{"recent":[],"explore":[],"nearby":[],"categories":[],"next_cursor":null}`)
+	})
+	r := httptest.NewRequest("POST", "/v1/discovery", strings.NewReader(`{"p_latitude":37,"p_longitude":-122}`))
+	r.Header.Set("Authorization", "Bearer user-jwt")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || calls != 1 {
+		t.Fatalf("%d calls=%d", w.Code, calls)
+	}
+	r = httptest.NewRequest("POST", "/v1/discovery", strings.NewReader(`{"p_latitude":91,"p_longitude":-122}`))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 400 || calls != 1 {
+		t.Fatalf("invalid coords: %d calls=%d", w.Code, calls)
+	}
+	r = httptest.NewRequest("POST", "/v1/discovery", strings.NewReader(`{"p_latitude":37}`))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 400 || calls != 1 {
+		t.Fatalf("incomplete coords: %d calls=%d", w.Code, calls)
+	}
+}
 func TestCreateOrderForwardsUserTokenAndRPCContract(t *testing.T) {
 	h := newTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/v1/rpc/create_order" {

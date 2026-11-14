@@ -17,6 +17,7 @@ SUPABASE_URL=https://YOUR_PROJECT.supabase.co SUPABASE_ANON_KEY=YOUR_PUBLIC_KEY 
 
 - `GET /healthz` returns `{"status":"ok"}`.
 - `GET /v1/catalog` returns `{restaurants,items,slots,inventory}` from fixed, read-only PostgREST queries. Supabase RLS limits every read; caller query params are ignored.
+- `POST /v1/discovery` calls the `discover_pickup_feed` RPC. Body keys mirror its arguments: `p_latitude`, `p_longitude`, `p_after`, `p_query`, `p_cuisine`, `p_recent_ids`. Coordinates must be provided together and fall within latitude/longitude ranges. Authentication is optional; if present, the Supabase JWT is forwarded. The response is the database feed object `{recent,explore,nearby,categories,next_cursor}`.
 - `POST /v1/orders` forwards the request to `create_order`. JSON body uses RPC argument names: `p_restaurant_id`, `p_slot_id`, `p_idempotency_key`, `p_pickup_mode` (`counter` or `curbside`), optional `p_vehicle`, and `p_items` (`[{"item_id":"UUID","quantity":1}]`).
 - `PATCH /v1/orders/{id}/status` body: `{"status":"accepted"}`. Calls `update_order_status` and leaves membership and transition rules to the database.
 - `POST /v1/analytics/events` body: `{"event_type":"menu_view","restaurant_id":"UUID or null","payload":{}}`. Calls `track_event`; consent and supported event validation remain in SQL.

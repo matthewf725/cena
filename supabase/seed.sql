@@ -1,9 +1,9 @@
 -- Demo content is scheduled relative to seed execution, so slots remain in the future.
-insert into public.restaurants(slug,name,description,cuisine,image_key,timezone,address,curbside_enabled)
+insert into public.restaurants(slug,name,description,cuisine,image_key,timezone,address,curbside_enabled,latitude,longitude)
 values
- ('sunrise-cafe','Sunrise Cafe','Breakfast meal kits packed fresh for pickup.','Cafe','sunrise-cafe-cover','America/Los_Angeles','420 Mission Street, San Francisco, CA',true),
- ('little-fig','Little Fig Kitchen','Seasonal Mediterranean meal kits, ready to finish at home.','Mediterranean','little-fig-cover','America/Los_Angeles','88 Valencia Street, San Francisco, CA',true)
-on conflict(slug) do update set name=excluded.name,description=excluded.description,cuisine=excluded.cuisine,image_key=excluded.image_key,address=excluded.address,curbside_enabled=excluded.curbside_enabled;
+ ('sunrise-cafe','Sunrise Cafe','Breakfast meal kits packed fresh for pickup.','Cafe','sunrise-cafe-cover','America/Los_Angeles','420 Mission Street, San Francisco, CA',true,37.7909,-122.3967),
+ ('little-fig','Little Fig Kitchen','Seasonal Mediterranean meal kits, ready to finish at home.','Mediterranean','little-fig-cover','America/Los_Angeles','88 Valencia Street, San Francisco, CA',true,37.7738,-122.4212)
+on conflict(slug) do update set name=excluded.name,description=excluded.description,cuisine=excluded.cuisine,image_key=excluded.image_key,address=excluded.address,curbside_enabled=excluded.curbside_enabled,latitude=excluded.latitude,longitude=excluded.longitude;
 
 insert into public.catalog_items(restaurant_id,name,description,price_cents,regular_price_cents,image_key,category,prep_minutes,equipment,allergens,published_steps,published_at)
 select r.id,v.name,v.description,v.price,v.regular,v.image_key,v.category,v.prep,v.equipment,v.allergens,v.steps,now()

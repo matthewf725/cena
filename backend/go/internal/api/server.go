@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,6 +39,7 @@ func New(cfg Config) http.Handler {
 	s := &Server{cfg: cfg, client: c, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", s.health)
 	s.mux.HandleFunc("GET /v1/catalog", s.catalog)
+	s.mux.HandleFunc("POST /v1/discovery", s.discovery)
 	s.mux.HandleFunc("POST /v1/orders", s.createOrder)
 	s.mux.HandleFunc("PATCH /v1/orders/{id}/status", s.updateOrderStatus)
 	s.mux.HandleFunc("POST /v1/analytics/events", s.trackEvent)
@@ -106,6 +108,43 @@ func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]json.RawMessage{"restaurants": result[0], "items": result[1], "slots": result[2], "inventory": result[3]})
 }
+
+type discoveryRequest struct {
+	Latitude  *float64 `json:"p_latitude"`
+	Longitude *float64 `json:"p_longitude"`
+	After     *string  `json:"p_after"`
+	Query     *string  `json:"p_query"`
+	Cuisine   *string  `json:"p_cuisine"`
+	RecentIDs []string `json:"p_recent_ids"`
+}
+
+func (s *Server) discovery(w http.ResponseWriter, r *http.Request) {
+	var in discoveryRequest
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if (in.Latitude == nil) != (in.Longitude == nil) {
+		writeJSON(w, 400, map[string]string{"error": "latitude and longitude must be provided together"})
+		return
+	}
+	if in.Latitude != nil && (math.IsNaN(*in.Latitude) || math.IsInf(*in.Latitude, 0) || math.IsNaN(*in.Longitude) || math.IsInf(*in.Longitude, 0) || *in.Latitude < -90 || *in.Latitude > 90 || *in.Longitude < -180 || *in.Longitude > 180) {
+		writeJSON(w, 400, map[string]string{"error": "coordinates are out of range"})
+		return
+	}
+	if tooLong(in.After, 500) || tooLong(in.Query, 120) || tooLong(in.Cuisine, 80) || len(in.RecentIDs) > 30 {
+		writeJSON(w, 400, map[string]string{"error": "discovery filters exceed allowed size"})
+		return
+	}
+	if in.RecentIDs == nil {
+		in.RecentIDs = []string{}
+	}
+	s.rpcOptionalAuth(w, r, "discover_pickup_feed", map[string]any{
+		"p_latitude": in.Latitude, "p_longitude": in.Longitude, "p_after": in.After,
+		"p_query": in.Query, "p_cuisine": in.Cuisine, "p_recent_ids": in.RecentIDs,
+	})
+}
+
+func tooLong(v *string, n int) bool { return v != nil && len(*v) > n }
 
 type orderRequest struct {
 	RestaurantID   string          `json:"p_restaurant_id"`
@@ -192,6 +231,20 @@ func (s *Server) rpc(w http.ResponseWriter, r *http.Request, name string, body a
 		writeJSON(w, 401, map[string]string{"error": "authentication required"})
 		return
 	}
+	s.callRPC(w, r, name, body)
+}
+
+func (s *Server) rpcOptionalAuth(w http.ResponseWriter, r *http.Request, name string, body any) {
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		if _, ok := bearerToken(r); !ok {
+			writeJSON(w, 401, map[string]string{"error": "invalid authorization header"})
+			return
+		}
+	}
+	s.callRPC(w, r, name, body)
+}
+
+func (s *Server) callRPC(w http.ResponseWriter, r *http.Request, name string, body any) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": "invalid request"})
