@@ -31,6 +31,10 @@ test('returns the bundle matching the Expo Go runtime and accepts the legacy SDK
     assert.equal(response.headers.get('expo-sfv-version'), '0');
     assert.deepEqual(await response.json(), variants[sdk]);
   }
+  const freshLaunch = await worker.fetch(new Request(route.replace('/manifest.json', '/menu/manifest.json'), {
+    headers: { 'Expo-Runtime-Version': 'exposdk:58.0.0', 'Expo-Platform': 'ios' },
+  }));
+  assert.deepEqual(await freshLaunch.json(), variants['58.0.0']);
 });
 
 test('supports Expo Go protocol zero but refuses incompatible runtime and platform', async () => {

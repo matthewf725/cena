@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ComponentRef, type ReactNode, type Ref } from 'react';
-import { Animated, Keyboard, Platform, Pressable, StyleSheet, useWindowDimensions, View, type KeyboardEvent } from 'react-native';
+import { Animated, Easing, Keyboard, Platform, Pressable, StyleSheet, useWindowDimensions, View, type KeyboardEvent } from 'react-native';
 import { MapPin, Search, X } from 'lucide-react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Text, TextInput } from './type';
@@ -100,13 +100,14 @@ export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onP
   </HeaderButton>;
 }
 
-export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
+export function HomeSearch({ query, setQuery, bottom, radius, side, height, reduced }: {
   query: string;
   setQuery: (value: string) => void;
   bottom: number;
   radius: number;
   side: number;
   height: number;
+  reduced: boolean;
 }) {
   const [focused,setFocused] = useState(false);
   const { height: windowHeight } = useWindowDimensions();
@@ -114,7 +115,24 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
   const latestWindowHeight = useRef(windowHeight);
   const keyboardHeight = useRef(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const keyboardDuration = useRef(230);
+  const lift = useRef(new Animated.Value(0)).current;
   latestWindowHeight.current = windowHeight;
+  const dockBottom = focused && keyboardInset > 0 ? Math.max(bottom, keyboardInset + searchGap) : bottom;
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const toValue = bottom - dockBottom;
+    if (reduced || keyboardDuration.current === 0) {
+      lift.setValue(toValue);
+      return;
+    }
+    const animation = Animated.timing(lift, {
+      toValue, duration: keyboardDuration.current, easing: Easing.inOut(Easing.cubic), useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [bottom, dockBottom, lift, reduced]);
 
   useEffect(() => {
     if (!focused) {
@@ -148,13 +166,15 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
       setKeyboardInset(Math.max(0, keyboardHeight.current - layoutResize));
     };
     const updateFrame = (event: KeyboardEvent) => {
+      keyboardDuration.current = event.duration ?? 230;
       keyboardHeight.current = Platform.OS === 'ios'
         ? Math.max(0, focusHeight.current - event.endCoordinates.screenY)
         : event.endCoordinates.height;
       updateFromKeyboard();
     };
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow', updateFrame);
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', event => {
+      keyboardDuration.current = event.duration ?? 230;
       keyboardHeight.current = 0;
       setKeyboardInset(0);
     });
@@ -165,7 +185,8 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
     };
   }, [focused, windowHeight]);
 
-  return <View pointerEvents="box-none" style={[s.searchDock, { bottom: bottom + (focused ? keyboardInset : 0), left: side, right: side }]}>
+  return <Animated.View pointerEvents="box-none" style={[s.searchDock, { left: side, right: side },
+    Platform.OS === 'ios' ? { bottom, transform: [{ translateY: lift }] } : { bottom: dockBottom }]}>
     <View style={[s.search, { borderRadius: radius, height }, focused && s.searchFocused]}>
       <Search size={18} color={maroon} aria-hidden />
       <TextInput accessibilityLabel="Search restaurants" value={query} onChangeText={setQuery}
@@ -177,7 +198,7 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
         <View pointerEvents="none" style={s.clearCircle}><X size={18} color={maroon} aria-hidden /></View>
       </Pressable>}
     </View>
-  </View>;
+  </Animated.View>;
 }
 
 const s = StyleSheet.create({

@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ActivityIndicator, Animated, AppState, Image, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { ActivityIndicator, Animated, AppState, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Location from 'expo-location';
 import { ChevronRight, House, ShoppingBag, MapPin, Star, Plus, Minus, ArrowLeft, CircleCheck, CalendarDays, Phone, Mail, Check, CarFront, PackageCheck, ChefHat, Soup, Bell, CreditCard, UserRound, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -510,9 +510,8 @@ export default function Home() {
       return next;
     });
   };
-  const openKitchen=async (kitchen:Kitchen)=>{
+  const openKitchen=useCallback(async (kitchen:Kitchen)=>{
     const request=++menuRequest.current;
-    if(Platform.OS==='ios'&&Keyboard.isVisible())Keyboard.dismiss();
     setActive(kitchen);
     setFlow('menu');
     setCurb(false);
@@ -524,20 +523,12 @@ export default function Home() {
       const loaded=await loadKitchenMenu(kitchen);
       if(request!==menuRequest.current)return;
       setActive(loaded);
-      const first=loaded.pickupSlots?.find(slot=>Date.parse(slot.cutoffAt)>Date.now()&&Date.parse(slot.startsAt)>=Date.now()+checkoutLeadMs);
-      if(first){
-        setDate(dayOffset(first.startsAt,loaded.timezone));
-        setSlot(formatTime(first.startsAt,loaded.timezone));
-      }else if(!loaded.backendId){
-        setDate(1);
-        setSlot('5:30 PM');
-      }
     }catch{
       if(request===menuRequest.current)setMenuLoadFailed(true);
     }finally{
       if(request===menuRequest.current)setMenuLoading(false);
     }
-  };
+  },[analyticsConsented]);
   const closeKitchen=()=>{
     menuRequest.current++;
     setMenuLoading(false);
@@ -851,8 +842,8 @@ export default function Home() {
     </HeaderButton>
   </View>;
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}><View style={{flex:1,width:'100%'}}>
-    {(!active||Platform.OS!=='ios')&&<View style={{flex:1}} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
-      {...(Platform.OS==='web'?showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
+    <View style={active?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
+      {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
       <PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
@@ -860,7 +851,7 @@ export default function Home() {
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll} suspended={Boolean(active)||showLocation}
           clearQuery={()=>setQuery('')}
-      open={kitchen=>void openKitchen(kitchen)}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo?
+      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:calPolyDemo?
         <View style={{paddingTop:topSpace+20,paddingHorizontal:22}}>
           <Text accessibilityRole="header" style={s.pageTitle}>Profile</Text>
           <View style={s.profileHero}>
@@ -872,10 +863,10 @@ export default function Home() {
           setAnalyticsConsented={setAnalyticsConsented} email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone}
           displayName={displayName} setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}
       </Enter>
-      {tab==='Home'&&!active&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight}/>}
-    </View>}
+      {tab==='Home'&&!active&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight} reduced={reduceMotion}/>}
+    </View>
 
-    {active&&<View style={[StyleSheet.absoluteFillObject,{zIndex:3,backgroundColor:ivory}]}><View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}><View style={s.modalTop}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={s.modalBrand}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={maroon}/></Pressable></View>
+    {active&&<View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}]}><View style={s.modalTop}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={s.modalBrand}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={maroon}/></Pressable></View>
       {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}>
         <View style={[s.restaurantHero,{height:Math.round(contentWidth*9/16)}]}><Image source={restaurantPhoto(active)} resizeMode="cover" style={[StyleSheet.absoluteFillObject,{width:'100%',height:'100%'}]}/><View style={s.imageShade}/><View style={s.restaurantHeroBottom}><Text style={s.restaurantLabel}>{active.id.startsWith('cal-poly-')?'CAL POLY DEMO MENU':'YOUR NEIGHBORHOOD KITCHEN'}</Text><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View></View>
         <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{formatDistance(active.distanceMiles)}</Text></View>}{active.address&&<View style={s.metaItem}><MapPin size={15} color={muted}/><Text style={s.metaText}>{active.address}</Text></View>}</View>
@@ -905,7 +896,7 @@ export default function Home() {
       </>}{!authenticated&&!!otpFeedback&&<Text accessibilityLiveRegion="polite" style={[s.checkoutInfoText,{marginBottom:10}]}>{otpFeedback}</Text>}{curb&&<><Text style={s.settingsSection}>YOUR VEHICLE FOR CURBSIDE</Text><View style={s.inputWrap}><TextInput style={s.contactInput} value={vehicleMake} onChangeText={setVehicleMake} placeholder="Make" placeholderTextColor="#A69A94"/><TextInput style={s.contactInput} value={vehicleModel} onChangeText={setVehicleModel} placeholder="Model" placeholderTextColor="#A69A94"/></View><View style={s.inputWrap}><TextInput style={s.contactInput} value={vehicleColor} onChangeText={setVehicleColor} placeholder="Color" placeholderTextColor="#A69A94"/></View></>}<View style={s.checkoutInfo}><PackageCheck size={19} color={green}/><Text style={s.checkoutInfoText}>{supabase?'Secure payment is required to place this pickup order. You will return here to confirm it.':'Secure checkout is unavailable in this preview; browsing is still available.'}</Text></View>{checkout&&<View style={s.checkoutInfo}><PackageCheck size={19} color={green}/><Text style={s.checkoutInfoText}>Payment {paymentStatus==='pending'?'is still processing. Complete payment in secure checkout, then return here.':paymentStatus==='paid'?'confirmed.':`status: ${paymentStatus??'pending'}.`}</Text><Pressable onPress={()=>void refreshPaymentStatus(checkout)}><Text style={s.summaryEdit}>Check</Text></Pressable></View>}{!checkout&&paymentStatus&&<View style={s.checkoutInfo}><Text style={s.checkoutInfoText}>{paymentStatus==='refunded'?'This order was refunded. View the refund in Orders.':paymentStatus==='expired'?'That payment session expired. Your bag is saved; start a new secure checkout.':'Payment did not complete. Your bag is saved; try secure checkout again.'}</Text></View>}<View style={{flex:1}}/><View style={s.pickupSummary}><View style={{flex:1}}><Text style={s.pickupSummaryTitle}>Bag subtotal</Text><Text style={s.pickupSummarySub}>{dollars(subtotal)}</Text></View></View>{!supabase&&<View style={s.totalRow}><Text style={s.totalLabel}>Meal kit total · preview</Text><Text style={s.totalPrice}>{dollars(subtotal)}</Text></View>}<Pressable accessibilityRole="button" onPress={paymentStatus==='refunded'?()=>{closeKitchen();setTab('Orders');}:place} disabled={!checkout&&paymentStatus!=='refunded'&&(otpBusy||quoteLoading||!email.includes('@')||(supabase&&!authenticated&&(otpSent?otpCode.length!==6:now<otpResendAt)))} style={[s.primaryBtn,(!checkout&&paymentStatus!=='refunded'&&(otpBusy||quoteLoading||!email.includes('@')||(supabase&&!authenticated&&(otpSent?otpCode.length!==6:now<otpResendAt))))&&{opacity:.5}]}><Text style={s.primaryBtnText}>{paymentStatus==='refunded'?'View order history':checkout?'Open secure checkout':supabase&&!authenticated&&!otpSent?'Email me a sign-in code':supabase&&!authenticated?'Verify code and continue':!quoteMatches?(promoCode.trim()?'Apply code & review total':'Review total'):'Continue to secure payment · '+dollars(quote!.data.amount_cents/100)}</Text><ChevronRight size={19} color="#FFF"/></Pressable><Text style={s.finePrint}>You will only see order confirmation after payment is verified.</Text></ScrollView></KeyboardAvoidingView>}
       {flow==='done'&&<View style={s.doneView}><View style={s.doneIcon}><Check size={32} color="#FFF"/></View><Text style={s.doneEyebrow}>YOU’RE ALL SET</Text><Text style={s.doneTitle}>Dinner is{ '\n' }in motion.</Text><Text style={s.doneSub}>Your order is linked to {email}. Follow pickup progress from Orders.</Text><View style={s.doneCard}><View style={s.doneCardRow}><CreditCard size={17} color={green}/><Text style={s.doneCardText}>Paid · {dollars(completedTotal)}</Text></View><View style={s.doneCardRow}><CalendarDays size={17} color={maroon}/><Text style={s.doneCardText}>{dateLabel(date,active.timezone)} · {slot}</Text></View><View style={s.doneCardRow}><MapPin size={17} color={maroon}/><Text style={s.doneCardText}>{active.name} · {active.address||"Oakland, CA"}</Text></View><View style={s.prepTimeline}><TimelineItem icon={<CircleCheck size={16} color={green}/>} title="Order received" done/><TimelineItem icon={<ChefHat size={16} color={maroon}/>} title="Published prep steps are saved below"/><TimelineItem icon={<Bell size={16} color={muted}/>} title="Check pickup progress in the Orders tab"/></View></View><Pressable accessibilityRole="button" onPress={()=>{setFlow('menu');closeKitchen();setTab('Orders')}} style={s.primaryBtn}><Text style={s.primaryBtnText}>View order progress</Text><ChevronRight size={19} color="#FFF"/></Pressable><Pressable accessibilityRole="button" onPress={()=>navigate('Home')} style={s.doneLink}><Text style={s.doneLinkText}>Back to browsing</Text></Pressable></View>}
       {flow==='menu'&&!menuLoading&&cartCount>0&&Object.values(cart).every(x=>x.restaurantId===active.id)&&<Animated.View style={{position:'absolute',left:0,right:0,bottom:0,transform:[{scale:bagPulse}]}}><Pressable style={s.cartBar} accessibilityRole="button" accessibilityLabel="View bag" onPress={()=>navigate('Bag')}><View style={s.cartBubble}><Text style={s.cartBubbleText}>{cartCount}</Text></View><Text style={s.cartBarLabel}>View bag</Text><Text style={s.cartBarPrice}>{dollars(subtotal)}</Text><ChevronRight size={18} color="#FFF"/></Pressable></Animated.View>}
-    </View></View>}
+    </View>}
     {(navShown||Platform.OS!=='ios')&&<Animated.View pointerEvents={navShown?'auto':'none'} aria-hidden={!navShown} accessibilityElementsHidden={!navShown}
       importantForAccessibility={navShown?'auto':'no-hide-descendants'} style={[s.bottomNav,{height:navHeight,paddingBottom:navPadding,transform:[{translateY:navOffset}]}]}>{footerTabs.map(({name,Icon})=><Pressable
       key={name} accessibilityRole="tab" accessibilityState={{selected:tab===name}} aria-selected={tab===name}
@@ -926,6 +917,8 @@ export default function Home() {
       onAdd={(quantity,selections)=>{if(add(selected,quantity,selections))setSelected(null);}}/>}
   </View></View>;
 }
+
+const tabStyles=StyleSheet.create({ mainTab:{flex:1}, hiddenTab:{display:'none'} });
 
 function formatTime(iso:string,tz?:string){return new Intl.DateTimeFormat('en-US',{timeZone:tz||Intl.DateTimeFormat().resolvedOptions().timeZone,hour:'numeric',minute:'2-digit'}).format(new Date(iso));}
 const mealImage=foodPhoto;

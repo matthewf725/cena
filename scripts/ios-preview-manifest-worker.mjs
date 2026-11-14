@@ -6,12 +6,15 @@ const CORS_HEADERS = {
   'Access-Control-Max-Age': '600',
 };
 
+const customerPreview = {
+  url: 'https://cena-calpoly-customer.trustworthybasket2.chatgpt.site/ios-preview/manifest.json',
+  slug: 'cena-customer',
+  scopeKey: 'cena-customer',
+};
+
 const MANIFESTS = new Map([
-  ['/customer/ios-preview/manifest.json', {
-    url: 'https://cena-calpoly-customer.trustworthybasket2.chatgpt.site/ios-preview/manifest.json',
-    slug: 'cena-customer',
-    scopeKey: 'cena-customer',
-  }],
+  ['/customer/ios-preview/manifest.json', customerPreview],
+  ['/customer/ios-preview/menu/manifest.json', customerPreview],
   ['/restaurant/ios-preview/manifest.json', {
     url: 'https://cena-calpoly-restaurant.trustworthybasket2.chatgpt.site/ios-preview/manifest.json',
     slug: 'cena-restaurant',

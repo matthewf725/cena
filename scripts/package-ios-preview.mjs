@@ -49,7 +49,8 @@ async function packagePreview(app, exportDir, siteDir, siteOrigin, manifestOrigi
   };
   await writeFile(path.join(dest, sdkVersion === '54.0.0' ? 'manifest.json' : `manifest-${sdkVersion.split('.')[0]}.json`), JSON.stringify(manifest));
 
-  const manifestUrl = new URL(`/${app}/ios-preview/manifest.json`, manifestOrigin);
+  const manifestPath = app === 'customer' ? '/customer/ios-preview/menu/manifest.json' : '/restaurant/ios-preview/manifest.json';
+  const manifestUrl = new URL(manifestPath, manifestOrigin);
   if (manifestUrl.protocol !== 'https:' || manifestUrl.username || manifestUrl.password) {
     throw new Error('Use the HTTPS Expo Updates manifest server origin');
   }

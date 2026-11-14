@@ -1,4 +1,5 @@
-import { FlatList, ImageBackground, Pressable, StyleSheet, View } from 'react-native';
+import { memo } from 'react';
+import { FlatList, Image, Pressable, StyleSheet, View } from 'react-native';
 import { Star } from 'lucide-react-native';
 import { Text } from './type';
 import type { Kitchen } from '../lib/data';
@@ -40,7 +41,7 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, sus
   );
 }
 
-export function KitchenCard({ kitchen, width, radius, open, suspended }: {
+export const KitchenCard = memo(function KitchenCard({ kitchen, width, radius, open, suspended }: {
   kitchen: Kitchen;
   width: number;
   radius: number;
@@ -48,10 +49,9 @@ export function KitchenCard({ kitchen, width, radius, open, suspended }: {
   suspended: boolean;
 }) {
   const rating = restaurantRating(kitchen);
-  return <View style={[styles.card, { width, borderRadius: radius }]}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
-      style={({ pressed }) => pressed && styles.pressed}>
-      <ImageBackground source={restaurantPhoto(kitchen)} resizeMode="cover"
+  return <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
+      style={({ pressed }) => [styles.card, { width, borderRadius: radius }, pressed && styles.pressed]}>
+      <Image accessible={false} source={restaurantPhoto(kitchen)} resizeMode="cover"
         style={[styles.photo, { height: Math.min(300, Math.round(width * 9 / 16)) }]} />
       <View style={styles.caption}>
         <View style={styles.nameRow}>
@@ -63,12 +63,11 @@ export function KitchenCard({ kitchen, width, radius, open, suspended }: {
         </View>
         <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
       </View>
-    </Pressable>
-    {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>
+    {kitchen.pickupSlots !== undefined && <View pointerEvents="none" style={styles.countdown}>
       <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} suspended={suspended} />
     </View>}
-  </View>;
-}
+  </Pressable>;
+});
 
 const styles = StyleSheet.create({
   section: { marginBottom: 22, minWidth: 0 },
