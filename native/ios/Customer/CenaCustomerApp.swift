@@ -482,7 +482,7 @@ struct CustomerHome: View {
         .navigationTitle("Payment")
         .sheet(isPresented: $checkoutSafariPresented, onDismiss: checkoutSafariDidDismiss) {
             if let checkoutSafariURL {
-                StripeCheckoutSafari(url: checkoutSafariURL)
+                StripeCheckoutSafari(url: checkoutSafariURL, isPresented: $checkoutSafariPresented)
                     .accessibilityLabel("Secure Stripe Checkout")
                     .ignoresSafeArea()
                     .presentationDetents([.large])
@@ -1210,15 +1210,35 @@ struct CustomerHome: View {
 
 private struct StripeCheckoutSafari: UIViewControllerRepresentable {
     let url: URL
+    @Binding var isPresented: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
 
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let controller = SFSafariViewController(url: url)
         controller.dismissButtonStyle = .close
         controller.preferredControlTintColor = UIColor(red: 93.0 / 255.0, green: 16.0 / 255.0, blue: 10.0 / 255.0, alpha: 1)
+        controller.delegate = context.coordinator
         return controller
     }
 
-    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {
+        controller.delegate = context.coordinator
+    }
+
+    @MainActor final class Coordinator: NSObject, SFSafariViewControllerDelegate {
+        @Binding private var isPresented: Bool
+
+        init(isPresented: Binding<Bool>) {
+            _isPresented = isPresented
+        }
+
+        func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
+            isPresented = false
+        }
+    }
 }
 
 private var isoNow: String { ISO8601DateFormatter().string(from: Date()) }
