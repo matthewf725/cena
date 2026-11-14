@@ -40,6 +40,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
   let customerPage;
   let merchantPage;
   const report = { browser: browserName, runId, promoCode, stages: [] };
+  const mark = stage => { report.stages.push(stage); console.log(`[${browserName}] ${stage}`); };
 
   const serviceHeaders = {
     apikey: serviceRoleKey,
@@ -179,10 +180,42 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
 
   async function sendAndVerifyAccountOtp(page, email, codeInput, verifyButton) {
     await page.getByPlaceholder('Add an email address').fill(email);
+    const sendResponsePromise = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/v1/otp') && response.request().method() === 'POST', { timeout: 30000 });
     await page.getByRole('button', { name: 'Email me a sign-in code', exact: true }).click();
+    const sendResponse = await sendResponsePromise;
+    mark(`account OTP send returned ${sendResponse.status()}`);
+    assert.ok(sendResponse.ok(), 'Local Supabase should accept the OTP request');
     const code = await readOtp(email);
     await page.getByPlaceholder(codeInput).fill(code);
+    const verifyResponsePromise = page.waitForResponse(response => {
+      const pathname = new URL(response.url()).pathname;
+      return (pathname.endsWith('/auth/v1/verify') || pathname.endsWith('/auth/v1/token')) && response.request().method() === 'POST';
+    }, { timeout: 30000 });
     await page.getByRole('button', { name: verifyButton, exact: true }).click();
+    const verifyResponse = await verifyResponsePromise;
+    mark(`account OTP verify returned ${verifyResponse.status()}`);
+    assert.ok(verifyResponse.ok(), 'Local Supabase OTP verification should succeed');
+    await page.waitForFunction(() => {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        try { if (JSON.parse(localStorage.getItem(localStorage.key(index)) || 'null')?.access_token) return true; }
+        catch { /* unrelated local storage entry */ }
+      }
+      return false;
+    }, undefined, { timeout: 15000 });
+    mark('Supabase browser session persisted after OTP');
+  }
+
+  async function openAccountIfClosed(page) {
+    const nameField = page.getByPlaceholder('Add your name');
+    const fieldCount = await nameField.count();
+    mark(`profile name field count before Account reopen: ${fieldCount}`);
+    if (fieldCount) return;
+    const openButton = page.getByRole('button', { name: 'Open account', exact: true });
+    await openButton.waitFor({ state: 'visible', timeout: 30000 });
+    mark('Open account header control visible after hydration');
+    await openButton.click();
+    mark('clicked Open account to show profile');
+    await nameField.waitFor({ timeout: 15000 });
   }
 
   async function queryRows(table, select, filters) {
@@ -235,7 +268,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const fixture = await createMerchantFixture();
     fixtureRestaurantId = fixture.restaurant.id;
     report.restaurant = fixture.restaurant.name;
-    report.stages.push('local synthetic merchant fixture provisioned');
+    mark('local synthetic merchant fixture provisioned');
 
     merchantPage = await context.newPage();
     await createRoutes(merchantPage);
@@ -271,15 +304,14 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       return result;
     }, { origin: apiOrigin, token: merchantToken, restaurantId: fixture.restaurant.id });
     console.log(`Browser Go API probe: ${JSON.stringify(browserApiProbe)}`);
-    report.stages.push('restaurant owner signed in');
+    mark('restaurant owner signed in');
     await merchantPage.getByText('Manage', { exact: true }).click();
-    await merchantPage.getByText('Payments & payouts', { exact: true }).scrollIntoViewIfNeeded();
-    report.stages.push('restaurant Manage screen opened');
+    await merchantPage.getByText('Payments & payouts', { exact: true }).waitFor({ state: 'visible', timeout: 15000 });
+    mark('restaurant Manage screen opened');
 
     const readyText = merchantPage.getByText('Stripe connected · ready for online orders', { exact: true });
     if (!(await readyText.count())) {
       const connect = merchantPage.getByRole('button', { name: 'Connect Stripe', exact: true });
-      await connect.scrollIntoViewIfNeeded();
       await connect.click();
       const externalConnect = await waitForExternalPage(context, 'connect.stripe.com', 12000);
       if (externalConnect) {
@@ -289,9 +321,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     }
     await readyText.waitFor({ timeout: 30000 });
     await merchantPage.getByText(/Cena fee: \$1\.75 per paid order\./).waitFor({ timeout: 15000 });
-    report.stages.push('merchant payment readiness displayed with $1.75 fee');
+    mark('merchant payment readiness displayed with $1.75 fee');
 
-    await merchantPage.getByText('Promo codes', { exact: true }).scrollIntoViewIfNeeded();
     await merchantPage.getByRole('button', { name: '+ Add code', exact: true }).click();
     await merchantPage.getByLabel('CODE (3–32 CHARACTERS)').fill(promoCode);
     await merchantPage.getByLabel('DISCOUNT PERCENT (1–90)').fill('10');
@@ -310,28 +341,16 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
       promo = await queryPromo(fixture.restaurant.id);
     }
     assert.equal(promo.active, true, 'The saved promo must be enabled before customer quote tests');
-    report.stages.push('merchant created one-use 10% promotion in the app');
+    mark('merchant created one-use 10% promotion in the app');
 
-    const customerProfileEmail = `cena-e2e-profile-${runId}-${browserName}@cena.test`;
     customerPage = await context.newPage();
     await createRoutes(customerPage);
     await customerPage.goto(customerOrigin, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await customerPage.getByRole('button', { name: 'Open account', exact: true }).click();
-    await sendAndVerifyAccountOtp(customerPage, customerProfileEmail, '6-digit code', 'Verify and load profile');
-    await customerPage.getByPlaceholder('Add your name').fill(`E2E ${browserName} Customer`);
-    await customerPage.getByPlaceholder('Add a phone number').fill('5105550147');
-    await customerPage.getByRole('button', { name: 'Save profile and privacy choice', exact: true }).click();
-    await customerPage.getByText('Your profile and privacy choice are saved.', { exact: true }).waitFor({ timeout: 20000 });
-    await customerPage.reload({ waitUntil: 'domcontentloaded' });
-    await customerPage.getByPlaceholder('Add your name').waitFor();
-    assert.equal(await customerPage.getByPlaceholder('Add your name').inputValue(), `E2E ${browserName} Customer`);
-    const profileRows = await queryRows('profiles', 'display_name,phone', { display_name: `eq.E2E ${browserName} Customer`, phone: 'eq.5105550147' });
-    assert.ok(profileRows.length > 0, 'Saved profile should be backed by local Supabase');
-    await customerPage.getByRole('button', { name: 'Sign out', exact: true }).click();
-    report.stages.push('customer OTP profile save and reload persistence passed');
-
     await customerPage.getByRole('tab', { name: 'Home', exact: true }).click();
-    await customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true }).waitFor({ timeout: 45000 });
+    const restaurantCard = customerPage.getByRole('button', { name: `View ${fixture.restaurant.name} menu`, exact: true });
+    await restaurantCard.waitFor({ timeout: 45000 });
+    await restaurantCard.click();
+    await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
     await customerPage.getByRole('button', { name: `Add ${mealName} to bag`, exact: true }).click();
     await customerPage.reload({ waitUntil: 'domcontentloaded' });
@@ -339,7 +358,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).click();
     await customerPage.getByRole('button', { name: `Increase ${mealName} quantity`, exact: true }).waitFor();
     await customerPage.getByText('$33.90', { exact: true }).waitFor();
-    report.stages.push('guest browse, bag badge, quantity, and reload persistence passed');
+    mark('guest browse, bag badge, quantity, and reload persistence passed');
 
     await startPickupFlow(customerPage);
     const checkoutEmail = `cena-e2e-order-${runId}-${browserName}@cena.test`;
@@ -358,8 +377,8 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.equal(noCodeQuote.subtotal_cents, 1695 * 2);
     assert.equal(noCodeQuote.discount_cents, 0);
     assert.equal(noCodeQuote.amount_cents, 1695 * 2);
-    report.stages.push('checkout customer email OTP passed');
-    report.stages.push('no-code Go quote returned the undiscounted exact subtotal');
+    mark('checkout customer email OTP passed');
+    mark('no-code Go quote returned the undiscounted exact subtotal');
 
     await customerPage.getByLabel('Restaurant discount code').fill('INVALIDQA');
     const invalidQuotePromise = customerPage.waitForResponse(response => new URL(response.url()).pathname.endsWith('/v1/checkout/quote'), { timeout: 30000 });
@@ -383,7 +402,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.equal(quote.promo_code, promoCode);
     await customerPage.getByText(`−$${(expectedDiscountCents / 100).toFixed(2)}`, { exact: true }).waitFor();
     await customerPage.getByText(`$${(expectedAmountCents / 100).toFixed(2)}`, { exact: true }).last().waitFor();
-    report.stages.push('invalid promo rejected and 10% quote matched exact cents');
+    mark('invalid promo rejected and 10% quote matched exact cents');
 
     async function createCheckout() {
       const responsePromise = customerPage.waitForResponse(response => {
@@ -435,7 +454,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     assert.ok(replayResponse.ok(), 'Idempotent retry should resume the same Checkout Session');
     assert.equal((await replayResponse.json()).order_id, orderId);
     assert.equal(fake.audit.filter(entry => entry.kind === 'checkout_session' && entry.orderId === orderId).length, sessionCountBeforeReplay);
-    report.stages.push('pending status, idempotent replay, and merchant invisibility passed');
+    mark('pending status, idempotent replay, and merchant invisibility passed');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
     await customerPage.getByText('Finish secure payment', { exact: true }).waitFor({ timeout: 30000 });
@@ -448,7 +467,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     const releasedPromo = await queryPromo(fixture.restaurant.id);
     assert.equal(releasedPromo.reserved_redemptions, 0, 'Cancelled checkout should release its reserved code');
     assert.equal(releasedPromo.redeemed_count, 0);
-    report.stages.push('customer cancelled a pending checkout; provider expiry released promo reservation');
+    mark('customer cancelled a pending checkout; provider expiry released promo reservation');
 
     customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
     await customerPage.getByRole('tab', { name: 'Bag, 2 items', exact: true }).waitFor({ timeout: 30000 });
@@ -504,7 +523,7 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click();
     await customerPage.getByText('Paid · awaiting kitchen', { exact: true }).waitFor({ timeout: 30000 });
     await customerPage.getByText(`$${(expectedAmountCents / 100).toFixed(2)}`, { exact: true }).last().waitFor();
-    report.stages.push('fake Checkout form paid; signed Stripe webhook verified and promoted order to paid');
+    mark('fake Checkout form paid; signed Stripe webhook verified and promoted order to paid');
 
     const badCancel = await context.request.patch(`${apiOrigin}/v1/orders/${paidOrderId}/status`, {
       headers: { authorization: `Bearer ${merchantToken}`, 'content-type': 'application/json' },
@@ -535,15 +554,37 @@ export async function runBrowserFlow({ browserName, supabase, serviceRoleKey, ap
     await waitUntil(async () => (await queryOrder(paidOrderId)).payment_status === 'refunded');
     assert.equal((await queryOrder(paidOrderId)).status, 'cancelled');
     assert.equal(fake.audit.filter(entry => entry.kind === 'refund').length, 1);
-    report.stages.push('merchant accepted/prepared/readied order; unsafe cancel rejected; refund confirmation guard and fake refund passed');
+    mark('merchant accepted/prepared/readied order; unsafe cancel rejected; refund confirmation guard and fake refund passed');
 
-    customerPage = await getLocalAppPage(8081, customerPage, customerOrigin);
+    customerPage = await getLocalAppPage(new URL(customerOrigin).port, customerPage, customerOrigin);
     await customerPage.getByRole('tab', { name: 'Orders', exact: true }).click().catch(() => {});
     await customerPage.getByText('Refunded', { exact: true }).waitFor({ timeout: 30000 });
     const customerHistory = await queryRows('orders', 'id,payment_status,status', { id: `eq.${paidOrderId}`, user_id: `eq.${customerUserId}` });
     assert.equal(customerHistory.length, 1);
     await customerPage.screenshot({ path: `${artifactsDir}/${browserName}-customer-refunded.png`, fullPage: true });
     await merchantPage.screenshot({ path: `${artifactsDir}/${browserName}-restaurant-refunded.png`, fullPage: true });
+
+    await customerPage.getByRole('button', { name: 'Open account', exact: true }).click();
+    await customerPage.getByRole('button', { name: 'Sign out', exact: true }).click();
+    mark('checkout customer signed out before separate profile persistence scenario');
+    const customerProfileEmail = `cena-e2e-profile-${runId}-${browserName}@cena.test`;
+    await sendAndVerifyAccountOtp(customerPage, customerProfileEmail, '6-digit code', 'Verify and load profile');
+    mark('profile OTP verified; checking profile editor visibility');
+    await openAccountIfClosed(customerPage);
+    mark('profile editor visible after OTP');
+    await customerPage.getByPlaceholder('Add your name').fill(`E2E ${browserName} Customer`);
+    await customerPage.getByPlaceholder('Add a phone number').fill('5105550147');
+    await customerPage.getByRole('button', { name: 'Save profile and privacy choice', exact: true }).click();
+    await customerPage.getByText('Your profile and privacy choice are saved.', { exact: true }).waitFor({ timeout: 20000 });
+    mark('profile save confirmed before reload');
+    mark('reloading customer app for profile persistence');
+    await customerPage.reload({ waitUntil: 'domcontentloaded' });
+    await openAccountIfClosed(customerPage);
+    mark('profile editor reopened after reload');
+    assert.equal(await customerPage.getByPlaceholder('Add your name').inputValue(), `E2E ${browserName} Customer`);
+    const profileRows = await queryRows('profiles', 'display_name,phone', { display_name: `eq.E2E ${browserName} Customer`, phone: 'eq.5105550147' });
+    assert.ok(profileRows.length > 0, 'Saved profile should be backed by local Supabase');
+    mark('customer OTP profile save and reload persistence passed');
 
     const checkoutAudit = fake.audit.find(entry => entry.kind === 'checkout_session' && entry.orderId === paidOrderId);
     const webhookAudit = fake.audit.find(entry => entry.kind === 'webhook' && entry.orderId === paidOrderId && entry.status === 200);
