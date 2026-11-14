@@ -297,9 +297,18 @@ func (s *Server) startCheckout(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "payment session did not match this order"})
 			return
 		}
-		if session.Status == "expired" {
-			_, _ = s.cancelUnpaidSession(r.Context(), reservation.OrderID, session.ID, reservation.StripeAccountID)
-			writeJSON(w, http.StatusConflict, map[string]string{"order_id": reservation.OrderID, "status": "expired"})
+		if session.Status == "expired" && session.PaymentStatus == "unpaid" {
+			result, err := s.cancelUnpaidSession(r.Context(), reservation.OrderID, session.ID, reservation.StripeAccountID)
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Stripe expired this session but order cleanup is delayed"})
+				return
+			}
+			state := normalizeCheckoutStatus(result)
+			if state == "paid" {
+				writeCheckoutReservation(w, http.StatusOK, reservation, state, "")
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]string{"order_id": reservation.OrderID, "status": state})
 			return
 		}
 		if session.Status == "complete" && session.PaymentStatus == "paid" {
@@ -523,7 +532,7 @@ func (s *Server) checkoutStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "paid"})
-	case session.Status == "expired":
+	case session.Status == "expired" && session.PaymentStatus == "unpaid":
 		result, err := s.cancelUnpaidSession(r.Context(), checkout.OrderID, session.ID, checkout.StripeAccountID)
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
@@ -593,7 +602,7 @@ func (s *Server) cancelCheckout(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "paid"})
 		return
 	}
-	if session.Status != "expired" {
+	if session.Status != "expired" || session.PaymentStatus != "unpaid" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Stripe has not confirmed cancellation; keep this checkout pending"})
 		return
 	}
@@ -631,6 +640,9 @@ func (s *Server) retrieveCheckoutSession(ctx context.Context, sessionID, account
 	var session checkoutSession
 	if err := json.Unmarshal(body, &session); err != nil {
 		return checkoutSession{}, err
+	}
+	if session.ID != sessionID {
+		return checkoutSession{}, errors.New("Stripe returned a different checkout session")
 	}
 	return session, nil
 }

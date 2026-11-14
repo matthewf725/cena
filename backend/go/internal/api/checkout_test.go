@@ -189,6 +189,73 @@ func TestCheckoutAvailabilityUsesPublicErrorCodes(t *testing.T) {
 	}
 }
 
+func TestExpiredCheckoutReplayWaitsForAuthoritativeRelease(t *testing.T) {
+	const id = "550e8400-e29b-41d4-a716-446655440000"
+	expires := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	reservation := checkoutReservation{
+		OrderID: id, SessionID: "cs_test_123", StripeAccountID: "acct_test123",
+		AmountCents: 2500, SubtotalCents: 2500, Currency: "usd",
+		ApplicationFeeCents: 175, ExpiresAt: expires, Status: "pending",
+	}
+	for _, tc := range []struct {
+		name, returnedID, paymentStatus, dbState, wantState string
+		releaseHTTP, wantHTTP                               int
+	}{
+		{"released", reservation.SessionID, "unpaid", "cancelled", "expired", http.StatusOK, http.StatusConflict},
+		{"database still unavailable", reservation.SessionID, "unpaid", "", "", http.StatusServiceUnavailable, http.StatusBadGateway},
+		{"refund already committed", reservation.SessionID, "unpaid", "refunded", "refunded", http.StatusOK, http.StatusConflict},
+		{"payment already committed", reservation.SessionID, "unpaid", "paid", "paid", http.StatusOK, http.StatusOK},
+		{"unexpected provider session", "cs_test_other", "unpaid", "", "", 0, http.StatusBadGateway},
+		{"contradictory provider state", reservation.SessionID, "paid", "", "pending", 0, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			released := false
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Path {
+				case "/auth/v1/user":
+					return jsonResponse(http.StatusOK, `{"id":"`+id+`"}`), nil
+				case "/rest/v1/rpc/reserve_checkout_order":
+					out, _ := json.Marshal(reservation)
+					return jsonResponse(http.StatusOK, string(out)), nil
+				case "/v1/checkout/sessions/cs_test_123":
+					session := checkoutSession{
+						ID: tc.returnedID, Status: "expired", PaymentStatus: tc.paymentStatus,
+						AmountTotal: 2500, Currency: "usd", ClientReferenceID: id, ExpiresAt: expires.Unix(),
+						Metadata:           map[string]string{"order_id": id, "cena_order_id": id, "application_fee_cents": "175"},
+						PaymentMethodTypes: []string{"card"},
+					}
+					out, _ := json.Marshal(session)
+					return jsonResponse(http.StatusOK, string(out)), nil
+				case "/rest/v1/rpc/cancel_checkout_if_unpaid":
+					released = true
+					if tc.releaseHTTP == 0 {
+						t.Fatal("unexpected reservation release")
+					}
+					return jsonResponse(tc.releaseHTTP, strconv.Quote(tc.dbState)), nil
+				default:
+					t.Fatalf("unexpected endpoint %s %s", r.Method, r.URL)
+					return nil, nil
+				}
+			})}
+			handler := New(Config{
+				SupabaseURL: "https://supabase.test", SupabaseAnonKey: "anon", SupabaseServiceRoleKey: "service-role",
+				StripeSecretKey: "sk_test_fake", StripeWebhookSecret: "whsec_fake", WebBaseURL: "https://cena.example",
+				Client: client, StripeClient: client,
+			})
+			body := `{"p_restaurant_id":"` + id + `","p_slot_id":"` + id + `","p_idempotency_key":"checkout-12345678","p_pickup_mode":"counter","p_items":[{"item_id":"` + id + `","quantity":1}],"expected_amount_cents":2500}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/checkout", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer user-jwt")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			var response struct{ Status string }
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != tc.wantHTTP ||
+				response.Status != tc.wantState || released != (tc.releaseHTTP != 0) {
+				t.Fatalf("status %d body %s attempted release %t", rec.Code, rec.Body.String(), released)
+			}
+		})
+	}
+}
+
 func readBody(r *http.Request) string { b, _ := io.ReadAll(r.Body); return string(b) }
 func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
