@@ -1088,18 +1088,27 @@ struct CustomerHome: View {
             ])
             guard quote["restaurant_id"] as? String == str(restaurant["id"]),
                   quote["slot_id"] as? String == str(slot["id"]),
-                  (quote["currency"] as? String)?.lowercased() == "usd",
-                  int(quote["subtotal_cents"]) >= 0,
-                  int(quote["discount_cents"]) >= 0,
-                  int(quote["amount_cents"]) >= 0 else { throw CenaBackendError.invalidResponse }
+                  quote["currency"] as? String == "usd",
+                  let subtotal = quote["subtotal_cents"] as? Int, subtotal >= 0,
+                  let discount = quote["discount_cents"] as? Int, discount >= 0, discount <= subtotal,
+                  let amount = quote["amount_cents"] as? Int, amount >= 0, amount == subtotal - discount else {
+                throw CenaBackendError.server("Cena returned a quote that does not match this restaurant, pickup time, or total. Request a new quote.")
+            }
+            if code.isEmpty {
+                guard quote["promo_code"] is NSNull, discount == 0, quote["discount_percent"] is NSNull else {
+                    throw CenaBackendError.server("Cena returned an unexpected promotion. Request a new quote.")
+                }
+            } else {
+                guard quote["promo_code"] as? String == code, discount > 0,
+                      let percent = quote["discount_percent"] as? Int, (1...90).contains(percent) else {
+                    throw CenaBackendError.server("Cena returned a quote that does not match the requested promo code. Check the code and request a new quote.")
+                }
+            }
             guard fingerprint == currentQuoteFingerprint else { return }
-            if let accepted = quote["promo_code"] as? String, !accepted.isEmpty {
+            if !code.isEmpty {
                 checkoutQuote = quote
                 quoteFingerprint = fingerprint
-                quoteMessage = "Cena applied \(accepted). The final price will be checked again when you pay."
-            } else if !code.isEmpty {
-                checkoutQuote = nil
-                quoteMessage = "Cena returned a quote without a promo discount. Check the code and try again."
+                quoteMessage = "Cena applied \(code). The final price will be checked again when you pay."
             } else {
                 checkoutQuote = quote
                 quoteFingerprint = fingerprint
