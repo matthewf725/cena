@@ -6,6 +6,7 @@ import type { Kitchen } from '../lib/data';
 
 export function PickupCountdown({ slots, timezone, suspended = false, large = false }: { slots: Kitchen['pickupSlots']; timezone?: string; suspended?: boolean; large?: boolean }) {
   const [now, setNow] = useState(Date.now);
+  const [rowWidth, setRowWidth] = useState(0);
   const day = useMemo(() => {
     try {
       return new Intl.DateTimeFormat('en-US', { timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -41,11 +42,11 @@ export function PickupCountdown({ slots, timezone, suspended = false, large = fa
   const clock = [hours, minutes, seconds % 60].map(n => String(n).padStart(2, '0')).join(':');
 
   return (
-    <View style={[styles.row, large && styles.rowLarge]}>
+    <View onLayout={event => setRowWidth(event.nativeEvent.layout.width)} style={[styles.row, large && styles.rowLarge]}>
       <View style={styles.clock} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <Clock3 size={large ? 19 : 16} color={green} />
       </View>
-      <Text style={[styles.label, large && styles.labelLarge]}>Order cutoff for pickup today</Text>
+      <Text numberOfLines={1} accessibilityLabel="Order cutoff for pickup today" style={[styles.label, large && styles.labelLarge]}>{!large && rowWidth > 0 && rowWidth < 300 ? 'Pickup cutoff today' : 'Order cutoff for pickup today'}</Text>
       <Text style={[styles.counter, large && styles.counterLarge]} accessibilityRole="timer" accessibilityLabel={`${hours} hours, ${minutes} minutes to order`}>
         {clock}
       </Text>

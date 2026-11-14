@@ -299,8 +299,8 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   </View> : null;
   const content = (
     <>
-      {filterControls}
       {promoCarousel}
+      {filterControls}
       {resultsMode ? filteredContent : page && (
         <>
           {page.recents.length > 0

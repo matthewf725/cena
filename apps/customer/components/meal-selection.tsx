@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { Animated, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Animated, BackHandler, Easing, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Check, ChevronDown, Clock3, Minus, Plus, X } from 'lucide-react-native';
 import { normalizeMealSelections, type Meal, type MealOptionGroup, type MealSelections } from '../lib/data';
 import { Text } from './type';
@@ -16,6 +16,7 @@ type Props = {
   equipment?: string[];
   initialQuantity?: number;
   initialSelections?: MealSelections;
+  returnFocusTo?: HTMLElement | null;
 };
 
 function validInitialSelections(groups: MealOptionGroup[], input: MealSelections = {}): MealSelections {
@@ -26,7 +27,7 @@ function validInitialSelections(groups: MealOptionGroup[], input: MealSelections
   }));
 }
 
-export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomInset, topInset=0, equipment, initialQuantity=1, initialSelections={} }: Props) {
+export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomInset, topInset=0, equipment, initialQuantity=1, initialSelections={}, returnFocusTo }: Props) {
   const { width, height } = useWindowDimensions();
   const scrollRef = useRef<ScrollView>(null);
   const groupOffsets = useRef<Record<string, number>>({});
@@ -34,19 +35,20 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   const [selections, setSelections] = useState<Record<string, string[]>>(() => validInitialSelections(groups, initialSelections));
   const [invalidGroupId, setInvalidGroupId] = useState<string|null>(null);
   const [limitMessage, setLimitMessage] = useState('');
-  const [sheetHeight, setSheetHeight] = useState(0);
+  const sheetHeight = useRef(0);
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const preparationProgress = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(reduced ? 0 : 36)).current;
   const scrimOpacity = useRef(new Animated.Value(1)).current;
   const closing = useRef(false);
   const dragHandle = useRef<ComponentRef<typeof View>>(null);
+  const sheetRef = useRef<ComponentRef<typeof View>>(null);
+  const closeButton = useRef<ComponentRef<typeof Pressable>>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const radius = 20 + Math.max(0, Math.min(8, (390 - width) * 0.08));
   // Dynamic Island iPhones already include clearance below the island in the top safe area.
   const sheetTop = Platform.OS === 'ios' && topInset >= 54 ? topInset : Math.max(28, topInset + 12);
-  const nativeMotion = Platform.OS !== 'web';
   const hasEquipment = equipment !== undefined;
   const needsEquipment = Boolean(meal.equipment && hasEquipment
     && !equipment.some(item => item.trim().toLowerCase() === meal.equipment!.trim().toLowerCase()));
@@ -59,8 +61,8 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       return;
     }
     Animated.parallel([
-      Animated.timing(translateY, { toValue: (sheetHeight || height - sheetTop) + 8, duration: 190, useNativeDriver: nativeMotion }),
-      Animated.timing(scrimOpacity, { toValue: 0, duration: 170, useNativeDriver: nativeMotion }),
+      Animated.timing(translateY, { toValue: (sheetHeight.current || height - sheetTop) + 8, duration: 190, useNativeDriver: false }),
+      Animated.timing(scrimOpacity, { toValue: 0, duration: 170, useNativeDriver: false }),
     ]).start(({ finished }) => { if (finished) onCloseRef.current(); });
   }
 
@@ -72,9 +74,11 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
     onPanResponderMove: (_, gesture) => { if(!closing.current)translateY.setValue(Math.max(0,gesture.dy)); },
     onPanResponderRelease: (_, gesture) => {
       if (gesture.dy > 110 || (gesture.dy > 18 && gesture.vy > 0.8)) closeGesture.current();
-      else Animated.spring(translateY, { toValue: 0, useNativeDriver: nativeMotion, speed: 22, bounciness: 3 }).start();
+      else Animated.spring(translateY, { toValue: 0, useNativeDriver: false, speed: 22, bounciness: 3 }).start();
     },
-    onPanResponderTerminate: () => Animated.spring(translateY, { toValue: 0, useNativeDriver: nativeMotion, speed: 22, bounciness: 3 }).start(),
+    onPanResponderTerminate: () => {
+      if (!closing.current) Animated.spring(translateY, { toValue: 0, useNativeDriver: false, speed: 22, bounciness: 3 }).start();
+    },
   })).current;
 
   useEffect(() => {
@@ -111,12 +115,39 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   }, [reduced,translateY]);
 
   useEffect(() => {
-    closing.current = false;
-    translateY.setValue(0);
-    scrimOpacity.setValue(1);
-    setPreparationExpanded(false);
-    preparationProgress.setValue(0);
-  }, [meal.id, preparationProgress, scrimOpacity, translateY]);
+    if (reduced) { translateY.setValue(0); return; }
+    const opening = Animated.timing(translateY, { toValue: 0, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+    opening.start();
+    return () => opening.stop();
+  }, [reduced, translateY]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const back = BackHandler.addEventListener('hardwareBackPress', () => { closeGesture.current(); return true; });
+      return () => back.remove();
+    }
+    if (Platform.OS !== 'web') return;
+    const previous = returnFocusTo;
+    const focus = requestAnimationFrame(() => closeButton.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeGesture.current(); return; }
+      if (event.key !== 'Tab') return;
+      const sheet = sheetRef.current as unknown as HTMLElement | null;
+      const controls = sheet?.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"]):not([aria-disabled="true"])');
+      if (!controls?.length) return;
+      const first = controls[0], last = controls[controls.length - 1];
+      if (!sheet?.contains(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      cancelAnimationFrame(focus);
+      document.removeEventListener('keydown', onKeyDown);
+      if (previous?.isConnected) requestAnimationFrame(() => previous?.focus());
+    };
+  }, [returnFocusTo]);
 
   function togglePreparation() {
     const expanded = !preparationExpanded;
@@ -167,18 +198,18 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
     onAdd(quantity, normalized);
   }
 
-  return <Modal visible transparent statusBarTranslucent navigationBarTranslucent animationType={reduced?'none':'fade'} onRequestClose={closeAnimated}>
-    <View style={styles.overlay}>
+  return <View style={[styles.overlay, { top: -topInset }]}>
     <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]}>
       <Pressable accessible={false} aria-hidden onPress={closeAnimated} style={StyleSheet.absoluteFillObject} />
     </Animated.View>
     <View pointerEvents="box-none" style={[styles.sheetFrame, { top: sheetTop }]}>
-    <Animated.View onLayout={event => setSheetHeight(event.nativeEvent.layout.height)} accessibilityViewIsModal
+    <Animated.View ref={sheetRef} onLayout={event => { sheetHeight.current = event.nativeEvent.layout.height; }}
+      {...(Platform.OS === 'web' ? { role: 'dialog', 'aria-modal': true, 'aria-label': meal.name } as const : { accessibilityViewIsModal: true })}
       style={[styles.sheet, { borderTopLeftRadius: radius, borderTopRightRadius: radius, transform: [{ translateY }] }]}>
-      <View {...(Platform.OS==='web'?{}:panResponder.panHandlers)}>
-        <View ref={dragHandle} style={styles.dragRegion}><View style={styles.dragHandle}/></View>
+      <View>
+        <View ref={dragHandle} style={styles.dragRegion} {...(Platform.OS==='web'?{}:panResponder.panHandlers)}><View style={styles.dragHandle}/></View>
         <View style={styles.header}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close meal options" onPress={closeAnimated} style={styles.close} hitSlop={8}>
+          <Pressable ref={closeButton} accessibilityRole="button" accessibilityLabel="Close meal options" onPress={closeAnimated} style={styles.close} hitSlop={8}>
             <X size={21} color={maroon}/>
           </Pressable>
           <View style={styles.headerText}>
@@ -270,8 +301,7 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
       </View>
     </Animated.View>
     </View>
-    </View>
-  </Modal>;
+    </View>;
 }
 
 const maroon = '#5D100A';

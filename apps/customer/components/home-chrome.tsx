@@ -86,30 +86,26 @@ export function PickupAreaButton({ ref, label, compact, labelWidth, reduced, onP
   useEffect(() => {
     const toValue = compact ? 0 : 1;
     if (reduced) { progress.setValue(toValue); return; }
-    const animation = Animated.timing(progress, { toValue, duration: 240, useNativeDriver: Platform.OS !== 'web' });
+    const animation = Animated.timing(progress, { toValue, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: false });
     animation.start();
     return () => animation.stop();
   }, [compact, progress, reduced]);
 
-  const shift = progress.interpolate({ inputRange: [0, 1], outputRange: [width, 0] });
-  const backgroundScale = progress.interpolate({ inputRange: [0, 1], outputRange: [controlSize / (controlSize + width), 1] });
-  const backgroundShift = progress.interpolate({ inputRange: [0, 1], outputRange: [width / 2, 0] });
-  return <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={`Change pickup area, ${label}`}
-    onPress={onPress} style={({ pressed }) => [s.pickupTarget, { width: controlSize + width, opacity: pressed ? .8 : 1 }]}>
-    <View pointerEvents="none" style={s.pickupCircle} />
-    <Animated.View pointerEvents="none" style={[s.pickupBackground, {
-      opacity: progress.interpolate({ inputRange: [0, .25, 1], outputRange: [0, 1, 1] }),
-      transform: [{ translateX: backgroundShift }, { scaleX: backgroundScale }],
-    }]} />
-    <Animated.View pointerEvents="none" style={[s.pickupIcon, { transform: [{ translateX: shift }] }]}>
-      <MapPin size={19} color={maroon} aria-hidden />
+  const pillWidth = progress.interpolate({ inputRange: [0, 1], outputRange: [controlSize, controlSize + width] });
+  return <View pointerEvents="box-none" style={[s.pickupTarget, { width: controlSize + width }]}>
+    <Animated.View pointerEvents="box-none" style={[s.pickupPill, { width: pillWidth }]}>
+      <Pressable ref={ref} accessibilityRole="button" accessibilityLabel={`Change pickup area, ${label}`}
+        onPress={onPress} style={({ pressed }) => [s.pickupSurface, pressed && s.pickupPressed]}>
+        <View pointerEvents="none" style={s.pickupIcon}><MapPin size={19} color={maroon} aria-hidden /></View>
+        <Animated.View pointerEvents="none" aria-hidden style={[s.pickupLabelClip, { width, opacity: progress }]}>
+          <Text numberOfLines={1} style={s.pickupLabel}>{label}</Text>
+        </Animated.View>
+      </Pressable>
     </Animated.View>
-    <Animated.View pointerEvents="none" aria-hidden style={[s.pickupLabelClip, { width, opacity: progress }]}>
-      <Text numberOfLines={1} style={s.pickupLabel}>{label}</Text>
-    </Animated.View>
-    <Text aria-hidden numberOfLines={1} onLayout={event => setMeasuredLabelWidth(event.nativeEvent.layout.width)}
-      style={s.pickupMeasure}>{label}</Text>
-  </Pressable>;
+    <View pointerEvents="none" aria-hidden style={s.pickupMeasure}>
+      <Text style={s.pickupMeasureText} numberOfLines={1} onLayout={event => setMeasuredLabelWidth(event.nativeEvent.layout.width)}>{label}</Text>
+    </View>
+  </View>;
 }
 
 export function HomeSearch({ query, setQuery, bottom, radius, side, height, reduced }: {
@@ -221,12 +217,14 @@ const s = StyleSheet.create({
   pressTarget: { flexShrink: 0 },
   control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
   pickupTarget: { height: controlSize, flexShrink: 0, position: 'relative' },
-  pickupBackground: { ...StyleSheet.absoluteFillObject, backgroundColor: '#FFFFFF', borderRadius: controlSize / 2 },
-  pickupCircle: { position: 'absolute', right: 0, top: 0, width: controlSize, height: controlSize, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF' },
+  pickupPill: { position: 'absolute', right: 0, top: 0, height: controlSize },
+  pickupSurface: { flex: 1, borderRadius: controlSize / 2, backgroundColor: '#FFFFFF', overflow: 'hidden' },
+  pickupPressed: { backgroundColor: '#F4E8E2' },
   pickupIcon: { position: 'absolute', left: 12, top: 12.5 },
   pickupLabelClip: { position: 'absolute', left: 31, top: 12, overflow: 'hidden' },
   pickupLabel: { color: maroon, fontSize: 14, marginLeft: 7, lineHeight: 20 },
-  pickupMeasure: { position: 'absolute', opacity: 0, fontSize: 14, lineHeight: 20 },
+  pickupMeasure: { position: 'absolute', opacity: 0 },
+  pickupMeasureText: { fontSize: 14, lineHeight: 20 },
   searchDock: { position: 'absolute', alignItems: 'center', zIndex: 1 },
   search: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 1, borderColor: '#DCCAC1', backgroundColor: '#FFFFFF', paddingLeft: 13, paddingRight: 4, boxShadow: '0 4px 16px rgba(39,29,25,.10)' },
   searchFocused: { borderColor: '#A46E64' },
