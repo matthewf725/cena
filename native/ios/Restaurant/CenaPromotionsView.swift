@@ -53,7 +53,7 @@ struct CenaPromotionsView: View {
         List {
             if let loadError {
                 Section {
-                    Text(loadError).foregroundStyle(.secondary)
+                    Text(loadError).foregroundStyle(CenaStyle.clay)
                     Button("Retry") { Task { await load() } }
                 }
             } else if loading {
@@ -63,16 +63,16 @@ struct CenaPromotionsView: View {
                     Button("New promo code", systemImage: "plus") { editor = PromotionDraft() }
                 }
                 Section("Codes for this location") {
-                    if promotions.isEmpty { Text("No promo codes yet.").foregroundStyle(.secondary) }
+                    if promotions.isEmpty { Text("No promo codes yet.").foregroundStyle(CenaStyle.clay) }
                     ForEach(promotions) { promotion in
                         Button { editor = PromotionDraft(promotion) } label: {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(promotion.code).font(.headline).foregroundStyle(.primary)
+                                Text(promotion.code).font(.headline).foregroundStyle(CenaStyle.ink)
                                 Text("\(promotion.percent)% off · \(promotion.availability)")
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                                    .font(.subheadline).foregroundStyle(CenaStyle.clay)
                                 if let limit = promotion.limit {
                                     Text("\(promotion.used) of \(limit) used · \(promotion.held) reserved")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(.caption).foregroundStyle(CenaStyle.clay)
                                 }
                             }
                         }
@@ -82,6 +82,9 @@ struct CenaPromotionsView: View {
         }
         .navigationTitle("Promo codes")
         .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
+        .background(CenaStyle.cream)
+        .tint(CenaStyle.maroon)
         .task { await load() }
         .refreshable { await load() }
         .sheet(item: $editor) { draft in
@@ -159,10 +162,13 @@ private struct PromotionEditor: View {
                     Toggle("Accept this code", isOn: $draft.active)
                 }
                 if let errorMessage {
-                    Section { Text(errorMessage).foregroundStyle(.red).accessibilityAddTraits(.updatesFrequently) }
+                    Section { Text(errorMessage).foregroundStyle(CenaStyle.maroon).accessibilityAddTraits(.updatesFrequently) }
                 }
             }
             .disabled(saving)
+            .scrollContentBackground(.hidden)
+            .background(CenaStyle.cream)
+            .tint(CenaStyle.maroon)
             .navigationTitle(draft.isEditing ? "Edit promo code" : "New promo code")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

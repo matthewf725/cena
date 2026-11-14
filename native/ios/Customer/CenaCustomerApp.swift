@@ -813,9 +813,8 @@ struct CustomerHome: View {
             items = try await api.rows("catalog_items", query: "select=id,restaurant_id,name,description,price_cents,prepared_meal_total_cents,equipment,allergens,published_steps,image_key,category,prep_minutes&restaurant_id=eq.\(str(r["id"]))&active=eq.true&published_at=not.is.null&order=category.asc,name.asc")
             let all = try await api.rows("pickup_slots", query: "select=id,restaurant_id,starts_at,ends_at,cutoff_at,capacity,reserved_count,slot_item_inventory(slot_id,item_id,available_qty,reserved_qty)&restaurant_id=eq.\(str(r["id"]))&active=eq.true&starts_at=gt.\(isoNow)&cutoff_at=gt.\(isoNow)&order=starts_at.asc")
             let liveIDs = Set(items.map { str($0["id"]) })
-            let paymentMinimumCutoff = Date().addingTimeInterval(32 * 60)
             slots = all.filter { s in
-                guard let cutoff = timestamp(s["cutoff_at"]), cutoff >= paymentMinimumCutoff else { return false }
+                guard canStartPayment(s) else { return false }
                 return inventory(s).contains { liveIDs.contains(str($0["item_id"])) && int($0["available_qty"]) > int($0["reserved_qty"]) }
             }
             slot = slots.first
@@ -969,8 +968,8 @@ struct CustomerHome: View {
                 justSignedIn = true
             }
             guard profileUserID != nil else { throw CenaBackendError.server("Sign in again before starting payment.") }
-            guard let cutoff = timestamp(s["cutoff_at"]), cutoff.timeIntervalSinceNow >= 32 * 60 else {
-                throw CenaBackendError.server("This pickup cutoff is too close for secure payment. Choose another pickup window.")
+            guard canStartPayment(s) else {
+                throw CenaBackendError.server("Ordering has closed for this window. Choose another pickup time.")
             }
             if justSignedIn || quoteFingerprint != currentQuoteFingerprint {
                 await requestCheckoutQuote()
@@ -1045,6 +1044,11 @@ struct CustomerHome: View {
 }
 
 private var isoNow: String { ISO8601DateFormatter().string(from: Date()) }
+
+private func canStartPayment(_ slot: [String: Any], now: Date = .now) -> Bool {
+    guard let cutoff = timestamp(slot["cutoff_at"]), let start = timestamp(slot["starts_at"]) else { return false }
+    return cutoff > now && start > now.addingTimeInterval(32 * 60)
+}
 private func str(_ v: Any?) -> String { (v as? String) ?? "" }
 private func int(_ v: Any?) -> Int { (v as? Int) ?? ((v as? NSNumber)?.intValue ?? 0) }
 private func money(_ cents: Int) -> String { String(format: "%.2f", Double(cents) / 100) }

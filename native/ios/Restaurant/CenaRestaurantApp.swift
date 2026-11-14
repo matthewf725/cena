@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 @main struct CenaRestaurantApp: App {
-    var body: some Scene { WindowGroup { RestaurantHome().tint(CenaStyle.maroon) } }
+    var body: some Scene { WindowGroup { RestaurantHome().tint(CenaStyle.maroon).preferredColorScheme(.light) } }
 }
 
 struct RestaurantHome: View {
@@ -23,6 +23,7 @@ struct RestaurantHome: View {
     @State private var onboardingBusy = false
     @State private var refundOrderID: String?
     @State private var refundBusy = false
+    @State private var updatingOrderID: String?
     private var restaurantID: String { selectedRestaurant?["id"] as? String ?? "" }
     private var activeOrders: [[String: Any]] { orders.filter { !["completed", "cancelled"].contains(($0["status"] as? String ?? "").lowercased()) } }
 
@@ -63,26 +64,26 @@ struct RestaurantHome: View {
         Form {
             Section {
                 Text("Your kitchen,\nready for tonight.").font(.system(size: 32, weight: .bold, design: .serif)).foregroundStyle(CenaStyle.maroon)
-                Text("Restaurant team access uses your Cena account.").foregroundStyle(.secondary)
-                if !api.configured { Label("Supabase backend is not configured", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                Text("Restaurant team access uses your Cena account.").foregroundStyle(CenaStyle.clay)
+                if !api.configured { Label("Supabase backend is not configured", systemImage: "exclamationmark.triangle").foregroundStyle(CenaStyle.coral) }
             }
             Section("Team sign in") {
                 TextField("Email", text: $email).textInputAutocapitalization(.never).keyboardType(.emailAddress).textContentType(.emailAddress)
                 SecureField("Password", text: $password).textContentType(.password)
                 Button(busy ? "Signing in…" : "Sign in") { Task { await signIn() } }.disabled(busy || email.isEmpty || password.isEmpty || !api.configured)
             }
-        }.scrollContentBackground(.hidden)
+        }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
-    private var noRestaurant: some View { VStack(spacing: 12) { Image(systemName: "storefront").font(.largeTitle).foregroundStyle(CenaStyle.maroon); Text("No restaurant access").font(.title2.bold()); Text("This account is not assigned to a restaurant. Ask an owner to add your membership.").multilineTextAlignment(.center).foregroundStyle(.secondary); Button("Try again") { Task { await loadRestaurants() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28) }
+    private var noRestaurant: some View { VStack(spacing: 12) { Image(systemName: "storefront").font(.largeTitle).foregroundStyle(CenaStyle.maroon); Text("No restaurant access").font(.title2.bold()).foregroundStyle(CenaStyle.ink); Text("This account is not assigned to a restaurant. Ask an owner to add your membership.").multilineTextAlignment(.center).foregroundStyle(CenaStyle.clay); Button("Try again") { Task { await loadRestaurants() } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon) }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity).background(CenaStyle.cream) }
     private var restaurantPicker: some View {
-        List { Section("Your locations") { ForEach(Array(restaurants.enumerated()), id: \.offset) { _, r in Button { selectedRestaurant = r; Task { await loadWorkspace() } } label: { VStack(alignment: .leading) { Text(r["name"] as? String ?? "Restaurant").font(.headline).foregroundStyle(.primary); Text(r["address"] as? String ?? "").font(.subheadline).foregroundStyle(.secondary) }.padding(.vertical, 6) } } } }.scrollContentBackground(.hidden)
+        List { Section("Your locations") { ForEach(Array(restaurants.enumerated()), id: \.offset) { _, r in Button { selectedRestaurant = r; Task { await loadWorkspace() } } label: { VStack(alignment: .leading) { Text(r["name"] as? String ?? "Restaurant").font(.headline).foregroundStyle(CenaStyle.ink); Text(r["address"] as? String ?? "").font(.subheadline).foregroundStyle(CenaStyle.clay) }.padding(.vertical, 6) } } } }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
     private func workspace(_ restaurant: [String: Any]) -> some View {
         VStack(spacing: 0) {
             if selectedTab == "Orders" { ordersView }
             else if selectedTab == "Menu" { menuView }
             else { manageView(restaurant) }
-            HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Manage", icon: "slider.horizontal.3") }.padding(.vertical, 10).background(.white)
+            HStack { tab("Orders", icon: "tray.full"); tab("Menu", icon: "menucard"); tab("Manage", icon: "slider.horizontal.3") }.padding(.vertical, 10).background(CenaStyle.paper).overlay(alignment: .top) { Rectangle().fill(CenaStyle.rose).frame(height: 1) }
         }.task { await loadWorkspace() }.refreshable { await loadWorkspace() }
     }
     private var ordersView: some View {
@@ -94,9 +95,9 @@ struct RestaurantHome: View {
                 if orders.isEmpty { Text("No recent or upcoming pickup orders.").foregroundStyle(.secondary) }
                 ForEach(Array(orders.enumerated()), id: \.offset) { _, order in orderCard(order) }
             }
-        }.scrollContentBackground(.hidden)
-            .confirmationDialog("Refund this customer’s full payment?", isPresented: Binding(get: { refundOrderID != nil }, set: { if !$0 { refundOrderID = nil } }), titleVisibility: .visible) {
-                Button(refundBusy ? "Processing…" : "Refund full payment", role: .destructive) { Task { await refundPaidOrder() } }.disabled(refundBusy)
+        }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
+            .confirmationDialog("Refund this customer’s full payment?", isPresented: Binding(get: { refundOrderID != nil }, set: { if !$0 { refundOrderID = nil } }), titleVisibility: .visible, presenting: refundOrderID) { id in
+                Button(refundBusy ? "Processing…" : "Refund full payment", role: .destructive) { Task { await refundPaidOrder(id) } }.disabled(refundBusy)
                 Button("Keep order", role: .cancel) { refundOrderID = nil }
             } message: {
                 Text("Cena will request a full refund through Stripe. The order is cancelled only after Stripe confirms the refund. This cannot be undone.")
@@ -110,7 +111,14 @@ struct RestaurantHome: View {
             Text(items.map { "\($0["quantity"] as? Int ?? 1) × \($0["name_snapshot"] as? String ?? "Item")" }.joined(separator: " · ")).font(.subheadline)
             HStack { Text((order["pickup_mode"] as? String ?? "counter").capitalized + " pickup"); Spacer(); Text("$\(money(order["total_cents"] as? Int ?? order["subtotal_cents"] as? Int ?? 0))") }.font(.subheadline).foregroundStyle(.secondary)
             if let pickup = pickupLabel(order) { Text(pickup).font(.caption).foregroundStyle(.secondary) }
-            HStack {
+            ViewThatFits(in: .horizontal) {
+                HStack { orderActions(order, status: status) }
+                VStack(alignment: .leading, spacing: 8) { orderActions(order, status: status) }
+            }
+        }.padding(14).cenaCardBackground(CenaStyle.paper, outline: CenaStyle.rose).padding(.vertical, 5)
+    }
+    @ViewBuilder private func orderActions(_ order: [String: Any], status: String) -> some View {
+                let id = order["id"] as? String
                 if status == "placed" { action("Accept", id: order["id"] as? String, next: "accepted") }
                 else if status == "accepted" { action("Start preparing", id: order["id"] as? String, next: "preparing") }
                 else if status == "preparing" { action("Mark ready", id: order["id"] as? String, next: "ready") }
@@ -118,20 +126,20 @@ struct RestaurantHome: View {
                 if status == "placed", order["payment_method"] as? String != "stripe_checkout" {
                     action("Cancel", id: order["id"] as? String, next: "cancelled", outline: true)
                 } else if order["payment_method"] as? String == "stripe_checkout", order["payment_status"] as? String == "paid", !["completed", "cancelled"].contains(status) {
-                    Button("Refund payment") { refundOrderID = order["id"] as? String }.buttonStyle(.bordered).tint(.red).disabled(refundBusy)
+                    Button("Refund payment") { refundOrderID = id }.buttonStyle(.bordered).tint(.red).disabled(refundBusy || updatingOrderID == id)
                 } else if order["payment_method"] as? String == "stripe_checkout", order["payment_status"] as? String == "refunded" {
                     Label("Payment refunded", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.secondary)
                 } else if status == "placed", order["payment_method"] as? String == "stripe_checkout" {
                     Text("This online payment cannot be cancelled until its payment status is confirmed.").font(.caption).foregroundStyle(.secondary)
                 }
-            }
-        }.padding(14).cenaCardBackground(.white).padding(.vertical, 5)
     }
     @ViewBuilder private func action(_ title: String, id: String?, next: String, outline: Bool = false) -> some View {
         if outline {
-            Button(title) { guard let id else { return }; Task { await update(id, next) } }.buttonStyle(.bordered).tint(.gray)
+            Button(title) { guard let id else { return }; Task { await update(id, next) } }
+                .buttonStyle(.bordered).tint(CenaStyle.clay).disabled(updatingOrderID != nil || refundBusy)
         } else {
-            Button(title) { guard let id else { return }; Task { await update(id, next) } }.buttonStyle(.borderedProminent).tint(CenaStyle.maroon)
+            Button(title) { guard let id else { return }; Task { await update(id, next) } }
+                .buttonStyle(.borderedProminent).tint(CenaStyle.maroon).disabled(updatingOrderID != nil || refundBusy)
         }
     }
     private var menuView: some View {
@@ -148,20 +156,20 @@ struct RestaurantHome: View {
                 }
             }
             Section { Text("Menu editing and chef-step publishing are managed in the web/Expo restaurant console in this build.").font(.caption).foregroundStyle(.secondary) }
-        }.scrollContentBackground(.hidden)
+        }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
     private func manageView(_ r: [String: Any]) -> some View {
         Form {
-            Section("Location") { Text(r["name"] as? String ?? ""); Text(r["address"] as? String ?? "").foregroundStyle(.secondary) }
+            Section("Location") { Text(r["name"] as? String ?? "").foregroundStyle(CenaStyle.ink); Text(r["address"] as? String ?? "").foregroundStyle(CenaStyle.clay) }
             Section("Pickup") {
                 Toggle("Allow curbside pickup", isOn: Binding(get: { r["curbside_enabled"] as? Bool ?? false }, set: { value in Task { await setCurbside(value) } }))
-                Text("Customers pay securely in Cena. Use the order’s Refund payment action for online orders; Stripe confirmation is required before cancellation. Order status changes are recorded on the shared backend.").font(.caption).foregroundStyle(.secondary)
+                Text("Customers pay securely in Cena. Use the order’s Refund payment action for online orders; Stripe confirmation is required before cancellation. Order status changes are recorded on the shared backend.").font(.caption).foregroundStyle(CenaStyle.clay)
             }
             Section("Payments in Cena") {
                 if paymentStatus == "ready" {
                     Label("Stripe is connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
-                    Text(paymentStatus == "pending" ? "Stripe setup is not complete." : "Connect Stripe to accept secure in-Cena payments.").font(.subheadline).foregroundStyle(.secondary)
+                    Text(paymentStatus == "pending" ? "Stripe setup is not complete." : "Connect Stripe to accept secure in-Cena payments.").font(.subheadline).foregroundStyle(CenaStyle.clay)
                     Button(onboardingBusy ? "Opening Stripe…" : (paymentStatus == "pending" ? "Continue Stripe setup" : "Connect with Stripe")) { Task { await startStripeOnboarding() } }
                         .disabled(onboardingBusy || !api.paymentGatewayConfigured)
                     if !api.paymentGatewayConfigured { Text("Cena’s payment API is not configured.").font(.caption).foregroundStyle(.orange) }
@@ -173,8 +181,13 @@ struct RestaurantHome: View {
                     NavigationLink("Promo codes") { CenaPromotionsView(restaurantID: restaurantID) }
                 }
             }
+            Section("Pickup planning") {
+                NavigationLink("Pickup windows & inventory") {
+                    CenaPickupManagementView(restaurantID: restaurantID, restaurantTimezone: r["timezone"] as? String, catalogItems: catalog)
+                }
+            }
             Section("Location selection") { Button("Switch location") { selectedRestaurant = nil } }
-        }.scrollContentBackground(.hidden)
+        }.scrollContentBackground(.hidden).background(CenaStyle.cream).tint(CenaStyle.maroon)
     }
     private func tab(_ title: String, icon: String) -> some View { Button { selectedTab = title } label: { Label(title, systemImage: icon).frame(maxWidth: .infinity).foregroundStyle(selectedTab == title ? CenaStyle.maroon : .secondary) } }
     private func signIn() async {
@@ -184,7 +197,7 @@ struct RestaurantHome: View {
     private func loadRestaurants() async {
         guard api.configured, api.signedIn else { return }
         do {
-            let rows = try await api.rows("merchant_memberships", query: "select=role,restaurant:restaurants(id,name,address,curbside_enabled)&order=created_at.asc", authenticated: true)
+            let rows = try await api.rows("merchant_memberships", query: "select=role,restaurant:restaurants(id,name,address,timezone,curbside_enabled)&order=created_at.asc", authenticated: true)
             restaurants = rows.compactMap { row in
                 guard var restaurant = row["restaurant"] as? [String: Any] else { return nil }
                 restaurant["membership_role"] = row["role"]
@@ -205,11 +218,14 @@ struct RestaurantHome: View {
         } catch { notice = error.localizedDescription }
     }
     private func update(_ id: String, _ status: String) async {
+        guard updatingOrderID == nil, !refundBusy else { return }
+        updatingOrderID = id
+        defer { updatingOrderID = nil }
         do { try await api.updateOrder(id, status: status); await loadWorkspace() } catch { notice = error.localizedDescription }
     }
-    private func refundPaidOrder() async {
-        guard let id = refundOrderID,
-              let order = orders.first(where: { ($0["id"] as? String) == id }),
+    private func refundPaidOrder(_ id: String) async {
+        guard !refundBusy, updatingOrderID == nil else { return }
+        guard let order = orders.first(where: { ($0["id"] as? String) == id }),
               order["payment_method"] as? String == "stripe_checkout",
               order["payment_status"] as? String == "paid",
               !["completed", "cancelled"].contains((order["status"] as? String ?? "").lowercased()) else {

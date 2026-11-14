@@ -264,6 +264,9 @@ enum CenaBackendError: LocalizedError {
     func patch(_ table: String, query: String, body: [String: Any], authenticated: Bool = false) async throws -> Data {
         try await request("/rest/v1/\(table)?\(query)", method: "PATCH", body: body, authenticated: authenticated, prefer: "return=minimal")
     }
+    func insert(_ table: String, body: Any, authenticated: Bool = true) async throws -> Data {
+        try await request("/rest/v1/\(table)", method: "POST", body: body, authenticated: authenticated, prefer: "return=representation")
+    }
     func upsert(_ table: String, query: String, body: [String: Any], authenticated: Bool = true) async throws -> Data {
         try await request("/rest/v1/\(table)?\(query)", method: "POST", body: body, authenticated: authenticated, prefer: "resolution=merge-duplicates,return=minimal")
     }
