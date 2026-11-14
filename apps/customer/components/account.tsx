@@ -13,7 +13,7 @@ type Props = {
   displayName: string; setDisplayName: (value: string) => void;
 };
 
-const options = ['Oven', 'Stovetop', 'Toaster', 'Panini press'];
+const options = ['Oven', 'Stovetop', 'Microwave', 'Air fryer', 'Toaster', 'Panini press'];
 const localAnalyticsChoiceKey = 'cena.customer.analytics-consent-explicit.v1';
 const profileSessionUserKey = 'cena.customer.profile-session-user.v1';
 
@@ -123,7 +123,7 @@ export function Account(props: Props) {
 
   const locked = hydrating || busy;
 
-  return <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+  return <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
     <Text style={s.eyebrow}>YOUR CENA</Text><Text style={s.title}>A little about you.</Text>
     <View style={s.hero}><View style={s.avatar}><Text style={s.initial}>{props.displayName.trim().charAt(0).toUpperCase() || 'C'}</Text></View><View style={{flex:1}}><Text style={s.name}>{signedIn ? (props.displayName.trim() || 'Welcome back') : 'Welcome to Cena'}</Text><Text style={s.hint}>{signedIn ? props.email : 'Keep pickup details handy. Sign in to sync across devices.'}</Text></View><ChevronRight size={18} color={muted}/></View>
     {hydrating && <View style={s.loading}><ActivityIndicator color={maroon}/><Text style={s.hint}>Loading your saved profile…</Text></View>}
@@ -135,7 +135,6 @@ export function Account(props: Props) {
       {!codeSent ? <Pressable accessibilityRole="button" disabled={locked || !props.email.includes('@')} onPress={() => void requestCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Email me a sign-in code</Text>}</Pressable> : <><TextInput style={s.code} value={code} onChangeText={setCode} keyboardType="number-pad" maxLength={8} placeholder="6-digit code" placeholderTextColor={muted} editable={!locked}/><Pressable accessibilityRole="button" disabled={locked || code.trim().length<6} onPress={() => void verifyCode()} style={[s.primary,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>Verify and load profile</Text>}</Pressable><Pressable disabled={locked} onPress={() => void requestCode()}><Text style={s.link}>Send a new code</Text></Pressable></>}
     </View>}
     <Text style={s.section}>MAKE PICKUP EASIER</Text><View style={s.equipment}><View style={s.rowTitle}><Soup size={17} color={green}/><Text style={s.label}>Kitchen equipment</Text></View><Text style={s.desc}>We’ll flag meal kits that need something you don’t have.</Text><View style={s.chips}>{options.map(x=><Pressable key={x} disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.equipment.includes(x)}} onPress={()=>props.setEquipment(props.equipment.includes(x)?props.equipment.filter(y=>y!==x):[...props.equipment,x])} style={[s.chip,props.equipment.includes(x)&&s.chipOn,locked&&s.disabled]}><Text style={[s.chipText,props.equipment.includes(x)&&{color:maroon}]}>{props.equipment.includes(x)?'✓  ':''}{x}</Text></Pressable>)}</View></View>
-    <Text style={s.section}>PREFERENCES</Text>
     <Text style={s.section}>PRIVACY</Text><Pressable disabled={locked} accessibilityRole="checkbox" accessibilityState={{checked:props.analyticsConsented}} onPress={()=>changeAnalyticsConsent(!props.analyticsConsented)} style={[s.consent,locked&&s.disabled]}><View style={[s.checkbox,props.analyticsConsented&&s.checkboxOn]}>{props.analyticsConsented&&<Check size={14} color="#FFF"/>}</View><View style={{flex:1}}><Text style={s.label}>Share anonymous usage data</Text><Text style={s.desc}>Optional browsing events; change this choice any time.</Text></View></Pressable>
     <Pressable accessibilityRole="button" disabled={locked} onPress={()=>void save()} style={[s.primary,s.save,locked&&s.disabled]}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.primaryText}>{signedIn?'Save profile and privacy choice':'Save on this device'}</Text>}</Pressable>
     {signedIn&&<Pressable accessibilityRole="button" disabled={locked} onPress={()=>void signOut()} style={s.secondary}><Text style={s.secondaryText}>Sign out</Text></Pressable>}

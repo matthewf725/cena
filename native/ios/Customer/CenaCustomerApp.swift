@@ -461,12 +461,19 @@ struct CustomerHome: View {
             if api.signedIn {
                 ForEach(0..<history.count, id: \.self) { i in
                     let o = history[i]
+                    let paymentStatus = str(o["payment_status"]).lowercased()
+                    let total = (o["total_cents"] as? NSNumber)?.intValue ?? int(o["subtotal_cents"])
+                    let discount = int(o["discount_cents"])
+                    let totalLabel = paymentStatus == "paid" ? "Paid" : paymentStatus == "refunded" ? "Refunded" : "Order total"
                     VStack(alignment: .leading, spacing: 5) {
                         Text(str(o["status"]).capitalized).font(.headline)
-                        Text("$\(money(int(o["subtotal_cents"]))) · \(str(o["pickup_mode"]).capitalized) pickup").font(.subheadline)
-                        if !str(o["payment_status"]).isEmpty {
-                            Label("Payment \(str(o["payment_status"]).capitalized)", systemImage: str(o["payment_status"]).lowercased() == "refunded" ? "arrow.uturn.backward.circle" : "creditcard")
-                                .font(.caption).foregroundStyle(str(o["payment_status"]).lowercased() == "refunded" ? .secondary : CenaStyle.maroon)
+                        Text("\(totalLabel) $\(money(total)) · \(str(o["pickup_mode"]).capitalized) pickup").font(.subheadline)
+                        if discount > 0 {
+                            Text("Promo savings $\(money(discount))").font(.caption).foregroundStyle(CenaStyle.clay)
+                        }
+                        if !paymentStatus.isEmpty && paymentStatus != "paid" && paymentStatus != "refunded" && paymentStatus != "pay_at_pickup" {
+                            Label("Payment \(paymentStatus.capitalized)", systemImage: "creditcard")
+                                .font(.caption).foregroundStyle(CenaStyle.maroon)
                         }
                         Text(str(o["pickup_starts_at"])).font(.caption).foregroundStyle(.secondary)
                         ForEach(Array(((o["order_items"] as? [[String: Any]]) ?? []).enumerated()), id: \.offset) { _, item in
@@ -550,7 +557,7 @@ struct CustomerHome: View {
                     TextField("Phone", text: Binding(get: { profilePhone }, set: { profilePhone = $0; profileEditRevision += 1 })).keyboardType(.phonePad).textContentType(.telephoneNumber)
                 }
                 Section("Kitchen equipment") {
-                    ForEach(["Oven", "Stovetop", "Microwave", "Air fryer"], id: \.self) { equipment in
+                    ForEach(["Oven", "Stovetop", "Microwave", "Air fryer", "Toaster", "Panini press"], id: \.self) { equipment in
                         Toggle(equipment, isOn: Binding(get: { profileEquipment.contains(equipment) }, set: { selected in
                             if selected && !profileEquipment.contains(equipment) { profileEquipment.append(equipment) }
                             if !selected { profileEquipment.removeAll { $0 == equipment } }
@@ -1006,7 +1013,7 @@ struct CustomerHome: View {
     }
     private func loadHistory() async {
         guard api.signedIn else { return }
-        do { history = try await api.rows("orders", query: "select=id,status,payment_status,subtotal_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,order_items(name_snapshot,quantity,prep_steps_snapshot)&order=created_at.desc&limit=20", authenticated: true) }
+        do { history = try await api.rows("orders", query: "select=id,status,payment_status,subtotal_cents,total_cents,discount_cents,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,order_items(name_snapshot,quantity,prep_steps_snapshot)&order=created_at.desc&limit=20", authenticated: true) }
         catch { message = error.localizedDescription }
     }
     private func imageKey(for value: [String: Any]) -> String {
