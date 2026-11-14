@@ -34,34 +34,40 @@ export function KitchenRail({ title, kitchens, width, radius, open, reduced, sus
         snapToInterval={reduced ? undefined : stride}
         snapToAlignment="start"
         contentContainerStyle={styles.rail}
-        renderItem={({ item: kitchen }) => {
-          const rating = restaurantRating(kitchen);
-          return (
-          <View style={[styles.card, { width: cardWidth, borderRadius: radius }]}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
-              style={({ pressed }) => pressed && styles.pressed}>
-              <ImageBackground source={restaurantPhoto(kitchen)}
-                resizeMode="cover" style={[styles.photo, { height: Math.round(cardWidth * 9 / 16) }]} />
-              <View style={styles.caption}>
-                <View style={styles.nameRow}>
-                  <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
-                  {rating && <View style={styles.rating}>
-                    <Star size={13} color="#9A5A2F" fill="#9A5A2F" aria-hidden />
-                    <Text accessibilityLabel={`${rating} out of 5 stars`} style={styles.ratingValue}>{rating}</Text>
-                  </View>}
-                </View>
-                <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
-              </View>
-            </Pressable>
-            {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>
-              <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} suspended={suspended} />
-            </View>}
-          </View>
-          );
-        }}
+        renderItem={({ item: kitchen }) => <KitchenCard kitchen={kitchen} width={cardWidth} radius={radius} open={open} suspended={suspended} />}
       />
     </View>
   );
+}
+
+export function KitchenCard({ kitchen, width, radius, open, suspended }: {
+  kitchen: Kitchen;
+  width: number;
+  radius: number;
+  open: (kitchen: Kitchen) => void;
+  suspended: boolean;
+}) {
+  const rating = restaurantRating(kitchen);
+  return <View style={[styles.card, { width, borderRadius: radius }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`View ${kitchen.name} menu`} onPress={() => open(kitchen)}
+      style={({ pressed }) => pressed && styles.pressed}>
+      <ImageBackground source={restaurantPhoto(kitchen)} resizeMode="cover"
+        style={[styles.photo, { height: Math.min(300, Math.round(width * 9 / 16)) }]} />
+      <View style={styles.caption}>
+        <View style={styles.nameRow}>
+          <Text numberOfLines={1} style={styles.name}>{kitchen.name}</Text>
+          {rating && <View style={styles.rating}>
+            <Star size={13} color="#9A5A2F" fill="#9A5A2F" aria-hidden />
+            <Text accessibilityLabel={`${rating} out of 5 stars`} style={styles.ratingValue}>{rating}</Text>
+          </View>}
+        </View>
+        <Text numberOfLines={1} style={styles.details}>{[formatDistance(kitchen.distanceMiles), kitchen.cuisine, kitchen.id.startsWith('cal-poly-') && 'Demo menu'].filter(Boolean).join(' · ')}</Text>
+      </View>
+    </Pressable>
+    {kitchen.pickupSlots !== undefined && <View style={styles.countdown}>
+      <PickupCountdown slots={kitchen.pickupSlots} timezone={kitchen.timezone} suspended={suspended} />
+    </View>}
+  </View>;
 }
 
 const styles = StyleSheet.create({

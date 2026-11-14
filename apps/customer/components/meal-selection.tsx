@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { Animated, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { Check, Minus, Plus, X } from 'lucide-react-native';
+import { Check, ChevronDown, Clock3, Minus, Plus, X } from 'lucide-react-native';
 import { normalizeMealSelections, type Meal, type MealOptionGroup, type MealSelections } from '../lib/data';
 import { Text } from './type';
 import { MealPrice } from './meal-price';
@@ -35,6 +35,8 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
   const [invalidGroupId, setInvalidGroupId] = useState<string|null>(null);
   const [limitMessage, setLimitMessage] = useState('');
   const [sheetHeight, setSheetHeight] = useState(0);
+  const [preparationExpanded, setPreparationExpanded] = useState(false);
+  const preparationProgress = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
   const scrimOpacity = useRef(new Animated.Value(1)).current;
   const closing = useRef(false);
@@ -112,7 +114,19 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
     closing.current = false;
     translateY.setValue(0);
     scrimOpacity.setValue(1);
-  }, [meal.id, scrimOpacity, translateY]);
+    setPreparationExpanded(false);
+    preparationProgress.setValue(0);
+  }, [meal.id, preparationProgress, scrimOpacity, translateY]);
+
+  function togglePreparation() {
+    const expanded = !preparationExpanded;
+    setPreparationExpanded(expanded);
+    Animated.timing(preparationProgress, {
+      toValue: expanded ? 1 : 0,
+      duration: reduced ? 0 : 200,
+      useNativeDriver: false,
+    }).start();
+  }
 
   function toggleChoice(group: MealOptionGroup, choiceId: string) {
     const current = selections[group.id] ?? [];
@@ -207,6 +221,32 @@ export function MealSelection({ meal, groups, onAdd, onClose, reduced, bottomIns
           </View>;
         })}
 
+        <View style={styles.preparation}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Preparation${meal.prepMinutes ? `, estimated ${meal.prepMinutes} minutes` : ''}`}
+            accessibilityState={{ expanded: preparationExpanded }} aria-expanded={preparationExpanded}
+            onPress={togglePreparation} style={styles.preparationHeader}>
+            <View style={styles.preparationHeading}>
+              <Text style={styles.preparationTitle}>Preparation</Text>
+              <View style={styles.preparationEstimate}>
+                <Clock3 size={15} color={muted}/>
+                <Text style={styles.preparationEstimateText}>{meal.prepMinutes ? `About ${meal.prepMinutes} min` : 'Estimated time'}</Text>
+              </View>
+            </View>
+            <Animated.View style={{ transform: [{ rotate: preparationProgress.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] }) }] }}>
+              <ChevronDown size={19} color={muted}/>
+            </Animated.View>
+          </Pressable>
+          <Animated.View pointerEvents={preparationExpanded ? 'auto' : 'none'} aria-hidden={!preparationExpanded}
+            style={{ overflow: 'hidden', maxHeight: preparationProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 600] }), opacity: preparationProgress }}>
+            <View style={styles.preparationSteps}>
+              {meal.publishedSteps?.length ? meal.publishedSteps.map((step, index) => <View key={`${index}-${step}`} style={styles.preparationStep}>
+                <Text style={styles.preparationStepNumber}>{index + 1}</Text>
+                <Text style={styles.preparationStepText}>{step}</Text>
+              </View>) : <Text style={styles.preparationEmpty}>Preparation instructions will be available soon.</Text>}
+            </View>
+          </Animated.View>
+        </View>
+
         <View style={styles.quantityRow}>
           <View style={{ flex: 1 }}><Text style={styles.quantityTitle}>Quantity</Text><Text style={styles.quantityHint}>Add up to 50</Text></View>
           <View style={styles.quantityControl}>
@@ -270,6 +310,17 @@ const styles = StyleSheet.create({
   checkmarkSelected: { borderColor: maroon, backgroundColor: maroon },
   choiceName: { flex: 1, color: ink, fontSize: 14 },
   inlineError: { color: '#A23B30', fontSize: 12, lineHeight: 17, marginTop: 8 },
+  preparation: { marginTop: 2, marginBottom: 14, borderBottomWidth: 1, borderBottomColor: line },
+  preparationHeader: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  preparationHeading: { flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12 },
+  preparationTitle: { color: ink, fontSize: 15, fontWeight: '500' },
+  preparationEstimate: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  preparationEstimateText: { color: muted, fontSize: 12 },
+  preparationSteps: { paddingTop: 2, paddingBottom: 14, gap: 12 },
+  preparationStep: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  preparationStepNumber: { width: 22, height: 22, borderRadius: 11, overflow: 'hidden', backgroundColor: '#F2E7E0', color: maroon, textAlign: 'center', textAlignVertical: 'center', fontSize: 12, fontWeight: '500' },
+  preparationStepText: { flex: 1, color: ink, fontSize: 14, lineHeight: 20 },
+  preparationEmpty: { color: muted, fontSize: 13, lineHeight: 19 },
   quantityRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 2, marginBottom: 6 },
   quantityTitle: { color: ink, fontSize: 15, fontWeight: '500' },
   quantityHint: { color: muted, fontSize: 12, marginTop: 2 },

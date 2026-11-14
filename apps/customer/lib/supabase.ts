@@ -118,7 +118,8 @@ export async function loadKitchenMenu(kitchen: Kitchen): Promise<Kitchen> {
 
 async function fetchMenuItems(client: SupabaseClient, restaurantId: string, signal?: AbortSignal) {
   const baseFields = 'id,name,description,price_cents,prepared_meal_total_cents,equipment,published_steps,image_key';
-  let columns = `${baseFields},option_groups`;
+  const fieldsWithEstimate = `${baseFields},prep_minutes`;
+  let columns = `${fieldsWithEstimate},option_groups`;
   const rows: CatalogMealRow[] = [];
   for (let offset = 0; ; offset += MENU_PAGE_SIZE) {
     const query = (selectedColumns: string) => {
@@ -128,8 +129,9 @@ async function fetchMenuItems(client: SupabaseClient, restaurantId: string, sign
         .abortSignal(signal ?? NEVER_ABORTED_SIGNAL);
     };
     let result = await query(columns);
-    if (result.error?.code === '42703' && columns !== baseFields) {
-      columns = baseFields;
+    for (const fallback of [fieldsWithEstimate, baseFields]) {
+      if (result.error?.code !== '42703' || columns === fallback) continue;
+      columns = fallback;
       result = await query(columns);
     }
     if (result.error) return { data: null, error: result.error };
@@ -223,7 +225,7 @@ export async function upsertCustomerProfile(displayName: string, phone: string, 
 }
 export async function fetchOrderHistory(userId: string) {
   if (!supabase) return { data: null, error: null };
-  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot)').eq('user_id',userId).order('created_at',{ascending:false}).limit(20);
+  return supabase.from('orders').select('id,restaurant_id,status,payment_method,payment_status,subtotal_cents,discount_cents,total_cents,promo_code_snapshot,discount_percent,created_at,pickup_starts_at,pickup_ends_at,restaurant_timezone,pickup_mode,restaurants(name,address),order_items(item_id,name_snapshot,quantity,unit_price_cents,prep_steps_snapshot,options_snapshot)').eq('user_id',userId).order('created_at',{ascending:false}).limit(20);
 }
 
 export async function fetchRestaurantRecentOrders(userId: string, restaurantId: string) {

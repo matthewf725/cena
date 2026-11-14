@@ -148,15 +148,13 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height }: {
       setKeyboardInset(Math.max(0, keyboardHeight.current - layoutResize));
     };
     const updateFrame = (event: KeyboardEvent) => {
-      if (Platform.OS === 'ios') Keyboard.scheduleLayoutAnimation(event);
       keyboardHeight.current = Platform.OS === 'ios'
         ? Math.max(0, focusHeight.current - event.endCoordinates.screenY)
         : event.endCoordinates.height;
       updateFromKeyboard();
     };
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow', updateFrame);
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', event => {
-      if (Platform.OS === 'ios') Keyboard.scheduleLayoutAnimation(event);
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       keyboardHeight.current = 0;
       setKeyboardInset(0);
     });

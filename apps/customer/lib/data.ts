@@ -1,6 +1,6 @@
 export type MealOptionGroup = { id: string; name: string; min: number; max: number; choices: { id: string; name: string }[] };
 export type MealSelections = Record<string, string[]>;
-export type Meal = { id: string; name: string; subtitle: string; price: number; preparedMealTotalCents?: number; image: string; optionGroups?: MealOptionGroup[]; tag?: string; equipment?: string; backendItemId?: string; publishedSteps?: string[] };
+export type Meal = { id: string; name: string; subtitle: string; price: number; preparedMealTotalCents?: number; image: string; optionGroups?: MealOptionGroup[]; tag?: string; equipment?: string; backendItemId?: string; publishedSteps?: string[]; prepMinutes?: number };
 export type Kitchen = { id: string; name: string; cuisine: string; rating?: string; image: string; meals: Meal[]; backendId?: string; address?:string; timezone?:string; curbsideEnabled?: boolean; latitude?: number; longitude?: number; distanceMiles?: number; pickupSlots?: { id:string; startsAt:string; endsAt:string; cutoffAt:string; remaining:Record<string,number> }[] };
 
 export type CatalogMealRow = {
@@ -12,6 +12,7 @@ export type CatalogMealRow = {
   image_key: string | null;
   equipment?: string[] | null;
   published_steps?: string[] | null;
+  prep_minutes?: number | null;
   option_groups?: unknown;
 };
 
@@ -43,6 +44,7 @@ export function normalizeMealSelections(value: unknown): MealSelections {
 
 export function toMeal(row: CatalogMealRow): Meal {
   const optionGroups = mealOptionGroups(row.option_groups);
+  const prepMinutes = typeof row.prep_minutes === 'number' && Number.isSafeInteger(row.prep_minutes) && row.prep_minutes > 0 ? row.prep_minutes : undefined;
   return {
     id: row.id,
     backendItemId: row.id,
@@ -54,5 +56,6 @@ export function toMeal(row: CatalogMealRow): Meal {
     ...(optionGroups.length ? { optionGroups } : {}),
     equipment: row.equipment?.[0],
     publishedSteps: row.published_steps ?? [],
+    ...(prepMinutes ? { prepMinutes } : {}),
   };
 }

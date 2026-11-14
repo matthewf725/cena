@@ -12,6 +12,18 @@ export type DiscoveryPage = {
   nextCursor: string | null;
 };
 
+export type DiscoveryFilters = {
+  maxPriceCents: number | null;
+  offersOnly: boolean;
+  sameDayOnly: boolean;
+  cuisine: string | null;
+};
+
+export type DiscoveryResultsPage = {
+  kitchens: Kitchen[];
+  nextOffset: number | null;
+};
+
 type DiscoveryInput = {
   origin: PickupOrigin;
   recentIds: string[];
@@ -38,6 +50,12 @@ type DiscoveryResponse = {
   nearby: RestaurantRow[];
   categories: { name: string; restaurants: RestaurantRow[] }[];
   next_cursor: string | null;
+};
+
+type DiscoveryResultsResponse = {
+  results: RestaurantRow[];
+  next_offset: number | null;
+  has_more: boolean;
 };
 
 function toKitchen(row: RestaurantRow): Kitchen {
@@ -100,5 +118,31 @@ export async function discoverPickupFeed(input: DiscoveryInput): Promise<Discove
     nearby: result.nearby.map(toKitchen),
     categories: result.categories.map(({ name, restaurants }) => ({ name, kitchens: restaurants.map(toKitchen) })),
     nextCursor: result.next_cursor,
+  };
+}
+
+export async function discoverPickupResults(input: {
+  origin: PickupOrigin;
+  query: string;
+  filters: DiscoveryFilters;
+  offset?: number;
+}): Promise<DiscoveryResultsPage> {
+  if (!supabase) throw new Error('Restaurant discovery needs a Supabase connection.');
+  const { data, error } = await supabase.rpc('discover_pickup_results', {
+    p_latitude: input.origin.latitude,
+    p_longitude: input.origin.longitude,
+    p_query: input.query || null,
+    p_max_price_cents: input.filters.maxPriceCents,
+    p_offers_only: input.filters.offersOnly,
+    p_same_day_only: input.filters.sameDayOnly,
+    p_cuisine: input.filters.cuisine,
+    p_limit: 24,
+    p_offset: input.offset ?? 0,
+  });
+  if (error) throw error;
+  const response = data as DiscoveryResultsResponse;
+  return {
+    kitchens: response.results.map(toKitchen),
+    nextOffset: response.has_more ? response.next_offset : null,
   };
 }
