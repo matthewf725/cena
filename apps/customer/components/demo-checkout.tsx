@@ -27,12 +27,13 @@ type DemoCheckoutProps = {
   reduced: boolean;
   onBack: () => void;
   onConfirm: () => void;
+  onConfirmNow: () => void;
   onCancel: () => void;
 };
 
 export function DemoCheckout({
   address, restaurantName, pickupLabel, items = [], confirmationDeadline,
-  topInset, bottomInset, reduced, onBack, onConfirm, onCancel,
+  topInset, bottomInset, reduced, onBack, onConfirm, onConfirmNow, onCancel,
 }: DemoCheckoutProps) {
   const confirming = confirmationDeadline !== null;
   const [card, setCard] = useState<(typeof sampleCards)[number]>(sampleCards[0]);
@@ -147,11 +148,13 @@ export function DemoCheckout({
     <View style={s.footer}>
       <View style={[s.footerInner, { paddingBottom: Math.max(16, bottomInset) }]}>
         {confirming ? <>
-          <View role="status" accessibilityLiveRegion="polite" testID="demo-checkout-confirming-status" style={[s.action, s.primary]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Confirming order, skip countdown"
+            onPress={onConfirmNow} testID="demo-checkout-confirming-status"
+            style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
             <Animated.View pointerEvents="none" aria-hidden testID="demo-checkout-progress"
               style={[s.remainder, { transform: [{ scaleX: remaining }] }]} />
             <Text style={s.primaryText}>Confirming order</Text>
-          </View>
+          </Pressable>
           <Pressable accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
             <Text style={s.cancelText}>Cancel order</Text>
           </Pressable>

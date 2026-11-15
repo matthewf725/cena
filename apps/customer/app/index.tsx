@@ -1072,7 +1072,7 @@ export default function Home() {
       items={demoCheckout.items.map(({key,meal,qty,options})=>({key,name:meal.name,quantity:qty,options}))}
       confirmationDeadline={demoDeadline??null}
       topInset={insets.top} bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeDemoCheckout}
-      onConfirm={beginDemoConfirmation} onCancel={closeDemoCheckout}/>
+      onConfirm={beginDemoConfirmation} onConfirmNow={confirmDemoCheckout} onCancel={closeDemoCheckout}/>
   </View>;
   if (tab==='Orders'&&selectedOrder) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
     <OrderDetails order={orderDetails(selectedOrder)} identityHeight={identityHeight} topInset={insets.top}
