@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, Animated, AppState, BackHandler, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text as LogoText, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Location from 'expo-location';
 import { StatusBar } from 'expo-status-bar';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { ChevronRight, House, ShoppingBag, MapPin, Star, Plus, Minus, ArrowLeft, CircleCheck, CalendarDays, Phone, Mail, Check, CarFront, PackageCheck, ChefHat, Soup, Bell, CreditCard, UserRound, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Enter, useReducedMotion } from '../components/motion';
@@ -1011,13 +1010,13 @@ export default function Home() {
     </HeaderButton>
   </View>;
   return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
-    {menuIsOpen&&<><StatusBar style="light"/><View pointerEvents="none" style={[tabStyles.menuInset,{height:insets.top+130}]}><RestaurantGradient/></View></>}
+    {menuIsOpen&&<><StatusBar style="light"/><View pointerEvents="none" style={[tabStyles.menuInset,tabStyles.menuMaroon,{height:insets.top+130}]}/></>}
     {showLocation&&<View pointerEvents="none" style={[tabStyles.menuInset,{height:insets.top,backgroundColor:'#FFE1D5'}]}/>}
     <View style={{flex:1,width:'100%'}}>
     <View style={tabStyles.mainTab}>
     <View style={active||showLocation?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
-      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>}
+      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top} clipFadeAtContent={tab==='Home'}>{identityBar}</PageHeader>}
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
@@ -1042,11 +1041,11 @@ export default function Home() {
 
     {active&&<Animated.View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'},
       menuIsOpen&&{transform:[{translateY:restaurantSlide.value}]}]}>
-      <View style={[s.modalTop,menuIsOpen&&tabStyles.menuGradientRegion]}>{menuIsOpen&&<RestaurantGradient/>}<Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={[s.modalBrand,menuIsOpen&&tabStyles.menuWordmark]}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={menuIsOpen?'#FFF':maroon}/></Pressable></View>
+      <View style={[s.modalTop,menuIsOpen&&tabStyles.menuMaroon]}><Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={closeFlow} style={s.backBtn}><ArrowLeft size={20} color={deepMaroon}/></Pressable><LogoText style={[s.modalBrand,menuIsOpen&&tabStyles.menuWordmark]}>cena</LogoText><Pressable accessibilityRole="button" accessibilityLabel="Open bag" onPress={()=>navigate('Bag')}><ShoppingBag size={21} color={menuIsOpen?'#FFF':maroon}/></Pressable></View>
       {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active,true)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}
         contentOffset={{x:0,y:menuScrollOffset.current}} scrollEventThrottle={16}
         onScroll={event=>{menuScrollOffset.current=event.nativeEvent.contentOffset.y;}}>
-        <View style={tabStyles.menuGradientRegion} testID="restaurant-menu-header"><RestaurantGradient/>
+        <View style={tabStyles.menuMaroon} testID="restaurant-menu-header">
           <Image source={restaurantPhoto(active)} resizeMode="cover" style={{width:'100%',height:Math.round(contentWidth*9/16)}}/>
           <View style={s.restaurantHeroBottom}><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View>
           <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={18} color="#E8DCD5"/><Text style={s.menuMetaText}>{formatDistance(active.distanceMiles)}</Text></View>}</View>
@@ -1102,20 +1101,8 @@ function CustomerNotice({notice,dismiss}:{notice:{title:string;message:string};d
   return <View accessibilityViewIsModal style={{...fillScreen,justifyContent:'center',zIndex:40}}><Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={()=>dismiss()} style={{...fillScreen,backgroundColor:'rgba(28,18,14,.4)'}}/><View style={{marginHorizontal:28,backgroundColor:ivory,borderRadius:16,padding:21,borderWidth:1,borderColor:line}}><Text style={{fontSize:23,fontWeight:'500',color:ink}}>{notice.title}</Text><Text style={{fontSize:12,color:muted,lineHeight:18,marginTop:9,marginBottom:18}}>{notice.message}</Text><Pressable accessibilityRole="button" onPress={()=>dismiss()} style={s.primaryBtn}><Text style={s.primaryBtnText}>Got it</Text></Pressable></View></View>;
 }
 
-function RestaurantGradient(){
-  const id=useId();
-  return <View pointerEvents="none" style={[fillScreen,{backgroundColor:'#46110E'}]}>
-    <Svg width="100%" height="100%" preserveAspectRatio="none">
-      <Defs><LinearGradient id={id} x1="0%" y1="0%" x2="0%" y2="100%">
-        <Stop offset="0" stopColor="#5D100A"/><Stop offset=".55" stopColor="#46110E"/><Stop offset="1" stopColor="#302628"/>
-      </LinearGradient></Defs>
-      <Rect width="100%" height="100%" fill={`url(#${id})`}/>
-    </Svg>
-  </View>;
-}
-
 const tabStyles=StyleSheet.create({
-  mainTab:{flex:1},hiddenTab:{display:'none'},menuWordmark:{color:'#FFF'},menuGradientRegion:{overflow:'hidden',backgroundColor:'#46110E'},
+  mainTab:{flex:1},hiddenTab:{display:'none'},menuWordmark:{color:'#FFF'},menuMaroon:{backgroundColor:deepMaroon},
   menuInset:{position:'absolute',top:0,left:0,right:0},
 });
 
