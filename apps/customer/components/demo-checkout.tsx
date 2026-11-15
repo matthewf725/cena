@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
-import { ActivityIndicator, Animated, BackHandler, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { ArrowLeft, Check, ChevronRight, CreditCard, MapPin } from 'lucide-react-native';
 import { HeaderButton, PageHeader, headerTint, homeContentMaxWidth } from './home-chrome';
 import { Text } from './type';
 
-export const demoConfirmationMs = 5_000;
+export const demoConfirmationMs = 3_000;
 
 const sampleCards = ['Visa ****89', 'Mastercard ****42'] as const;
 const maroon = '#5D100A', ink = '#271D19', muted = '#77645B', line = '#E8DCD5';
@@ -27,19 +27,16 @@ type DemoCheckoutProps = {
   reduced: boolean;
   onBack: () => void;
   onConfirm: () => void;
-  onConfirmNow: () => void;
   onCancel: () => void;
 };
 
 export function DemoCheckout({
   address, restaurantName, pickupLabel, items = [], confirmationDeadline,
-  topInset, bottomInset, reduced, onBack, onConfirm, onConfirmNow, onCancel,
+  topInset, bottomInset, reduced, onBack, onConfirm, onCancel,
 }: DemoCheckoutProps) {
   const confirming = confirmationDeadline !== null;
   const [card, setCard] = useState<(typeof sampleCards)[number]>(sampleCards[0]);
   const [choosingCard, setChoosingCard] = useState(false);
-  const remaining = useRef(new Animated.Value(1)).current;
-  const webProgress = useRef<ComponentRef<typeof View>>(null);
 
   const goBack = useCallback(() => {
     if (confirming) onCancel();
@@ -61,41 +58,6 @@ export function DemoCheckout({
       return () => window.removeEventListener('keydown', onKey);
     }
   }, [goBack]);
-
-  useEffect(() => {
-    if (confirmationDeadline === null) return;
-
-    if (Platform.OS === 'web') {
-      const bar = webProgress.current as unknown as HTMLElement | null;
-      if (!bar || reduced || typeof bar.animate !== 'function') return;
-
-      const milliseconds = Math.max(0, confirmationDeadline - Date.now());
-      const fraction = Math.min(1, milliseconds / demoConfirmationMs);
-      const animation = bar.animate(
-        [{ transform: `scaleX(${fraction})` }, { transform: 'scaleX(0)' }],
-        { duration: milliseconds, easing: 'linear', fill: 'forwards' },
-      );
-      return () => animation.cancel();
-    }
-
-    const update = () => {
-      const milliseconds = Math.max(0, confirmationDeadline - Date.now());
-      remaining.setValue(Math.min(1, milliseconds / demoConfirmationMs));
-      return milliseconds;
-    };
-    const milliseconds = update();
-
-    if (reduced) {
-      const interval = setInterval(update, 1000);
-      return () => clearInterval(interval);
-    }
-
-    const animation = Animated.timing(remaining, {
-      toValue: 0, duration: milliseconds, easing: Easing.linear, useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [confirmationDeadline, reduced, remaining]);
 
   return <View style={s.page} testID="demo-checkout" onAccessibilityEscape={goBack}>
     <PageHeader identityHeight={58} topInset={topInset}>
@@ -161,20 +123,10 @@ export function DemoCheckout({
 
     <View style={s.footer}>
       <View style={[s.footerInner, { paddingBottom: Math.max(16, bottomInset) }]}>
-        {confirming ? <>
-          <Pressable accessibilityRole="button" accessibilityLabel="Confirming order, skip countdown"
-            onPress={onConfirmNow} testID="demo-checkout-confirming-status"
-            style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
-            {Platform.OS === 'web'
-              ? <View ref={webProgress} pointerEvents="none" aria-hidden testID="demo-checkout-progress" style={s.remainder} />
-              : <Animated.View pointerEvents="none" aria-hidden testID="demo-checkout-progress"
-                style={[s.remainder, { transform: [{ scaleX: remaining }] }]} />}
-            <Text style={s.primaryText}>Confirming order</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
+        {confirming ? <Pressable accessibilityRole="button" onPressIn={onCancel} onPress={onCancel}
+            style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
             <Text style={s.cancelText}>Cancel order</Text>
-          </Pressable>
-        </> : <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onConfirm(); }}
+          </Pressable> : <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onConfirm(); }}
             style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
             <Text style={s.primaryText}>Confirm order</Text>
           </Pressable>}
@@ -215,6 +167,5 @@ const s = StyleSheet.create({
   primaryText: { color: '#FFF', fontSize: 17, fontWeight: '600', textAlign: 'center' },
   cancel: { backgroundColor: headerTint },
   cancelText: { color: maroon, fontSize: 16, fontWeight: '600', textAlign: 'center' },
-  remainder: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, transformOrigin: 'right center', backgroundColor: '#FFFFFF30' },
   pressed: { opacity: 0.8 },
 });

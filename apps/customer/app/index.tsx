@@ -200,7 +200,9 @@ export default function Home() {
   const profileName=authUserId?(savedName?.userId===authUserId?savedName.name:''):(effectiveDemoProfile?.display_name??'');
   const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
   const activeEquipment=authUserId?equipment:(effectiveDemoProfile?.equipment??equipment);
-  const closeDemoCheckout=useCallback(()=>replaceDemoCheckout(null),[replaceDemoCheckout]);
+  const closeDemoCheckout=useCallback(()=>{
+    if(demoCheckoutRef.current)replaceDemoCheckout(null);
+  },[replaceDemoCheckout]);
   const beginDemoConfirmation=useCallback(()=>{
     const draft=demoCheckoutRef.current;
     if(draft&&draft.confirmationDeadline===null){
@@ -1072,7 +1074,7 @@ export default function Home() {
       items={demoCheckout.items.map(({key,meal,qty,options})=>({key,name:meal.name,quantity:qty,options}))}
       confirmationDeadline={demoDeadline??null}
       topInset={insets.top} bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeDemoCheckout}
-      onConfirm={beginDemoConfirmation} onConfirmNow={confirmDemoCheckout} onCancel={closeDemoCheckout}/>
+      onConfirm={beginDemoConfirmation} onCancel={closeDemoCheckout}/>
   </View>;
   if (tab==='Orders'&&selectedOrder) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
     <OrderDetails order={orderDetails(selectedOrder)} identityHeight={identityHeight} topInset={insets.top}
