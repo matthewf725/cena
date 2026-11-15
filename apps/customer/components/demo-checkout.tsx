@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { ActivityIndicator, Animated, BackHandler, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { ArrowLeft, Check, ChevronRight, CreditCard, MapPin } from 'lucide-react-native';
 import { HeaderButton, PageHeader, headerTint, homeContentMaxWidth } from './home-chrome';
@@ -39,6 +39,7 @@ export function DemoCheckout({
   const [card, setCard] = useState<(typeof sampleCards)[number]>(sampleCards[0]);
   const [choosingCard, setChoosingCard] = useState(false);
   const remaining = useRef(new Animated.Value(1)).current;
+  const webProgress = useRef<ComponentRef<typeof View>>(null);
 
   const goBack = useCallback(() => {
     if (confirming) onCancel();
@@ -64,6 +65,19 @@ export function DemoCheckout({
   useEffect(() => {
     if (confirmationDeadline === null) return;
 
+    if (Platform.OS === 'web') {
+      const bar = webProgress.current as unknown as HTMLElement | null;
+      if (!bar || reduced || typeof bar.animate !== 'function') return;
+
+      const milliseconds = Math.max(0, confirmationDeadline - Date.now());
+      const fraction = Math.min(1, milliseconds / demoConfirmationMs);
+      const animation = bar.animate(
+        [{ transform: `scaleX(${fraction})` }, { transform: 'scaleX(0)' }],
+        { duration: milliseconds, easing: 'linear', fill: 'forwards' },
+      );
+      return () => animation.cancel();
+    }
+
     const update = () => {
       const milliseconds = Math.max(0, confirmationDeadline - Date.now());
       remaining.setValue(Math.min(1, milliseconds / demoConfirmationMs));
@@ -77,7 +91,7 @@ export function DemoCheckout({
     }
 
     const animation = Animated.timing(remaining, {
-      toValue: 0, duration: milliseconds, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web',
+      toValue: 0, duration: milliseconds, easing: Easing.linear, useNativeDriver: true,
     });
     animation.start();
     return () => animation.stop();
@@ -151,8 +165,10 @@ export function DemoCheckout({
           <Pressable accessibilityRole="button" accessibilityLabel="Confirming order, skip countdown"
             onPress={onConfirmNow} testID="demo-checkout-confirming-status"
             style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
-            <Animated.View pointerEvents="none" aria-hidden testID="demo-checkout-progress"
-              style={[s.remainder, { transform: [{ scaleX: remaining }] }]} />
+            {Platform.OS === 'web'
+              ? <View ref={webProgress} pointerEvents="none" aria-hidden testID="demo-checkout-progress" style={s.remainder} />
+              : <Animated.View pointerEvents="none" aria-hidden testID="demo-checkout-progress"
+                style={[s.remainder, { transform: [{ scaleX: remaining }] }]} />}
             <Text style={s.primaryText}>Confirming order</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
