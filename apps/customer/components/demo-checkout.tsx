@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Animated, BackHandler, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { ArrowLeft, Check, ChevronRight, CreditCard, MapPin } from 'lucide-react-native';
 import { HeaderButton, PageHeader, headerTint, homeContentMaxWidth } from './home-chrome';
 import { Text } from './type';
 
-export const demoConfirmationMs = 10_000;
+export const demoConfirmationMs = 5_000;
 
 const sampleCards = ['Visa ****89', 'Mastercard ****42'] as const;
 const maroon = '#5D100A', ink = '#271D19', muted = '#77645B', line = '#E8DCD5';
 
-type CheckoutItem = { key: string; name: string; quantity: number; options: string };
+type CheckoutItem = {
+  key: string;
+  name: string;
+  quantity: number;
+  options: string;
+  actualCents: number;
+  originalCents?: number;
+};
 
 type DemoCheckoutProps = {
   address: string;
@@ -22,14 +29,13 @@ type DemoCheckoutProps = {
   bottomInset: number;
   reduced: boolean;
   onBack: () => void;
-  onCheckout: () => void;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
 export function DemoCheckout({
   address, restaurantName, pickupLabel, subtotalCents, items = [], confirmationDeadline,
-  topInset, bottomInset, reduced, onBack, onCheckout, onConfirm, onCancel,
+  topInset, bottomInset, reduced, onBack, onConfirm, onCancel,
 }: DemoCheckoutProps) {
   const confirming = confirmationDeadline !== null;
   const [card, setCard] = useState<(typeof sampleCards)[number]>(sampleCards[0]);
@@ -85,12 +91,15 @@ export function DemoCheckout({
         <HeaderButton label={confirming ? 'Back from confirmation' : 'Back to bag'} onPress={goBack} reduced={reduced}>
           <ArrowLeft size={22} color={maroon} aria-hidden />
         </HeaderButton>
-        <Text accessibilityRole="header" style={s.toolbarTitle}>{confirming ? 'Confirm order' : 'Checkout'}</Text>
+        <Text accessibilityRole="header" style={s.toolbarTitle}>Checkout</Text>
         <View aria-hidden style={s.toolbarSpacer} />
       </View>
     </PageHeader>
 
-    <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+    {confirming ? <View style={s.confirmingBody} testID="demo-checkout-confirming">
+      <ActivityIndicator size="large" color={maroon} aria-hidden />
+      <Text style={s.confirmingTitle}>Confirming order</Text>
+    </View> : <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
       <View style={s.card}>
         <View style={s.row}>
           <View style={s.iconWell}><MapPin size={21} color={maroon} aria-hidden /></View>
@@ -104,64 +113,66 @@ export function DemoCheckout({
       </View>
 
       <View style={s.card}>
-        {confirming ? <View style={s.row}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Payment method, ${card}`} accessibilityState={{ expanded: choosingCard }}
+          onPress={() => setChoosingCard(value => !value)} style={({ pressed }) => [s.row, pressed && s.pressed]}>
           <View style={s.iconWell}><CreditCard size={21} color={maroon} aria-hidden /></View>
           <View style={s.rowText}>
             <Text style={s.label}>Payment method</Text>
             <Text style={s.value}>{card}</Text>
           </View>
-        </View> : <>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Payment method, ${card}`} accessibilityState={{ expanded: choosingCard }}
-            onPress={() => setChoosingCard(value => !value)} style={({ pressed }) => [s.row, pressed && s.pressed]}>
-            <View style={s.iconWell}><CreditCard size={21} color={maroon} aria-hidden /></View>
-            <View style={s.rowText}>
-              <Text style={s.label}>Payment method</Text>
-              <Text style={s.value}>{card}</Text>
-            </View>
-            <ChevronRight size={21} color={maroon} aria-hidden style={choosingCard && s.chevronOpen} />
-          </Pressable>
-          {choosingCard && <View accessibilityRole="radiogroup" accessibilityLabel="Payment methods" style={s.cardOptions}>
-            {sampleCards.map(method => (
-              <Pressable key={method} accessibilityRole="radio" accessibilityLabel={method} accessibilityState={{ checked: method === card }}
-                onPress={() => { setCard(method); setChoosingCard(false); }} style={({ pressed }) => [s.choice, pressed && s.pressed]}>
-                <Text style={s.value}>{method}</Text>
-                <View style={[s.radio, method === card && s.radioChecked]} aria-hidden>
-                  {method === card && <Check size={12} color="#FFF" />}
-                </View>
-              </Pressable>
-            ))}
-          </View>}
-        </>}
+          <ChevronRight size={21} color={maroon} aria-hidden style={choosingCard && s.chevronOpen} />
+        </Pressable>
+        {choosingCard && <View accessibilityRole="radiogroup" accessibilityLabel="Payment methods" style={s.cardOptions}>
+          {sampleCards.map(method => (
+            <Pressable key={method} accessibilityRole="radio" accessibilityLabel={method} accessibilityState={{ checked: method === card }}
+              onPress={() => { setCard(method); setChoosingCard(false); }} style={({ pressed }) => [s.choice, pressed && s.pressed]}>
+              <Text style={s.value}>{method}</Text>
+              <View style={[s.radio, method === card && s.radioChecked]} aria-hidden>
+                {method === card && <Check size={12} color="#FFF" />}
+              </View>
+            </Pressable>
+          ))}
+        </View>}
       </View>
 
       {items.length > 0 && <View style={s.summary}>
         <Text accessibilityRole="header" style={s.summaryTitle}>Order summary</Text>
         {items.map(item => <View key={item.key} style={s.summaryItem}>
-          <Text style={s.value}>{item.quantity > 1 ? `${item.quantity} × ` : ''}{item.name}</Text>
-          {!!item.options && <Text style={s.secondary}>{item.options}</Text>}
+          <View style={s.itemDetails}>
+            <Text style={s.value}>{item.quantity > 1 ? `${item.quantity} × ` : ''}{item.name}</Text>
+            {!!item.options && <Text style={s.secondary}>{item.options}</Text>}
+          </View>
+          <View style={s.itemPrices}>
+            {item.originalCents !== undefined && item.originalCents > item.actualCents && (
+              <Text testID="demo-checkout-original-price" style={s.originalPrice}>${(item.originalCents / 100).toFixed(2)}</Text>
+            )}
+            <Text testID="demo-checkout-actual-price" style={s.actualPrice}>${(item.actualCents / 100).toFixed(2)}</Text>
+          </View>
         </View>)}
       </View>}
-    </ScrollView>
+    </ScrollView>}
 
     <View style={s.footer}>
       <View style={[s.footerInner, { paddingBottom: Math.max(16, bottomInset) }]}>
-        <View style={s.total}>
-          <Text style={s.totalLabel}>Total</Text>
-          <Text style={s.totalPrice}>${(subtotalCents / 100).toFixed(2)}</Text>
-        </View>
         {confirming ? <>
-          <Pressable accessibilityRole="button" onPress={onConfirm} style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
+          <View role="status" accessibilityLiveRegion="polite" testID="demo-checkout-confirming-status" style={[s.action, s.primary]}>
             <Animated.View pointerEvents="none" aria-hidden testID="demo-checkout-progress"
               style={[s.remainder, { transform: [{ scaleX: remaining }] }]} />
-            <Text style={s.primaryText}>Confirm order</Text>
-          </Pressable>
+            <Text style={s.primaryText}>Confirming order</Text>
+          </View>
           <Pressable accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
             <Text style={s.cancelText}>Cancel order</Text>
           </Pressable>
-        </> : <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onCheckout(); }}
-          style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
-          <Text style={s.primaryText}>Checkout</Text>
-        </Pressable>}
+        </> : <>
+          <View style={s.total}>
+            <Text style={s.totalLabel}>Total</Text>
+            <Text style={s.totalPrice}>${(subtotalCents / 100).toFixed(2)}</Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onConfirm(); }}
+            style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
+            <Text style={s.primaryText}>Confirm order</Text>
+          </Pressable>
+        </>}
       </View>
     </View>
   </View>;
@@ -173,6 +184,8 @@ const s = StyleSheet.create({
   toolbarTitle: { flex: 1, textAlign: 'center', fontSize: 22, fontWeight: '700', color: maroon },
   toolbarSpacer: { width: 44 },
   content: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', padding: 18, gap: 12 },
+  confirmingBody: { flex: 1, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  confirmingTitle: { color: ink, fontSize: 22, fontWeight: '600', textAlign: 'center' },
   card: { backgroundColor: '#FFF', borderWidth: 1, borderColor: line, borderRadius: 16, overflow: 'hidden' },
   row: { minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 12 },
   rowText: { flex: 1, minWidth: 0, gap: 2 },
@@ -187,7 +200,11 @@ const s = StyleSheet.create({
   radioChecked: { backgroundColor: maroon, borderColor: maroon },
   summary: { paddingTop: 5, paddingHorizontal: 2 },
   summaryTitle: { fontSize: 18, fontWeight: '600', color: ink, marginBottom: 2 },
-  summaryItem: { paddingVertical: 9, gap: 2, borderBottomWidth: 1, borderBottomColor: line },
+  summaryItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: line },
+  itemDetails: { flex: 1, minWidth: 0, gap: 2 },
+  itemPrices: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', flexWrap: 'wrap', maxWidth: '55%', gap: 7 },
+  originalPrice: { fontSize: 13, color: muted, textDecorationLine: 'line-through', fontVariant: ['tabular-nums'] },
+  actualPrice: { fontSize: 16, lineHeight: 21, fontWeight: '600', color: maroon, fontVariant: ['tabular-nums'] },
   footer: { backgroundColor: '#FFFDFA', borderTopWidth: 1, borderTopColor: line },
   footerInner: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', paddingTop: 12, paddingHorizontal: 18, gap: 10 },
   total: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 32 },

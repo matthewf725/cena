@@ -39,6 +39,7 @@ function sanitizedCart(value: unknown): Record<string, unknown> {
     const line = candidate as Record<string, unknown>;
     if (!line.meal || typeof line.meal !== 'object' || Array.isArray(line.meal)) continue;
     const meal = line.meal as Record<string, unknown>;
+    const venue = line.demoKitchen as Record<string, unknown> | undefined;
     const optionGroups = mealOptionGroups(meal.optionGroups);
     const selections = normalizeMealSelections(line.selections);
     const quantity = Number(line.qty);
@@ -62,6 +63,12 @@ function sanitizedCart(value: unknown): Record<string, unknown> {
       qty: quantity,
       options: typeof line.options === 'string' ? line.options : '',
       ...(Object.keys(selections).length ? { selections } : {}),
+      ...(typeof venue?.name === 'string' && venue.name.trim() ? { demoKitchen: {
+        name: venue.name.trim().slice(0, 160),
+        ...(typeof venue.backendId === 'string' ? { backendId: venue.backendId } : {}),
+        ...(typeof venue.address === 'string' ? { address: venue.address.trim().slice(0, 250) } : {}),
+        ...(typeof venue.timezone === 'string' ? { timezone: venue.timezone } : {}),
+      } } : {}),
       restaurantId: line.restaurantId,
     };
   }

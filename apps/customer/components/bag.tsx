@@ -1,10 +1,11 @@
 import { Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from './type';
 import { ChevronRight, Minus, Plus, ShoppingBag } from 'lucide-react-native';
-import type { Meal, MealSelections } from '../lib/data';
+import type { Kitchen, Meal, MealSelections } from '../lib/data';
 import { foodPhoto } from '../lib/food-photos';
 
-export type BagLine = { meal: Meal; qty: number; options: string; restaurantId: string; selections?: MealSelections };
+export type BagLine = { meal: Meal; qty: number; options: string; restaurantId: string; selections?: MealSelections;
+  demoKitchen?: Pick<Kitchen, 'backendId' | 'name' | 'address' | 'timezone'> };
 
 export function Bag({ items, subtotal, radius, loading, locked = false, topSpace, bottomNavHeight = 0, change, remove, browse, addItems, checkout }: {
   items: (BagLine & { key: string })[];

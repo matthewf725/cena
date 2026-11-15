@@ -1,6 +1,5 @@
 import type { BagLine } from '../components/bag';
 import type { DemoOrder } from './cal-poly-demo';
-import type { Kitchen } from './data';
 
 export type DemoCheckoutDraft = {
   restaurantId: string;
@@ -17,18 +16,27 @@ export type DemoCheckoutDraft = {
 
 export type DemoSessionOrder = Omit<DemoOrder, 'payment_method'> & { payment_method: 'demo_checkout' };
 
+// Bags created before the pickup address was stored can still open the seeded demo restaurants instantly.
+const demoVenues: Record<string, NonNullable<BagLine['demoKitchen']>> = {
+  'cal-poly-giuseppes': { name: 'Giuseppe’s Cucina Rustica', address: '849 Monterey St, San Luis Obispo, CA 93401' },
+  'cal-poly-luna-red': { name: 'Luna Red', address: '1023 Chorro St, San Luis Obispo, CA 93401' },
+  'cal-poly-mamas-meatball': { name: 'Mama’s Meatball', address: '570 Higuera St #130, San Luis Obispo, CA 93401' },
+  'cal-poly-piadina': { name: 'Piadina', address: '877 Palm St, San Luis Obispo, CA 93401' },
+};
+
 export function createDemoCheckoutDraft(
-  kitchen: Kitchen, items: DemoCheckoutDraft['items'], cartRevision: string,
-  slot?: NonNullable<Kitchen['pickupSlots']>[number], now = Date.now(),
+  items: DemoCheckoutDraft['items'], cartRevision: string, now = Date.now(),
 ): DemoCheckoutDraft {
+  const first = items[0];
+  const kitchen: NonNullable<BagLine['demoKitchen']> = first.demoKitchen ?? demoVenues[first.restaurantId] ?? { name: 'Restaurant pickup' };
   const hour = 60 * 60 * 1000;
   return {
-    restaurantId: kitchen.backendId ?? kitchen.id,
+    restaurantId: kitchen.backendId ?? first.restaurantId,
     restaurantName: kitchen.name,
     address: kitchen.address ?? '',
     timeZone: kitchen.timezone ?? 'America/Los_Angeles',
-    pickupStartsAt: slot?.startsAt ?? new Date(now + hour).toISOString(),
-    pickupEndsAt: slot?.endsAt ?? new Date(now + 1.5 * hour).toISOString(),
+    pickupStartsAt: new Date(now + hour).toISOString(),
+    pickupEndsAt: new Date(now + 1.5 * hour).toISOString(),
     items,
     subtotalCents: items.reduce((total, item) => total + item.qty * Math.round(100 * item.meal.price), 0),
     cartRevision,
