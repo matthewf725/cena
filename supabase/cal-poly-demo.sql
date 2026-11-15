@@ -38,8 +38,8 @@ from (values
  ('cal-poly-mamas-meatball','Fettuccine Alfredo Kit','Fettuccine with a creamy Alfredo sauce.',1900,'rigatoni','Stovetop',null),
  ('cal-poly-piadina','Classic Cheese Pizza Kit','A cheese pizza to finish in your oven.',2100,'mediterranean','Oven',null),
  ('cal-poly-piadina','Mushroom Pizza Kit','A mushroom pizza to finish in your oven.',2700,'mediterranean','Oven',5),
- ('cal-poly-giuseppes','Carbonara Kit','Pasta with carbonara sauce.',2300,'rigatoni','Stovetop',7),
- ('cal-poly-giuseppes','Pomodoro Kit','Pasta with tomato sauce.',1900,'rigatoni','Stovetop',null)
+ ('cal-poly-giuseppes','Carbonara Kit','Pasta with carbonara sauce.',2300,'giuseppes-carbonara','Stovetop',7),
+ ('cal-poly-giuseppes','Pomodoro Kit','Pasta with tomato sauce.',1900,'giuseppes-pomodoro','Stovetop',null)
 ) as menu(slug,name,description,regular,image_key,equipment,sample_order_day);
 
 with cal_poly_demo_menu as (

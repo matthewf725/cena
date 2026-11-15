@@ -1,5 +1,5 @@
 -- Run after cal-poly-demo.sql, or on its own to refresh an existing demo.
--- AI-drafted steps are specific to the sample kits and defer cooking settings to the kit labels.
+-- AI-drafted steps are specific to the sample kits.
 begin;
 
 with demo_steps(slug, item_name, steps) as (values
@@ -34,9 +34,10 @@ with demo_steps(slug, item_name, steps) as (values
     'Add any finishing garnish as directed. Let the pizza rest if the label calls for it, then slice.'
   ]),
   ('cal-poly-giuseppes', 'Carbonara Kit', array[
-    'Prepare the pasta on the stovetop according to its package.',
-    'Check the carbonara sauce label for when and how to combine it with the pasta. Follow the listed heat setting so the sauce finishes as intended.',
-    'Toss until the pasta is coated, then serve with any finishing garnish included in the kit.'
+    '8 min · Bring a pot of water to a boil. Add the noodles and cook until just tender. Save ¼ cup of the cooking water, then drain.',
+    '3 min · Return the noodles to the pot over low heat. Toss with the carbonara sauce and the ¼ cup of reserved water until coated.',
+    '3 min · Fold in the cooked pancetta and stir gently until steaming hot.',
+    '1 min · Divide into bowls and finish with the garnish.'
   ]),
   ('cal-poly-giuseppes', 'Pomodoro Kit', array[
     'Prepare the pasta according to its package. Drain it if the directions call for boiling.',

@@ -5,6 +5,9 @@ const photos: Record<string, ImageSourcePropType> = {
   tacos: require('../assets/tacos.webp'),
   salmon: require('../assets/salmon.webp'),
   mediterranean: require('../assets/mediterranean.webp'),
+  // Demo dish photos via Pexels (Nano Erdozain, 29039082 and Willians Huerta, 36430172).
+  'giuseppes-carbonara': require('../assets/giuseppes-carbonara.webp'),
+  'giuseppes-pomodoro': require('../assets/giuseppes-pomodoro.webp'),
 };
 
 const aliases: Record<string, string> = {
