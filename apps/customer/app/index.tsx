@@ -1155,7 +1155,20 @@ export default function Home() {
         {active.meals.map(m=>{
           const selections=quickMealSelections(m);
           const quickLineKey=selections===null?null:lineKey(m.id,selections);
-          return <View style={s.mealRow} key={m.id}><Pressable accessibilityRole="button" accessibilityLabel={`View ${m.name}`} onPress={()=>openMeal(m)} style={s.mealText}><View style={s.mealTags}>{m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}{m.equipment&&!activeEquipment.some(e=>e.toLowerCase()===m.equipment!.toLowerCase())&&<Text style={s.equipmentTag}>NEEDS {m.equipment.toUpperCase()}</Text>}</View><Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>{mealQuantities[m.id]>0&&<Text style={s.inCart}>In your bag · {mealQuantities[m.id]}</Text>}</Pressable><View><Pressable accessibilityRole="button" accessibilityLabel={`View photo and options for ${m.name}`} onPress={()=>openMeal(m)}><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={[s.mealImage,{width:Math.max(100,Math.min  (150,Math.round(contentWidth*.3))),height:Math.max(100,Math.min(150,Math.round(contentWidth*.3)))}]}/></Pressable><MenuQuantity name={m.name} count={quickLineKey===null?0:cart[quickLineKey]?.qty??0}
+          const equipment=m.equipment?.toLowerCase();
+          const needsEquipment=equipment&&!activeEquipment.some(item=>item.toLowerCase()===equipment);
+          const recommendsStovetop=active.id==='cal-poly-giuseppes'&&equipment==='stovetop';
+          return <View style={s.mealRow} key={m.id}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`View ${m.name}`} onPress={()=>openMeal(m)} style={s.mealText}>
+              <View style={s.mealTags}>
+                {m.tag&&<Text style={s.mealTag}>{m.tag}</Text>}
+                {recommendsStovetop?<Text style={needsEquipment?s.equipmentTag:tabStyles.equipmentRecommendation}>Stovetop recommended</Text>
+                  :needsEquipment&&<Text style={s.equipmentTag}>NEEDS {equipment.toUpperCase()}</Text>}
+              </View>
+              <Text style={s.mealName}>{m.name}</Text><Text style={s.mealDesc}>{m.subtitle}</Text><MealPrice meal={m}/>
+              {mealQuantities[m.id]>0&&<Text style={s.inCart}>In your bag · {mealQuantities[m.id]}</Text>}
+            </Pressable>
+            <View><Pressable accessibilityRole="button" accessibilityLabel={`View photo and options for ${m.name}`} onPress={()=>openMeal(m)}><Image source={mealImage(m.image.startsWith("http")?m.id:m.image)} resizeMode="cover" style={[s.mealImage,{width:Math.max(100,Math.min  (150,Math.round(contentWidth*.3))),height:Math.max(100,Math.min(150,Math.round(contentWidth*.3)))}]}/></Pressable><MenuQuantity name={m.name} count={quickLineKey===null?0:cart[quickLineKey]?.qty??0}
             needsOptions={selections===null} disabled={!hydrated||!!checkout} reduced={reduceMotion}
             onPlus={()=>{if(selections===null){openMeal(m);return false;}return add(m,1,selections);}}
             onMinus={()=>{if(quickLineKey!==null)changeQty(quickLineKey,-1);}}/></View></View>;
@@ -1202,6 +1215,7 @@ function CustomerNotice({notice,dismiss}:{notice:{title:string;message:string};d
 const tabStyles=StyleSheet.create({
   mainTab:{flex:1},hiddenTab:{display:'none'},menuHeader:{backgroundColor:headerTint},
   restaurantDetails:{backgroundColor:'#FFF'},
+  equipmentRecommendation:{fontSize:10,color:deepMaroon,fontWeight:'500',backgroundColor:'#FFF0E8',paddingHorizontal:6,paddingVertical:3,borderRadius:4},
   tabBagShortcut:{position:'absolute',zIndex:2},
   menuInset:{position:'absolute',top:0,left:0,right:0},
 });
