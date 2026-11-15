@@ -11,6 +11,7 @@ import { HeaderButton, HeaderWordmark, HomeSearch, PageHeader, PickupAreaButton,
 import { Text, TextInput } from '../components/type';
 import { Account } from '../components/account';
 import { CustomerSettings } from '../components/customer-settings';
+import { DemoCheckout, demoConfirmationMs } from '../components/demo-checkout';
 import { DemoProfile } from '../components/demo-profile';
 import { loadDemoPreviewProfile, type DemoPreviewProfile } from '../lib/demo-profile';
 import { useOrderBadgePreference } from '../lib/order-badge-preference';
@@ -33,6 +34,7 @@ import { cancelCheckout, CheckoutRequestError, createCheckout, fetchCheckoutStat
 import { loadCustomerLocalState, saveCustomerLocalState, type CustomerLocalSnapshot } from '../lib/local-state';
 import { loadCustomerAnalyticsConsent, loadCustomerDisplayName } from '../lib/profile';
 import { calPolyDemo, calPolyPickupArea, loadCalPolyDemo, type CalPolyDemo, type DemoOrder } from '../lib/cal-poly-demo';
+import { createDemoCheckoutDraft, makeDemoSessionOrder, type DemoCheckoutDraft, type DemoSessionOrder } from '../lib/demo-checkout';
 import { restaurantPhoto, restaurantRating, restaurantRatingSource } from '../lib/restaurant-presentation';
 
 const footerTabs = [{ name: 'Home', Icon: House }, { name: 'Orders', Icon: PackageCheck }, { name: 'Bag', Icon: ShoppingBag }] as const;
@@ -138,6 +140,13 @@ export default function Home() {
   const [demoLoading,setDemoLoading]=useState(calPolyDemo);
   const [demoAttempt,setDemoAttempt]=useState(0);
   const [demoProfile,setDemoProfile]=useState<DemoPreviewProfile|null>(null);
+  const [demoCheckout,setDemoCheckout]=useState<DemoCheckoutDraft|null>(null);
+  const [demoSessionOrders,setDemoSessionOrders]=useState<DemoSessionOrder[]>([]);
+  const demoCheckoutRef=useRef<DemoCheckoutDraft|null>(null);
+  const replaceDemoCheckout=useCallback((draft:DemoCheckoutDraft|null)=>{
+    demoCheckoutRef.current=draft;
+    setDemoCheckout(draft);
+  },[]);
   const [orderClock,setOrderClock]=useState(Date.now);
   const [selectedOrderId,setSelectedOrderId]=useState<string|null>(null);
   const orderScrollOffset=useRef(0);
@@ -177,7 +186,7 @@ export default function Home() {
   const updateEmail=(value:string)=>{emailEdited.current=true;setEmail(value);};
   const pendingStorageKey=(userId:string)=>`cena.customer.pending-checkout.v1.${userId}`;
   const idempotencyStorageKey=(userId:string)=>`cena.customer.idempotency.v1.${userId}`;
-  const bumpCartRevision=()=>{const next=`${Date.now()}-${Math.random().toString(36).slice(2,10)}`;cartRevisionRef.current=next;setCartRevision(next);};
+  const bumpCartRevision=useCallback(()=>{const next=`${Date.now()}-${Math.random().toString(36).slice(2,10)}`;cartRevisionRef.current=next;setCartRevision(next);},[]);
   const menuRequest=useRef(0);
   const bagRequest=useRef(0);
   const idempotency=useRef({ fingerprint:'', key:'' });
@@ -188,6 +197,37 @@ export default function Home() {
   const profileName=authUserId?(savedName?.userId===authUserId?savedName.name:''):(effectiveDemoProfile?.display_name??'');
   const profileInitial=Array.from(profileName)[0]?.toLocaleUpperCase();
   const activeEquipment=authUserId?equipment:(effectiveDemoProfile?.equipment??equipment);
+  const closeDemoCheckout=useCallback(()=>replaceDemoCheckout(null),[replaceDemoCheckout]);
+  const beginDemoConfirmation=useCallback(()=>{
+    const draft=demoCheckoutRef.current;
+    if(draft&&draft.confirmationDeadline===null){
+      replaceDemoCheckout({...draft,confirmationDeadline:Date.now()+demoConfirmationMs});
+    }
+  },[replaceDemoCheckout]);
+  const confirmDemoCheckout=useCallback(()=>{
+    const draft=demoCheckoutRef.current;
+    if(!draft||draft.confirmationDeadline===null)return;
+    replaceDemoCheckout(null);
+    if(draft.cartRevision!==cartRevisionRef.current)return;
+
+    const order=makeDemoSessionOrder(draft);
+    setDemoSessionOrders(current=>[order,...current]);
+    cartRef.current={};
+    setCart({});
+    bumpCartRevision();
+    orderScrollOffset.current=0;
+    setSelectedOrderId(null);
+    setOrderClock(Date.now());
+    setTab('Orders');
+  },[bumpCartRevision,replaceDemoCheckout]);
+  const demoDeadline=demoCheckout?.confirmationDeadline;
+  useEffect(()=>{
+    if(demoDeadline==null)return;
+    const timer=setTimeout(()=>{
+      if(demoCheckoutRef.current?.confirmationDeadline===demoDeadline)confirmDemoCheckout();
+    },Math.max(0,demoDeadline-Date.now()));
+    return()=>clearTimeout(timer);
+  },[demoDeadline,confirmDemoCheckout]);
   useEffect(()=>{
     if(!savedPickupKey)return;
     let mounted=true;
@@ -308,6 +348,12 @@ export default function Home() {
         setCheckout(null);setPaymentStatus(null);setShowCheckoutRecovery(false);
         setQuote(null);setQuoteError('');setQuoteRecovery(null);
         setBackendOrders([]);
+        if(calPolyDemo){
+          bagRequest.current++;
+          setCheckingBag(false);
+          replaceDemoCheckout(null);
+          setDemoSessionOrders([]);
+        }
         setSelectedOrderId(null);
         orderScrollOffset.current=0;
         setCompletedItems([]);setCompletedTotal(0);
@@ -365,7 +411,7 @@ export default function Home() {
     });
     return()=>{active=false;};
   },[authResolved,authUserId]);
-  useEffect(()=>{if(!hydrated||!authUserId)return;let active=true;AsyncStorage.getItem(pendingStorageKey(authUserId)).then(raw=>{if(!active||!raw)return;const pending=JSON.parse(raw);if(pending.ownerUserId===authUserId&&typeof pending.orderId==='string'&&typeof pending.url==='string'&&isTrustedCheckoutURL(pending.url)){setCheckout(pending);setPaymentStatus('pending');setShowCheckoutRecovery(true);}}).catch(()=>{});return()=>{active=false;};},[hydrated,authUserId]);
+  useEffect(()=>{if(calPolyDemo||!hydrated||!authUserId)return;let active=true;AsyncStorage.getItem(pendingStorageKey(authUserId)).then(raw=>{if(!active||!raw)return;const pending=JSON.parse(raw);if(pending.ownerUserId===authUserId&&typeof pending.orderId==='string'&&typeof pending.url==='string'&&isTrustedCheckoutURL(pending.url)){setCheckout(pending);setPaymentStatus('pending');setShowCheckoutRecovery(true);}}).catch(()=>{});return()=>{active=false;};},[hydrated,authUserId]);
   useEffect(()=>{
     if(!hydrated||storageOwnerRef.current!==authUserId)return;
     void queueCustomerLocalSave(authUserId,{cart,cartRevision,demoRecentIds:[],demoRecentMeals:[]});
@@ -485,10 +531,13 @@ export default function Home() {
   },[authUserId]);
   useEffect(()=>{if(supabase&&analyticsConsented&&query.trim()){const timer=setTimeout(()=>void trackEvent('search',undefined,{query_length:query.trim().length}),700);return ()=>clearTimeout(timer);}},[query,analyticsConsented]);
   const cartCount=Object.values(cart).reduce((n,x)=>n+x.qty,0), subtotal=Object.values(cart).reduce((n,x)=>n+x.qty*x.meal.price,0);
-  const visibleOrders=useMemo(()=>calPolyDemo&&!authUserId?(demo?.orders??[]):backendOrders.filter(order=>
-    (['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status))
-    ||(order.payment_method==='stripe_checkout'&&order.payment_status==='refunded'&&order.status==='cancelled')
-  ),[authUserId,backendOrders,demo]);
+  const visibleOrders=useMemo(()=>{
+    const orders:CustomerOrder[]=calPolyDemo&&!authUserId?(demo?.orders??[]):backendOrders.filter(order=>
+      (['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status))
+      ||(order.payment_method==='stripe_checkout'&&order.payment_status==='refunded'&&order.status==='cancelled')
+    );
+    return calPolyDemo?[...demoSessionOrders,...orders]:orders;
+  },[authUserId,backendOrders,demo,demoSessionOrders]);
   const selectedOrder=selectedOrderId?visibleOrders.find(order=>order.id===selectedOrderId):null;
   useEffect(()=>{if(selectedOrderId&&!selectedOrder)setSelectedOrderId(null);},[selectedOrderId,selectedOrder]);
   const upcomingOrders=visibleOrders.filter(order=>isUpcomingCustomerOrder(order,orderClock));
@@ -513,7 +562,7 @@ export default function Home() {
   const currentQuoteKeyRef=useRef(currentQuoteKey);currentQuoteKeyRef.current=currentQuoteKey;
   const quoteMatches=Boolean(quote&&currentQuoteKey&&quote.fingerprint===currentQuoteKey);
   useEffect(()=>{
-    if(!supabase||!authenticated||!authUserId||flow!=='contact'||checkout||promoCode.trim()||!active?.backendId||!selectedPickup||!currentQuoteKey||quoteMatches)return;
+    if(calPolyDemo||!supabase||!authenticated||!authUserId||flow!=='contact'||checkout||promoCode.trim()||!active?.backendId||!selectedPickup||!currentQuoteKey||quoteMatches)return;
     const requestKey=`${authUserId}:${currentQuoteKey}`;
     if(quoteFlight.current===requestKey)return;
     quoteFlight.current=requestKey;
@@ -682,25 +731,26 @@ export default function Home() {
     }
   }
   async function continueBag() {
-    if(calPolyDemo){
-      setNotice({title:'Demo bag',message:'This preview does not place orders or take payments.'});
-      return;
-    }
     const lines: BagLine[]=Object.values(cart);
-    if(!hydrated||checkingBag||!lines.length)return;
+    if(!hydrated||checkingBag||demoCheckoutRef.current||!lines.length)return;
     const request=++bagRequest.current;
     setCheckingBag(true);
     try {
       const kitchen=await fetchKitchenBySlug(lines[0].restaurantId);
-      const loaded=kitchen?await loadKitchenMenu(kitchen):null;
+      const loaded=kitchen?await loadKitchenMenu(kitchen,{cache:calPolyDemo}):null;
       if(request!==bagRequest.current)return;
       const meals=new Map(loaded?.meals.map(meal=>[meal.id,meal]));
-      if(!loaded||lines.some(item=>!meals.has(item.meal.id))){
+      if(!loaded||(!calPolyDemo&&lines.some(item=>!meals.has(item.meal.id)))){
         setNotice({title:'A meal kit is no longer available',message:'Remove unavailable items from your bag and try again.'});
         return;
       }
       const quantities=quantityByMeal(lines);
       const first=loaded.pickupSlots?.find(window=>Date.parse(window.cutoffAt)>Date.now()&&Date.parse(window.startsAt)>=Date.now()+checkoutLeadMs&&Object.entries(quantities).every(([id,qty])=>(window.remaining[id]??0)>=qty));
+      if(calPolyDemo){
+        const items=Object.entries(cartRef.current).map(([key,item])=>({...item,key,meal:meals.get(item.meal.id)??item.meal}));
+        replaceDemoCheckout(createDemoCheckoutDraft(loaded,items,cartRevisionRef.current,first));
+        return;
+      }
       if(loaded.backendId&&!first){
         setNotice({title:'No pickup time fits this bag',message:'Try a smaller quantity or remove a kit to see available pickup times.'});
         return;
@@ -842,7 +892,7 @@ export default function Home() {
     closeKitchen();setTab('Bag');
   };
   const place=async()=>{
-    if(submitting.current)return;
+    if(calPolyDemo||submitting.current)return;
     submitting.current=true;
     try{
     if(checkout){
@@ -1001,6 +1051,14 @@ export default function Home() {
       </View>
     </View>;
   }
+  if (calPolyDemo&&demoCheckout) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
+    <DemoCheckout restaurantName={demoCheckout.restaurantName} address={demoCheckout.address}
+      pickupLabel={orderPickupLabel({pickup_starts_at:demoCheckout.pickupStartsAt,restaurant_timezone:demoCheckout.timeZone})}
+      items={demoCheckout.items.map(item=>({key:item.key,name:item.meal.name,quantity:item.qty,options:item.options}))}
+      subtotalCents={demoCheckout.subtotalCents} confirmationDeadline={demoDeadline??null}
+      topInset={insets.top} bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeDemoCheckout}
+      onCheckout={beginDemoConfirmation} onConfirm={confirmDemoCheckout} onCancel={closeDemoCheckout}/>
+  </View>;
   if (tab==='Orders'&&selectedOrder) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
     <OrderDetails order={orderDetails(selectedOrder)} identityHeight={identityHeight} topInset={insets.top}
       bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeOrderDetails}/>
@@ -1226,9 +1284,9 @@ function LiveMenuReorder({kitchen,userId,demoOrders,add,reduced,disabled,count,q
     </ScrollView>
   </View>;
 }
-type CustomerOrder=DemoOrder|NonNullable<Awaited<ReturnType<typeof fetchOrderHistory>>['data']>[number];
+type CustomerOrder=DemoOrder|DemoSessionOrder|NonNullable<Awaited<ReturnType<typeof fetchOrderHistory>>['data']>[number];
 
-function customerOrderStatus(order:CustomerOrder){if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return order.payment_status==='paid'?'Paid · awaiting kitchen':'Awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
+function customerOrderStatus(order:CustomerOrder){if(order.payment_method==='demo_checkout')return 'Order confirmed';if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return order.payment_status==='paid'?'Paid · awaiting kitchen':'Awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
 function isUpcomingCustomerOrder(order:CustomerOrder,now=Date.now()) {
   const pickupAt=Date.parse(order?.pickup_starts_at??'');
   const pickupEndsAt=Date.parse(order?.pickup_ends_at??'');
@@ -1254,7 +1312,7 @@ function safeOrderTimezone(value:unknown) {
   catch { return 'UTC'; }
 }
 
-function orderPickupLabel(order:CustomerOrder) {
+function orderPickupLabel(order:Pick<CustomerOrder,'pickup_starts_at'|'restaurant_timezone'>) {
   return new Intl.DateTimeFormat('en-US',{
     timeZone:safeOrderTimezone(order.restaurant_timezone),weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',
   }).format(new Date(order.pickup_starts_at));
