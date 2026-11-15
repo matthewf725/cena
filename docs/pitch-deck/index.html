@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cena Pitch Deck</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,500;9..40,600;9..40,700&family=DM+Serif+Display:ital@0;1&display=swap">
+<style>
+/* Layout: full-screen maroon slides that snap on scroll; few words, set large for a projector; matches cena-xi.vercel.app */
+:root {
+  --maroon: #5D100A;
+  --maroon-deep: #430A06;
+  --cream: #FAF6F3;
+  --blush: #F7E9DF;
+  --clay: #E0A98E;
+  --ink: #271D19;
+  --ink-soft: #6A564D;
+  --on-maroon-soft: #E6CFC6;
+  --line: rgba(250, 246, 243, 0.22);
+  --bad: #B5432F;
+  --font-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+  --font-sans: "DM Sans", "Helvetica Neue", Arial, sans-serif;
+  --radius: 28px;
+  --bullet: clamp(22px, 2.3vw, 34px);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--maroon);
+  color: var(--cream);
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+.deck { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+.slide {
+  position: relative;
+  min-height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-block: clamp(40px, 6vh, 72px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow: hidden;
+}
+.slide.alt { background: var(--maroon-deep); }
+.wrap { width: 100%; max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: clamp(24px, 4.5vh, 52px); }
+
+.title { font-weight: 700; font-size: clamp(46px, 7vw, 104px); line-height: 1; letter-spacing: -0.03em; margin: 0; text-wrap: balance; }
+.clay { color: var(--clay); }
+.card { background: var(--cream); color: var(--ink); border-radius: var(--radius); padding: clamp(22px, 2.6vw, 36px); }
+.wordmark { font-weight: 700; letter-spacing: -0.04em; line-height: 1; }
+.wordmark i { font-style: normal; color: var(--clay); }
+
+ul.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4em; font-size: var(--bullet); font-weight: 700; line-height: 1.15; }
+ul.list li { position: relative; padding-left: 1.15em; }
+ul.list li::before { content: ""; position: absolute; left: 0.1em; top: 0.4em; width: 0.38em; height: 0.38em; border-radius: 50%; background: var(--maroon); }
+ul.list li small { display: block; font-size: 0.68em; font-weight: 600; color: var(--ink-soft); margin-top: 2px; }
+
+/* ---------- Scenario ---------- */
+.time { display: inline-flex; align-items: center; gap: 0.4em; align-self: flex-start; font-size: clamp(18px, 1.8vw, 26px); font-weight: 700; color: var(--maroon); background: var(--blush); padding: 0.3em 0.75em; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.time svg { flex: none; width: 1em; height: 1em; }
+.s1 .stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 340px) minmax(0, 1fr); align-items: center; gap: clamp(12px, 2vw, 28px); }
+.s1 .card { display: flex; flex-direction: column; gap: clamp(16px, 2.4vh, 26px); }
+.s1 .who { font-family: var(--font-display); font-size: clamp(32px, 3.5vw, 50px); line-height: 1.05; margin: 0; text-wrap: balance; }
+.route { position: relative; height: 240px; display: grid; place-items: center; }
+.route svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.route .dash { stroke: var(--clay); stroke-width: 6; stroke-dasharray: 0.1 15; stroke-linecap: round; fill: none; }
+.route .pin { fill: var(--cream); }
+.route .pin-dot { fill: var(--maroon); }
+.route .pulse { fill: var(--clay); transform-origin: center; transform-box: fill-box; animation: pulse 2s ease-out infinite; }
+.route .dist { position: absolute; top: 4px; left: 50%; translate: -50% 0; font-size: clamp(15px, 1.4vw, 20px); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-maroon-soft); white-space: nowrap; }
+.route .route-v { display: none; }
+.center-mark { position: relative; z-index: 2; background: var(--maroon); padding: 6px 16px 12px; border-radius: 24px; }
+.center-mark .wordmark { font-size: clamp(72px, 8.2vw, 122px); }
+@keyframes pulse { 0% { transform: scale(.6); opacity: .9 } 100% { transform: scale(2.6); opacity: 0 } }
+
+/* ---------- How Cena solves it ---------- */
+.tagline { font-size: clamp(26px, 3.3vw, 48px); font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; margin: clamp(8px, 2.5vh, 28px) 0 clamp(4px, 1.5vh, 16px); display: flex; flex-direction: column; gap: 0.3em; }
+.tagline .big { font-size: clamp(36px, 4.8vw, 70px); line-height: 1; letter-spacing: -0.025em; }
+.timeline { list-style: none; margin: 0; padding: 0; position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.timeline::before { content: ""; position: absolute; left: 0; right: 0; top: 30px; height: 4px; border-radius: 4px; background: var(--clay); transform-origin: left center; }
+.timeline li { position: relative; display: flex; flex-direction: column; gap: 20px; }
+.timeline .node { width: 64px; height: 64px; border-radius: 50%; background: var(--cream); color: var(--maroon); display: grid; place-items: center; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 8px var(--maroon-deep); }
+.timeline .label { font-size: clamp(24px, 2.7vw, 40px); font-weight: 700; line-height: 1.08; letter-spacing: -0.015em; text-wrap: balance; padding-right: 8px; }
+
+/* ---------- Why not ... ---------- */
+.s3 .wrap { gap: clamp(18px, 3vh, 32px); }
+.s3 .title { font-size: clamp(44px, 6.2vw, 88px); }
+.compare { --bullet: clamp(20px, 1.95vw, 28px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: auto auto; gap: 0 18px; align-items: stretch; }
+.opt { display: grid; grid-row: span 2; grid-template-rows: subgrid; padding: 0; overflow: hidden; }
+.opt .top, .opt .fix { padding: clamp(18px, 2vw, 28px); display: flex; flex-direction: column; gap: clamp(12px, 1.8vh, 18px); }
+.opt h3 { margin: 0; font-size: clamp(28px, 3vw, 44px); line-height: 1; letter-spacing: -0.02em; }
+.opt .x li::before { content: "×"; background: none; width: auto; height: auto; border-radius: 0; left: 0; top: -0.06em; color: var(--bad); font-size: 1.15em; line-height: 1; }
+.opt .fix { background: var(--clay); }
+.opt .fix .label { font-size: clamp(20px, 2vw, 28px); font-weight: 700; color: var(--maroon); display: flex; align-items: baseline; gap: 8px; }
+.opt .fix .wordmark { font-size: 1.35em; color: var(--maroon); }
+.opt .fix .wordmark i { color: var(--cream); }
+.opt .check li::before { content: "✓"; background: none; width: auto; height: auto; border-radius: 0; left: 0; top: 0.02em; color: var(--maroon); font-size: 0.95em; }
+.opt .check li small { color: #5A2A1E; }
+
+/* ---------- Our customer ---------- */
+.traits { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.traits li { display: flex; flex-direction: column; gap: 8px; padding: 6px clamp(14px, 2vw, 30px); border-left: 2px solid var(--line); }
+.traits li:first-child { border-left: 0; padding-left: 0; }
+.traits li { font-size: clamp(26px, 2.9vw, 42px); font-weight: 700; line-height: 1.1; letter-spacing: -0.015em; text-wrap: balance; }
+.slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.slot { border: 2px dashed rgba(224, 169, 142, 0.6); border-radius: 22px; padding: clamp(16px, 2vw, 26px); display: flex; flex-direction: column; gap: 6px; }
+.slot b { font-size: clamp(34px, 4vw, 56px); line-height: 1; color: var(--cream); font-variant-numeric: tabular-nums; }
+.slot span { font-size: clamp(16px, 1.5vw, 21px); font-weight: 600; color: var(--on-maroon-soft); }
+
+/* ---------- Demo ---------- */
+.demo { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: clamp(20px, 4vw, 56px); align-items: center; }
+.demo-copy { display: flex; flex-direction: column; gap: clamp(22px, 4vh, 40px); }
+.s5 .title { font-size: clamp(42px, 5.6vw, 82px); }
+.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; font-size: clamp(24px, 2.6vw, 38px); font-weight: 700; line-height: 1.1; }
+.flow li { display: flex; gap: 18px; align-items: center; }
+.flow .dot { flex: none; width: 1.5em; height: 1.5em; border-radius: 50%; background: var(--clay); color: var(--maroon); display: grid; place-items: center; font-size: 0.72em; font-variant-numeric: tabular-nums; }
+.btn { display: inline-flex; align-items: center; gap: 14px; align-self: flex-start; background: var(--cream); color: var(--maroon); font-weight: 700; font-size: clamp(20px, 1.9vw, 26px); padding: 20px 32px; border-radius: 999px; text-decoration: none; transition: transform .2s, background .2s; }
+.btn:hover { transform: translateY(-2px); background: var(--blush); }
+.btn:focus-visible { outline: 3px solid var(--clay); outline-offset: 3px; }
+.btn.placeholder { background: transparent; color: var(--cream); border: 2px dashed var(--clay); }
+.phone { justify-self: center; width: min(310px, 100%); aspect-ratio: 9 / 17; max-width: 100%; background: var(--cream); border-radius: 40px; border: 10px solid var(--ink); color: var(--ink); padding: 22px 16px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; font-size: 16px; }
+.phone .wordmark { font-size: 30px; color: var(--maroon); }
+.phone .wordmark i { color: #B9674B; }
+.kit { border-radius: 18px; background: var(--blush); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.kit .meta { font-size: 12px; color: var(--ink-soft); }
+.kit .name { font-weight: 700; font-size: 17px; line-height: 1.2; }
+.kit .row { display: flex; justify-content: space-between; align-items: center; font-variant-numeric: tabular-nums; }
+.kit .row s { color: var(--ink-soft); font-size: 13px; margin-left: 4px; }
+.kit .pill { background: var(--maroon); color: var(--cream); font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 999px; }
+.times { font-size: 12px; color: var(--ink-soft); display: flex; gap: 6px; flex-wrap: wrap; }
+.times span { border: 1px solid rgba(39,29,25,.15); border-radius: 999px; padding: 4px 9px; }
+.times span.on { background: var(--maroon); color: var(--cream); border-color: var(--maroon); }
+
+/* ---------- Would people pay? ---------- */
+.proof { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(20px, 4vw, 60px); align-items: center; }
+.pay { display: flex; flex-direction: column; gap: 14px; }
+.pay .n { font-family: var(--font-display); font-size: clamp(76px, 10.5vw, 156px); line-height: .92; color: var(--maroon); font-variant-numeric: tabular-nums; }
+.pay .fill { display: inline-block; min-width: 1.5ch; border-bottom: 5px dashed #B9674B; text-align: center; color: #B9674B; }
+.pay p { margin: 0; font-size: clamp(24px, 2.5vw, 36px); font-weight: 700; line-height: 1.12; text-wrap: balance; }
+.pay .hot { color: #B9674B; }
+.pay .hot em { font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: 1.14em; letter-spacing: 0; }
+.quotes { display: flex; flex-direction: column; }
+.quotes blockquote { margin: 0; padding: clamp(14px, 2.4vh, 24px) 0; border-top: 2px solid var(--line); font-family: var(--font-display); font-size: clamp(24px, 2.6vw, 38px); line-height: 1.15; text-wrap: balance; }
+.quotes blockquote:first-child { border-top: 0; padding-top: 0; }
+.quotes blockquote:last-child { padding-bottom: 0; }
+
+/* ---------- Transitions ---------- */
+.js .r { opacity: 0; transform: translateY(28px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.8,.2,1); transition-delay: calc(var(--d, 0) * 120ms); }
+.js .slide.in .r { opacity: 1; transform: none; }
+.js .timeline::before { transform: scaleX(0); transition: transform 1.4s cubic-bezier(.3,.7,.2,1) .35s; }
+.js .slide.in .timeline::before { transform: scaleX(1); }
+/* Click builds: [data-at="n"] appears once the slide reaches step n */
+.js [data-at] { opacity: 0; transform: translateY(22px) scale(.96); pointer-events: none; transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+.js svg [data-at] { transform: none; }
+.js [data-at].on { opacity: 1; transform: none; pointer-events: auto; }
+
+.dots { position: fixed; right: max(12px, calc(env(safe-area-inset-right, 0px) + 8px)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 5; }
+.dots button { width: 9px; height: 9px; padding: 0; border-radius: 50%; border: 1px solid var(--on-maroon-soft); background: transparent; cursor: pointer; opacity: .7; transition: background .3s, transform .3s; }
+.dots button[aria-current="true"] { background: var(--clay); border-color: var(--clay); transform: scale(1.3); opacity: 1; }
+.dots button:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; }
+
+@media (max-width: 900px) {
+  .deck { scroll-snap-type: y proximity; }
+  .js [data-at] { opacity: 1; transform: none; pointer-events: auto; }
+  .s1 .stage { grid-template-columns: minmax(0, 1fr); }
+  .route { height: 210px; }
+  .route .route-h { display: none; }
+  .route .route-v { display: block; }
+  .route .dist { top: 50%; left: auto; right: 0; translate: 0 -50%; }
+  .timeline { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .timeline::before { left: 30px; right: auto; top: 0; bottom: 0; width: 4px; height: auto; transform-origin: center top; }
+  .js .timeline::before { transform: scaleY(0); }
+  .js .slide.in .timeline::before { transform: scaleY(1); }
+  .timeline li { flex-direction: row; align-items: center; }
+  .timeline .node { flex: none; }
+  .compare, .demo, .proof, .slots { grid-template-columns: minmax(0, 1fr); }
+  .compare { grid-template-rows: none; gap: 16px; }
+  .opt { grid-row: auto; grid-template-rows: auto auto; }
+  .traits { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 0; }
+  .traits li:nth-child(odd) { border-left: 0; padding-left: 0; }
+  .dots { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deck { scroll-behavior: auto; }
+  .js .r, .js [data-at], .js .timeline::before { transition: none; }
+  .route .pulse { animation: none; }
+}
+</style>
+</head>
+<body style="margin:0">
+<main class="deck" id="deck">
+
+  <!-- 0. Blank opener -->
+  <section class="slide" aria-label="Opening"></section>
+
+  <!-- 1. The scenario -->
+  <section class="slide s1" data-steps="2" aria-label="The problem">
+    <div class="wrap">
+      <div class="stage">
+        <article class="card r">
+          <span class="time"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>5 PM</span>
+          <p class="who">A mom in SLO gets home from work.</p>
+          <ul class="list">
+            <li>Tired</li>
+            <li>Delivery expensive</li>
+          </ul>
+        </article>
+
+        <div class="route" aria-hidden="true">
+          <span class="dist" data-at="1">1 mile away</span>
+          <svg class="route-v" viewBox="0 0 100 200" preserveAspectRatio="none">
+            <path class="dash" d="M50 4 C 20 50, 80 90, 50 110 S 30 170, 50 196"/>
+          </svg>
+          <svg class="route-h" viewBox="0 0 300 240" preserveAspectRatio="xMidYMid meet">
+            <path class="dash" data-at="1" d="M8 165 C 80 165, 90 80, 150 122 S 230 80, 292 80"/>
+            <circle class="pulse" cx="8" cy="165" r="8"/>
+            <circle class="pin" cx="8" cy="165" r="10"/><circle class="pin-dot" cx="8" cy="165" r="4.5"/>
+            <g data-at="1"><circle class="pulse" cx="292" cy="80" r="8"/><circle class="pin" cx="292" cy="80" r="10"/><circle class="pin-dot" cx="292" cy="80" r="4.5"/></g>
+          </svg>
+          <div class="center-mark" data-at="2"><div class="wordmark">cena<i>.</i></div></div>
+        </div>
+
+        <article class="card" data-at="1">
+          <span class="time"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>3–5 PM</span>
+          <p class="who">A restaurant is bleeding money.</p>
+          <ul class="list">
+            <li>Dead time</li>
+            <li>Fixed costs keep running</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. How Cena solves it -->
+  <section class="slide alt" aria-label="How Cena solves it">
+    <div class="wrap">
+      <h2 class="title r" style="--d:0">How Cena solves it</h2>
+      <p class="tagline r" style="--d:1"><span class="big">Restaurant favorites</span><span class="clay">prepped and waiting in your fridge</span></p>
+      <ol class="timeline">
+        <li class="r" style="--d:3"><span class="node">1</span><span class="label">Restaurants prep kits</span></li>
+        <li class="r" style="--d:5"><span class="node">2</span><span class="label">Parents schedule pickup</span></li>
+        <li class="r" style="--d:7"><span class="node">3</span><span class="label">Grab it on the way home</span></li>
+        <li class="r" style="--d:9"><span class="node">4</span><span class="label">Finish at home</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 3. Why not ... -->
+  <section class="slide s3" data-steps="3" aria-label="Why not the other options">
+    <div class="wrap">
+      <h2 class="title r">Why not ...</h2>
+      <div class="compare">
+        <article class="card opt" data-at="1">
+          <div class="top">
+            <h3>HelloFresh</h3>
+            <ul class="list x">
+              <li>Poor value for price</li>
+              <li>30+ min cook time<small>not 20</small></li>
+              <li>Subscription</li>
+            </ul>
+          </div>
+          <div class="fix">
+            <span class="label">With <span class="wordmark">cena<i>.</i></span></span>
+            <ul class="list check">
+              <li>30% more protein</li>
+              <li>No prep needed</li>
+              <li>No subscription, no commitment</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="card opt" data-at="2">
+          <div class="top">
+            <h3>Delivery</h3>
+            <ul class="list x">
+              <li>Food isn't fresh</li>
+              <li>Too expensive</li>
+            </ul>
+          </div>
+          <div class="fix">
+            <span class="label">With <span class="wordmark">cena<i>.</i></span></span>
+            <ul class="list check">
+              <li>Fresh off your stove</li>
+              <li>Costs 40–50% less<small>all in</small></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="card opt" data-at="3">
+          <div class="top">
+            <h3>Cooking from scratch</h3>
+            <ul class="list x">
+              <li>Deciding dinner</li>
+              <li>Shop, chop, cook</li>
+              <li>Too tired</li>
+            </ul>
+          </div>
+          <div class="fix">
+            <span class="label">With <span class="wordmark">cena<i>.</i></span></span>
+            <ul class="list check">
+              <li>Already prepped</li>
+              <li>No shop, no chop</li>
+              <li>Done in 15</li>
+            </ul>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Our customer -->
+  <section class="slide alt" aria-label="Our customer">
+    <div class="wrap">
+      <h2 class="title r" style="--d:0">Our customer</h2>
+      <ul class="traits">
+        <li class="r" style="--d:1">3–5 people per household</li>
+        <li class="r" style="--d:2">Cook more than eat out</li>
+        <li class="r" style="--d:3">Dual income household</li>
+        <li class="r" style="--d:4">1 commute</li>
+      </ul>
+      <div class="slots r" style="--d:6">
+        <div class="slot"><b>__</b><span>Data point 1</span></div>
+        <div class="slot"><b>__</b><span>Data point 2</span></div>
+        <div class="slot"><b>__</b><span>Data point 3</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Live demo -->
+  <section class="slide s5" aria-label="Live demo">
+    <div class="wrap">
+      <div class="demo">
+        <div class="demo-copy">
+          <h2 class="title r" style="--d:0">So how does it actually work?</h2>
+          <ol class="flow r" style="--d:1">
+            <li><span class="dot">1</span>Browse kits</li>
+            <li><span class="dot">2</span>Schedule a pickup</li>
+            <li><span class="dot">3</span>Finish in 15 minutes</li>
+          </ol>
+          <a class="btn r" style="--d:2" id="demoLink" href="#" target="_blank" rel="noopener">Open the live demo <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="phone r" style="--d:2" aria-hidden="true">
+          <div class="wordmark">cena<i>.</i></div>
+          <div class="kit">
+            <span class="meta">Fridge · 15 min finish · Serves 4</span>
+            <span class="name">Rigatoni pomodoro kit</span>
+            <div class="row"><span><b>$15</b><s>$20</s></span><span class="pill">Reserve</span></div>
+          </div>
+          <div class="kit">
+            <span class="meta">Fridge · 12 min finish · Serves 2</span>
+            <span class="name">Tri-tip and roasted veggies</span>
+            <div class="row"><span><b>$18</b><s>$24</s></span><span class="pill">Reserve</span></div>
+          </div>
+          <div class="times"><span>4:30</span><span class="on">5:30</span><span>6:00</span><span>6:30</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Would people pay? -->
+  <section class="slide alt" aria-label="Would people pay">
+    <div class="wrap">
+      <h2 class="title r" style="--d:0">Would people pay?</h2>
+      <div class="proof">
+        <article class="card pay r" style="--d:1">
+          <div class="n"><span class="fill">__</span> of <span class="fill">__</span></div>
+          <p>said they would put a <span class="hot">card down <em>today</em>.</span></p>
+        </article>
+        <div class="quotes">
+          <blockquote class="r" style="--d:2">"Get food from my favorite restaurant for less with little effort."</blockquote>
+          <blockquote class="r" style="--d:3">"I don't have to think or shop, just 'do'."</blockquote>
+          <blockquote class="r" style="--d:4">"Shopping and thinking about what to make is a challenge."</blockquote>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="dots" id="dots" aria-label="Slides"></nav>
+
+<script>
+(function () {
+  // Paste the team's app link here for the live demo button.
+  var DEMO_URL = "";
+
+  document.documentElement.classList.add("js");
+  var deck = document.getElementById("deck");
+  var slides = Array.prototype.slice.call(deck.querySelectorAll(".slide"));
+  var current = 0;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var narrow = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false };
+
+  var link = document.getElementById("demoLink");
+  if (DEMO_URL) { link.href = DEMO_URL; }
+  else {
+    link.classList.add("placeholder");
+    link.removeAttribute("target");
+    link.textContent = "Live demo link goes here";
+    link.addEventListener("click", function (e) { e.preventDefault(); });
+  }
+
+  function maxStep(s) { return parseInt(s.getAttribute("data-steps") || "0", 10); }
+  function getStep(s) { return parseInt(s.getAttribute("data-step") || "0", 10); }
+  function setStep(s, n) {
+    n = Math.max(0, Math.min(maxStep(s), n));
+    s.setAttribute("data-step", String(n));
+    Array.prototype.forEach.call(s.querySelectorAll("[data-at]"), function (el) {
+      el.classList.toggle("on", parseInt(el.getAttribute("data-at"), 10) <= n);
+    });
+  }
+  slides.forEach(function (s) { setStep(s, 0); });
+
+  var dots = document.getElementById("dots");
+  slides.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.id = "dot-" + i;
+    b.setAttribute("aria-label", "Go to slide " + (i + 1) + ": " + s.getAttribute("aria-label"));
+    b.addEventListener("click", function (e) { e.stopPropagation(); go(i); });
+    dots.appendChild(b);
+  });
+
+  function go(i) {
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    slides[i].scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }
+  function mark(i) {
+    var prev = current;
+    current = i;
+    slides[i].classList.add("in");
+    if (i < prev) setStep(slides[i], maxStep(slides[i]));
+    Array.prototype.forEach.call(dots.children, function (d, k) { d.setAttribute("aria-current", k === i ? "true" : "false"); });
+  }
+  function next() {
+    var s = slides[current];
+    if (!narrow.matches && getStep(s) < maxStep(s)) { setStep(s, getStep(s) + 1); return; }
+    go(current + 1);
+  }
+  function back() {
+    var s = slides[current];
+    if (!narrow.matches && getStep(s) > 0) { setStep(s, getStep(s) - 1); return; }
+    go(current - 1);
+  }
+
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) mark(slides.indexOf(en.target)); });
+    }, { root: deck, threshold: 0.55 });
+    slides.forEach(function (s) { io.observe(s); });
+  } else {
+    slides.forEach(function (s) { s.classList.add("in"); setStep(s, maxStep(s)); });
+  }
+  mark(0);
+
+  window.addEventListener("keydown", function (e) {
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    var k = e.key;
+    if (k === "ArrowDown" || k === "ArrowRight" || k === "PageDown" || (k === " " && !e.shiftKey)) { e.preventDefault(); next(); }
+    else if (k === "ArrowUp" || k === "ArrowLeft" || k === "PageUp" || (k === " " && e.shiftKey)) { e.preventDefault(); back(); }
+    else if (k === "Home") { e.preventDefault(); slides.forEach(function (s) { setStep(s, 0); }); go(0); }
+    else if (k === "End") { e.preventDefault(); go(slides.length - 1); }
+  });
+
+  deck.addEventListener("click", function (e) {
+    if (e.target.closest("a, button")) return;
+    if (window.getSelection && String(window.getSelection())) return;
+    next();
+  });
+})();
+</script>
+</body>
+</html>
