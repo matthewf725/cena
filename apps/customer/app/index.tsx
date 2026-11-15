@@ -12,6 +12,7 @@ import { Text, TextInput } from '../components/type';
 import { Account } from '../components/account';
 import { CustomerSettings } from '../components/customer-settings';
 import { DemoCheckout, demoConfirmationMs } from '../components/demo-checkout';
+import { DemoOrderConfirmed } from '../components/demo-order-confirmed';
 import { DemoProfile } from '../components/demo-profile';
 import { loadDemoPreviewProfile, type DemoPreviewProfile } from '../lib/demo-profile';
 import { useOrderBadgePreference } from '../lib/order-badge-preference';
@@ -142,6 +143,7 @@ export default function Home() {
   const [demoAttempt,setDemoAttempt]=useState(0);
   const [demoProfile,setDemoProfile]=useState<DemoPreviewProfile|null>(null);
   const [demoCheckout,setDemoCheckout]=useState<DemoCheckoutDraft|null>(null);
+  const [demoOrderConfirmed,setDemoOrderConfirmed]=useState(false);
   const [demoSessionOrders,setDemoSessionOrders]=useState<DemoSessionOrder[]>([]);
   const demoCheckoutRef=useRef<DemoCheckoutDraft|null>(null);
   const replaceDemoCheckout=useCallback((draft:DemoCheckoutDraft|null)=>{
@@ -219,8 +221,12 @@ export default function Home() {
     orderScrollOffset.current=0;
     setSelectedOrderId(null);
     setOrderClock(Date.now());
-    setTab('Orders');
+    setDemoOrderConfirmed(true);
   },[bumpCartRevision,replaceDemoCheckout]);
+  const showDemoOrders=useCallback(()=>{
+    setDemoOrderConfirmed(false);
+    setTab('Orders');
+  },[]);
   const demoDeadline=demoCheckout?.confirmationDeadline;
   useEffect(()=>{
     if(demoDeadline==null)return;
@@ -353,6 +359,7 @@ export default function Home() {
           bagRequest.current++;
           setCheckingBag(false);
           replaceDemoCheckout(null);
+          setDemoOrderConfirmed(false);
           setDemoSessionOrders([]);
         }
         setSelectedOrderId(null);
@@ -1056,13 +1063,14 @@ export default function Home() {
       </View>
     </View>;
   }
+  if (calPolyDemo&&demoOrderConfirmed) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right,paddingBottom:insets.bottom}]}>
+    <DemoOrderConfirmed reduced={reduceMotion} onDone={showDemoOrders}/>
+  </View>;
   if (calPolyDemo&&demoCheckout) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
     <DemoCheckout restaurantName={demoCheckout.restaurantName} address={demoCheckout.address}
       pickupLabel={orderPickupLabel({pickup_starts_at:demoCheckout.pickupStartsAt,restaurant_timezone:demoCheckout.timeZone})}
-      items={demoCheckout.items.map(({key,meal,qty,options})=>({key,name:meal.name,quantity:qty,options,
-        actualCents:qty*Math.round(meal.price*100),
-        originalCents:meal.preparedMealTotalCents===undefined?undefined:qty*meal.preparedMealTotalCents}))}
-      subtotalCents={demoCheckout.subtotalCents} confirmationDeadline={demoDeadline??null}
+      items={demoCheckout.items.map(({key,meal,qty,options})=>({key,name:meal.name,quantity:qty,options}))}
+      confirmationDeadline={demoDeadline??null}
       topInset={insets.top} bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeDemoCheckout}
       onConfirm={beginDemoConfirmation} onCancel={closeDemoCheckout}/>
   </View>;

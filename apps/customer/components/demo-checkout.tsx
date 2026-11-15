@@ -14,15 +14,12 @@ type CheckoutItem = {
   name: string;
   quantity: number;
   options: string;
-  actualCents: number;
-  originalCents?: number;
 };
 
 type DemoCheckoutProps = {
   address: string;
   restaurantName: string;
   pickupLabel?: string;
-  subtotalCents: number;
   items?: CheckoutItem[];
   confirmationDeadline: number | null;
   topInset: number;
@@ -34,7 +31,7 @@ type DemoCheckoutProps = {
 };
 
 export function DemoCheckout({
-  address, restaurantName, pickupLabel, subtotalCents, items = [], confirmationDeadline,
+  address, restaurantName, pickupLabel, items = [], confirmationDeadline,
   topInset, bottomInset, reduced, onBack, onConfirm, onCancel,
 }: DemoCheckoutProps) {
   const confirming = confirmationDeadline !== null;
@@ -139,15 +136,10 @@ export function DemoCheckout({
         <Text accessibilityRole="header" style={s.summaryTitle}>Order summary</Text>
         {items.map(item => <View key={item.key} style={s.summaryItem}>
           <View style={s.itemDetails}>
-            <Text style={s.value}>{item.quantity > 1 ? `${item.quantity} × ` : ''}{item.name}</Text>
+            <Text style={s.value}>{item.name}</Text>
             {!!item.options && <Text style={s.secondary}>{item.options}</Text>}
           </View>
-          <View style={s.itemPrices}>
-            {item.originalCents !== undefined && item.originalCents > item.actualCents && (
-              <Text testID="demo-checkout-original-price" style={s.originalPrice}>${(item.originalCents / 100).toFixed(2)}</Text>
-            )}
-            <Text testID="demo-checkout-actual-price" style={s.actualPrice}>${(item.actualCents / 100).toFixed(2)}</Text>
-          </View>
+          <Text testID="demo-checkout-quantity" accessibilityLabel={`Quantity ${item.quantity}`} style={s.quantity}>{item.quantity}x</Text>
         </View>)}
       </View>}
     </ScrollView>}
@@ -163,16 +155,10 @@ export function DemoCheckout({
           <Pressable accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [s.action, s.cancel, pressed && s.pressed]}>
             <Text style={s.cancelText}>Cancel order</Text>
           </Pressable>
-        </> : <>
-          <View style={s.total}>
-            <Text style={s.totalLabel}>Total</Text>
-            <Text style={s.totalPrice}>${(subtotalCents / 100).toFixed(2)}</Text>
-          </View>
-          <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onConfirm(); }}
+        </> : <Pressable accessibilityRole="button" onPress={() => { setChoosingCard(false); onConfirm(); }}
             style={({ pressed }) => [s.action, s.primary, pressed && s.pressed]}>
             <Text style={s.primaryText}>Confirm order</Text>
-          </Pressable>
-        </>}
+          </Pressable>}
       </View>
     </View>
   </View>;
@@ -202,14 +188,9 @@ const s = StyleSheet.create({
   summaryTitle: { fontSize: 18, fontWeight: '600', color: ink, marginBottom: 2 },
   summaryItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: line },
   itemDetails: { flex: 1, minWidth: 0, gap: 2 },
-  itemPrices: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', flexWrap: 'wrap', maxWidth: '55%', gap: 7 },
-  originalPrice: { fontSize: 13, color: muted, textDecorationLine: 'line-through', fontVariant: ['tabular-nums'] },
-  actualPrice: { fontSize: 16, lineHeight: 21, fontWeight: '600', color: maroon, fontVariant: ['tabular-nums'] },
+  quantity: { fontSize: 16, lineHeight: 21, fontWeight: '600', color: maroon, fontVariant: ['tabular-nums'] },
   footer: { backgroundColor: '#FFFDFA', borderTopWidth: 1, borderTopColor: line },
   footerInner: { width: '100%', maxWidth: homeContentMaxWidth, alignSelf: 'center', paddingTop: 12, paddingHorizontal: 18, gap: 10 },
-  total: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 32 },
-  totalLabel: { fontSize: 16, fontWeight: '600', color: ink },
-  totalPrice: { fontSize: 18, fontWeight: '600', color: ink, fontVariant: ['tabular-nums'] },
   action: { minHeight: 51, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   primary: { backgroundColor: maroon },
   primaryText: { color: '#FFF', fontSize: 17, fontWeight: '600', textAlign: 'center' },
