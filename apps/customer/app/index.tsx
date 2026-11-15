@@ -969,7 +969,8 @@ export default function Home() {
   const onAccount=tab==='Account';
   const menuIsOpen=Boolean(active)&&flow==='menu';
   const compactLocation=tab!=='Home'||homeCompact;
-  const topSpace=identityHeight+headerContentGap;
+  const contentGap=headerContentGap+(tab==='Home'?6:0);
+  const topSpace=identityHeight+contentGap;
   const settingsBottom=Math.max(20,insets.bottom+20);
   const requiresSignIn = !calPolyDemo && Boolean(supabase) && !authenticated;
   const checkingAccount = !calPolyDemo && Boolean(supabase) && !authResolved;
@@ -1016,7 +1017,7 @@ export default function Home() {
     <View style={tabStyles.mainTab}>
     <View style={active||showLocation?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
-      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top} solid={tab==='Home'}>{identityBar}</PageHeader>}
+      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top} solid={tab==='Home'} contentGap={contentGap}>{identityBar}</PageHeader>}
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
@@ -1045,7 +1046,7 @@ export default function Home() {
       {flow==='menu'&&<RestaurantMenuBoundary restaurantLabel={active.name} onRetry={()=>void openKitchen(active,true)}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:120}}
         contentOffset={{x:0,y:menuScrollOffset.current}} scrollEventThrottle={16}
         onScroll={event=>{menuScrollOffset.current=event.nativeEvent.contentOffset.y;}}>
-        <View style={tabStyles.menuHeader} testID="restaurant-menu-header">
+        <View style={tabStyles.restaurantDetails} testID="restaurant-menu-header">
           <Image source={restaurantPhoto(active)} resizeMode="cover" style={{width:'100%',height:Math.round(contentWidth*9/16)}}/>
           <View style={s.restaurantHeroBottom}><Text style={s.restaurantName}>{active.name}</Text><Text style={s.restaurantDesc}>{active.cuisine}</Text></View>
           <View style={s.restaurantMeta}><RestaurantRating kitchen={active}/>{formatDistance(active.distanceMiles)&&<View style={s.metaItem}><MapPin size={18} color={deepMaroon}/><Text style={s.menuMetaText}>{formatDistance(active.distanceMiles)}</Text></View>}</View>
@@ -1103,6 +1104,7 @@ function CustomerNotice({notice,dismiss}:{notice:{title:string;message:string};d
 
 const tabStyles=StyleSheet.create({
   mainTab:{flex:1},hiddenTab:{display:'none'},menuHeader:{backgroundColor:headerTint},
+  restaurantDetails:{backgroundColor:'#FFF'},
   menuInset:{position:'absolute',top:0,left:0,right:0},
 });
 

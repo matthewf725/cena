@@ -12,21 +12,23 @@ export const headerTint = '#FFE1D5';
 const maroon = '#46110E';
 const muted = '#77645B';
 const controlSize = 44;
-export function PageHeader({ children, identityHeight, topInset, overlay = false, solid = false }: {
+
+export function PageHeader({ children, identityHeight, topInset, overlay = false, solid = false, contentGap = headerContentGap }: {
   children: ReactNode;
   identityHeight: number;
   topInset: number;
   overlay?: boolean;
   solid?: boolean;
+  contentGap?: number;
 }) {
   const tintId = useId();
   const barHeight = identityHeight + topInset;
   const fadeHeight = barHeight + 80;
   return <View pointerEvents="box-none" style={[s.header,
-    overlay ? s.headerOverlay : { minHeight: identityHeight + headerContentGap },
+    overlay ? s.headerOverlay : { minHeight: identityHeight + contentGap },
   ]}>
     <View pointerEvents="none" aria-hidden style={[s.surface, {
-      top: -topInset, height: solid ? barHeight + headerContentGap : fadeHeight,
+      top: -topInset, height: solid ? barHeight + contentGap : fadeHeight,
       backgroundColor: solid ? headerTint : undefined,
     }]}>
       {!solid && <Svg width="100%" height="100%">
