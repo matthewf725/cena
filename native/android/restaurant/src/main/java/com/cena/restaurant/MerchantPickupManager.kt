@@ -49,13 +49,15 @@ class MerchantPickupManager(
     private var loadedItems = JSONArray()
     private var creatingSlot = false
     private var savingInventorySlot: String? = null
+    @Volatile private var screenActive = true
 
     fun show() {
+        screenActive = true
         renderLoading()
         launcher.launch(
             { loadData().toString() },
-            { renderList(JSONObject(it)) },
-            { error -> renderLoadError(error) },
+            { if (isScreenCurrent()) renderList(JSONObject(it)) },
+            { error -> if (isScreenCurrent()) renderLoadError(error) },
         )
     }
 
@@ -84,10 +86,17 @@ class MerchantPickupManager(
         if (!isCurrentScope()) throw IllegalStateException("Restaurant selection changed. Reopen pickup windows and try again.")
     }
 
+    private fun isScreenCurrent(): Boolean = screenActive && isCurrentScope() && !activity.isFinishing && !activity.isDestroyed
+
+    private fun leaveScreen() {
+        screenActive = false
+        onBack()
+    }
+
     private fun renderLoading() {
         val content = newPage("Pickup windows & inventory")
         addText(content, "Loading future pickup windows…")
-        addButton(content, "Back to restaurant", onBack)
+        addButton(content, "Back to restaurant") { leaveScreen() }
         showPage(content)
     }
 
@@ -95,7 +104,7 @@ class MerchantPickupManager(
         val content = newPage("Pickup windows & inventory")
         addText(content, "Could not load pickup windows: ${error.message ?: "Check the connection and try again."}")
         addButton(content, "Retry") { show() }
-        addButton(content, "Back to restaurant", onBack)
+        addButton(content, "Back to restaurant") { leaveScreen() }
         showPage(content)
     }
 
@@ -115,7 +124,7 @@ class MerchantPickupManager(
             val slot = loadedSlots.optJSONObject(index) ?: continue
             renderSlotCard(content, slot)
         }
-        addButton(content, "Back to restaurant", onBack)
+        addButton(content, "Back to restaurant") { leaveScreen() }
         showPage(content)
     }
 
@@ -224,12 +233,14 @@ class MerchantPickupManager(
                     refreshed.toString()
                 },
                 { result ->
+                    if (!isScreenCurrent()) return@launch
                     saving = false
                     savingInventorySlot = null
                     val refreshed = JSONObject(result)
                     renderList(refreshed, refreshed.optString("notice").takeIf { it.isNotBlank() }, refreshed.optBoolean("notice_is_error"))
                 },
                 { error ->
+                    if (!isScreenCurrent()) return@launch
                     saving = false
                     savingInventorySlot = null
                     saveButton.isEnabled = true
@@ -321,7 +332,16 @@ class MerchantPickupManager(
                 cutoffMinutes == null || cutoffMinutes !in 0..240 -> errorView.text = "Order cutoff must be between 0 and 240 minutes before start."
                 orderCapacity == null || orderCapacity !in 1..500 -> errorView.text = "Order capacity must be between 1 and 500."
                 else -> {
-                    val startsAt = runCatching { parsedStart.atZone(zone).toInstant() }.getOrNull()
+                    val validOffsets = zone.rules.getValidOffsets(parsedStart)
+                    if (validOffsets.isEmpty()) {
+                        errorView.text = "That local time does not exist because of a clock change. Choose another start time."
+                        return@addButtonEnabled
+                    }
+                    if (validOffsets.size > 1) {
+                        errorView.text = "That local time occurs twice because of a clock change. Choose an unambiguous start time."
+                        return@addButtonEnabled
+                    }
+                    val startsAt = runCatching { parsedStart.toInstant(validOffsets.single()) }.getOrNull()
                     if (startsAt == null || !startsAt.isAfter(Instant.now().plusSeconds(cutoffMinutes * 60L))) {
                         errorView.text = "Start time must be after the order cutoff."
                         return@addButtonEnabled
@@ -370,12 +390,14 @@ class MerchantPickupManager(
                             refreshed.toString()
                         },
                         { result ->
+                            if (!isScreenCurrent()) return@launch
                             busy = false
                             creatingSlot = false
                             val refreshed = JSONObject(result)
                             renderList(refreshed, refreshed.optString("notice").takeIf { it.isNotBlank() }, refreshed.optBoolean("notice_is_error"))
                         },
                         { error ->
+                            if (!isScreenCurrent()) return@launch
                             busy = false
                             creatingSlot = false
                             createButton.isEnabled = true
@@ -412,7 +434,9 @@ class MerchantPickupManager(
                 row.nonBlank("item_id")?.let { byItem[it] = row }
             }
             if (byItem.keys != itemIds.toSet()) continue
-            if (itemIds.all { id -> byItem[id]?.let { it.optInt("available_qty") + it.optInt("reserved_qty") == INITIAL_ITEM_STOCK } == true }) return slot
+            // Checkout increments reserved_qty but leaves available_qty as the stock ceiling.
+            // A just-created slot remains recognizable after an immediate reservation.
+            if (itemIds.all { id -> byItem[id]?.let { it.optInt("available_qty", -1) == INITIAL_ITEM_STOCK } == true }) return slot
         }
         return null
     }

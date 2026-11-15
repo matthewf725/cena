@@ -3,6 +3,11 @@ import UIKit
 import CoreLocation
 import SafariServices
 
+private struct CustomerHomeScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 @main struct CenaCustomerApp: App {
     init() {
         if ProcessInfo.processInfo.arguments.contains("--uitesting-reset") {
@@ -24,6 +29,7 @@ struct CustomerHome: View {
     @State private var items: [[String: Any]] = []
     @State private var recentRestaurants: [[String: Any]] = []
     @State private var exploreMeals: [[String: Any]] = []
+    @State private var searchMealMatches: [[String: Any]] = []
     @State private var nearbyRestaurants: [[String: Any]] = []
     @State private var categoryRails: [[String: Any]] = []
     @State private var nextFeedCursor: String?
@@ -82,6 +88,8 @@ struct CustomerHome: View {
     @State private var orderNumber: String?
     @State private var expandedOrderIDs: Set<String> = []
     @State private var profileName = ""
+    @State private var savedProfileName = ""
+    @State private var savedProfileOwnerID: String?
     @State private var profilePhone = ""
     @State private var profileEquipment: [String] = []
     @State private var profileLoading = false
@@ -95,11 +103,17 @@ struct CustomerHome: View {
     @State private var analyticsConsentRequestID = UUID()
     @State private var discoveryQuery = ""
     @State private var hasDiscoveryQuery = false
+    @State private var homeHeaderProgress: CGFloat = 0
     private var subtotal: Int { cart.reduce(0) { sum, entry in sum + entry.value * (cartItemDetails[entry.key].map { int($0["price_cents"]) } ?? 0) } }
     private var cartCount: Int { cart.values.reduce(0, +) }
     private var cartFingerprint: String { "\(str(checkoutRestaurant?["id"]))|\(str(checkoutSlot?["id"]))|" + cart.keys.sorted().map { "\($0):\(cart[$0, default: 0])" }.joined(separator: ",") }
     private var currentQuoteFingerprint: String { "\(cartFingerprint)|\(promoCodeInput.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())" }
     private var normalizedCustomerEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    private var navigationBarStyle: AnyShapeStyle {
+        tab == 0 && restaurant == nil && homeHeaderProgress >= 0.98
+            ? AnyShapeStyle(.regularMaterial)
+            : AnyShapeStyle(CenaStyle.peach)
+    }
     private var customerEmailBinding: Binding<String> { Binding(get: { email }, set: { setCustomerEmail($0) }) }
     private var quoteTaskKey: String { "\(cartFingerprint)|signed:\(api.signedIn)" }
     private var checkoutRestaurant: [String: Any]? { cartRestaurantInfo ?? restaurant }
@@ -131,6 +145,8 @@ struct CustomerHome: View {
             .frame(maxWidth: horizontalSizeClass == .regular ? 760 : .infinity)
             .frame(maxWidth: .infinity, alignment: .top)
             .navigationTitle(restaurant == nil ? "cena" : (str(restaurant?["name"]).isEmpty ? "Menu" : str(restaurant?["name"])))
+            .toolbarBackground(navigationBarStyle, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 if restaurant != nil { ToolbarItem(placement: .topBarLeading) { Button("Kitchens") { self.restaurant = nil; slots = []; slot = nil } } }
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -155,7 +171,7 @@ struct CustomerHome: View {
                             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(CenaStyle.rose, lineWidth: 1))
                             .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 5)
                         }
-                        HStack { tabButton("Discover", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
+                        HStack { tabButton("Home", icon: "fork.knife", value: 0); tabButton("Orders", icon: "clock.arrow.circlepath", value: 1); tabButton("Bag", icon: "bag", value: 2) }
                             .padding(.vertical, 7)
                     }
                     .background(CenaStyle.paper)
