@@ -50,7 +50,9 @@ insert into public.catalog_items (restaurant_id,name,description,price_cents,reg
  equipment,category,prep_minutes,option_groups,active,published_at)
 select r.id,m.name,m.description,round(m.regular*0.75),m.regular,m.image_key,
  array[m.equipment],'Dinner Kits',15,
- case when m.sample_order_day is null then '[]'::jsonb else
+ case when m.sample_order_day is null then '[]'::jsonb
+ when m.slug='cal-poly-giuseppes' and m.name='Carbonara Kit' then
+ '[{"id":"finish","name":"Garnish","min":0,"max":1,"choices":[{"id":"included","name":"Include garnish"}]}]'::jsonb else
  '[{"id":"finish","name":"Finishing options","min":0,"max":1,"choices":[{"id":"on_side","name":"Garnish on the side"},{"id":"included","name":"Include garnish"}]}]'::jsonb end,
  true,now()
 from cal_poly_demo_menu m join public.restaurants r on r.slug=m.slug
@@ -162,7 +164,9 @@ with cal_poly_demo_menu as (
 insert into public.order_items (order_id,item_id,name_snapshot,unit_price_cents,quantity,prep_steps_snapshot,options_snapshot)
 select o.id,i.id,i.name,i.price_cents,1,i.published_steps,
  jsonb_build_array(jsonb_build_object('quantity',1,'groups',
-   public.normalize_catalog_option_selections(i.option_groups,'{"finish":["on_side"]}'::jsonb)))
+   public.normalize_catalog_option_selections(i.option_groups,
+     case when m.slug='cal-poly-giuseppes' and m.name='Carbonara Kit' then '{"finish":["included"]}'::jsonb
+       else '{"finish":["on_side"]}'::jsonb end)))
 from inserted o join public.restaurants r on r.id=o.restaurant_id
 join cal_poly_demo_menu m on m.slug=r.slug and m.sample_order_day is not null
 join public.catalog_items i on i.restaurant_id=r.id and i.name=m.name;
