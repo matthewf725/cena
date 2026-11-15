@@ -20,6 +20,7 @@ import { Bag, type BagLine } from '../components/bag';
 import { LocationPicker } from '../components/location-picker';
 import { MealPrice } from '../components/meal-price';
 import { MealSelection } from '../components/meal-selection';
+import { OrderDetails } from '../components/order-details';
 import { MenuQuantity, useMenuTabOffset } from '../components/menu-quantity';
 import { useSlideUp } from '../components/slide-up';
 import { PickupCountdown } from '../components/pickup-countdown';
@@ -138,6 +139,14 @@ export default function Home() {
   const [demoAttempt,setDemoAttempt]=useState(0);
   const [demoProfile,setDemoProfile]=useState<DemoPreviewProfile|null>(null);
   const [orderClock,setOrderClock]=useState(Date.now);
+  const [selectedOrderId,setSelectedOrderId]=useState<string|null>(null);
+  const orderScrollOffset=useRef(0);
+  const closeOrderDetails=useCallback(()=>{
+    setSelectedOrderId(null);
+    if(Platform.OS==='web'&&selectedOrderId){
+      requestAnimationFrame(()=>document.getElementById(`customer-order-${selectedOrderId}`)?.focus({preventScroll:true}));
+    }
+  },[selectedOrderId]);
   const [profileRevision,setProfileRevision]=useState(0);
   const currentAuthUserId=useRef<string|null>(null);
   const initialAuthEvent=useRef(true);
@@ -299,6 +308,8 @@ export default function Home() {
         setCheckout(null);setPaymentStatus(null);setShowCheckoutRecovery(false);
         setQuote(null);setQuoteError('');setQuoteRecovery(null);
         setBackendOrders([]);
+        setSelectedOrderId(null);
+        orderScrollOffset.current=0;
         setCompletedItems([]);setCompletedTotal(0);
         idempotency.current={fingerprint:'',key:''};
       }
@@ -478,6 +489,8 @@ export default function Home() {
     (['pay_at_pickup','paid'].includes(order.payment_status)&&['placed','accepted','preparing','ready','completed'].includes(order.status))
     ||(order.payment_method==='stripe_checkout'&&order.payment_status==='refunded'&&order.status==='cancelled')
   ),[authUserId,backendOrders,demo]);
+  const selectedOrder=selectedOrderId?visibleOrders.find(order=>order.id===selectedOrderId):null;
+  useEffect(()=>{if(selectedOrderId&&!selectedOrder)setSelectedOrderId(null);},[selectedOrderId,selectedOrder]);
   const upcomingOrders=visibleOrders.filter(order=>isUpcomingCustomerOrder(order,orderClock));
   const upcomingCount=upcomingOrders.length;
   const nextOrderBoundary=upcomingOrders.reduce((soonest,order)=>{
@@ -969,8 +982,7 @@ export default function Home() {
   const onAccount=tab==='Account';
   const menuIsOpen=Boolean(active)&&flow==='menu';
   const compactLocation=tab!=='Home'||homeCompact;
-  const contentGap=headerContentGap+(tab==='Home'?6:0);
-  const topSpace=identityHeight+contentGap;
+  const topSpace=identityHeight+headerContentGap;
   const settingsBottom=Math.max(20,insets.bottom+20);
   const requiresSignIn = !calPolyDemo && Boolean(supabase) && !authenticated;
   const checkingAccount = !calPolyDemo && Boolean(supabase) && !authResolved;
@@ -989,6 +1001,11 @@ export default function Home() {
       </View>
     </View>;
   }
+  if (tab==='Orders'&&selectedOrder) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
+    <OrderDetails order={orderDetails(selectedOrder)} identityHeight={identityHeight} topInset={insets.top}
+      bottomInset={insets.bottom} reduced={reduceMotion} onBack={closeOrderDetails}/>
+    {notice&&<CustomerNotice notice={notice} dismiss={()=>setNotice(null)}/>}
+  </View>;
   if (selected) return <View style={[s.screen,{paddingTop:insets.top,paddingLeft:insets.left,paddingRight:insets.right}]}>
     <StatusBar style="dark"/>
     <RestaurantMenuBoundary key={selected.id} restaurantLabel={selected.name} backToMenu
@@ -1017,14 +1034,14 @@ export default function Home() {
     <View style={tabStyles.mainTab}>
     <View style={active||showLocation?tabStyles.hiddenTab:tabStyles.mainTab} pointerEvents={active||showLocation?'none':'auto'} aria-hidden={Boolean(active||showLocation)}
       {...(Platform.OS==='web'?active||showLocation?({inert:true} as any):{}:{accessibilityElementsHidden:Boolean(active||showLocation),importantForAccessibility:active||showLocation?'no-hide-descendants':'auto'})}>
-      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top} solid={tab==='Home'} contentGap={contentGap}>{identityBar}</PageHeader>}
+      {!onAccount&&<PageHeader overlay identityHeight={identityHeight} topInset={insets.top}>{identityBar}</PageHeader>}
       <Enter key={tab} reduced={reduceMotion} style={{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'}}>
       {tab==='Home'?<DiscoveryFeed width={contentWidth} side={contentSide} radius={contentRadius}
           query={query} reduced={reduceMotion} origin={origin} recentIds={recentIds}
           topSpace={topSpace} bottomSpace={navHeight+searchHeight+2*searchGap}
           onScroll={updateHomeScroll} suspended={Boolean(active)||showLocation}
           clearQuery={()=>setQuery('')}
-      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace} orderNow={orderClock}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<CustomerSettings
+      open={openKitchen}/>:tab==='Orders'?<LiveOrders orders={visibleOrders} topSpace={topSpace} orderNow={orderClock} scrollOffset={orderScrollOffset} onOpenOrder={setSelectedOrderId}/>:tab==='Bag'?<Bag items={Object.entries(cart).map(([key,item])=>({...item,key}))} addItems={()=>void addItemsFromBag()} subtotal={subtotal} radius={contentRadius} loading={checkingBag||!hydrated} locked={Boolean(checkout)||!hydrated} topSpace={topSpace} bottomNavHeight={navHeight} change={changeQty} remove={id=>changeQty(id,-Infinity)} browse={()=>navigate('Home')} checkout={()=>void continueBag()}/>:<CustomerSettings
         topInset={insets.top} bottomSpace={settingsBottom} reduced={reduceMotion} userId={authUserId}
         locationLabel={locationLabel} recentAddresses={recentAddresses} addressPickerOpen={showLocation}
         onClose={toggleProfile} onOpenAddress={()=>setShowLocation(true)} onSelectAddress={usePickupAddress} onRemoveAddress={removePickupAddress}
@@ -1037,7 +1054,7 @@ export default function Home() {
           email={email} setEmail={updateEmail} phone={phone} setPhone={setPhone} displayName={displayName}
           setDisplayName={setDisplayName} onProfileSaved={()=>setProfileRevision(current=>current+1)}/>}/>}
       </Enter>
-      {tab==='Home'&&!active&&!showLocation&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight} reduced={reduceMotion}/>}
+      {tab==='Home'&&!active&&!showLocation&&<HomeSearch query={query} setQuery={setQuery} bottom={navHeight+searchGap} radius={contentRadius} side={headerSide} height={searchHeight}/>}
     </View>
 
     {active&&<Animated.View key={active.id} style={[s.modalPage,{width:'100%',maxWidth:homeContentMaxWidth,alignSelf:'center'},
@@ -1209,8 +1226,10 @@ function LiveMenuReorder({kitchen,userId,demoOrders,add,reduced,disabled,count,q
     </ScrollView>
   </View>;
 }
-function customerOrderStatus(order:any){if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return order.payment_status==='paid'?'Paid · awaiting kitchen':'Awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
-function isUpcomingCustomerOrder(order:any,now=Date.now()) {
+type CustomerOrder=DemoOrder|NonNullable<Awaited<ReturnType<typeof fetchOrderHistory>>['data']>[number];
+
+function customerOrderStatus(order:CustomerOrder){if(order.payment_status==='refunded')return 'Refunded';switch(order.status){case 'placed':return order.payment_status==='paid'?'Paid · awaiting kitchen':'Awaiting kitchen';case 'accepted':return 'Kitchen accepted';case 'preparing':return 'Being prepared';case 'ready':return 'Ready for pickup';case 'completed':return 'Picked up';default:return 'Order updated';}}
+function isUpcomingCustomerOrder(order:CustomerOrder,now=Date.now()) {
   const pickupAt=Date.parse(order?.pickup_starts_at??'');
   const pickupEndsAt=Date.parse(order?.pickup_ends_at??'');
   const pickupInProgress=Number.isFinite(pickupEndsAt)&&pickupEndsAt>now&&pickupEndsAt>=pickupAt;
@@ -1235,9 +1254,36 @@ function safeOrderTimezone(value:unknown) {
   catch { return 'UTC'; }
 }
 
-type CustomerOrderDateGroup={key:string;stamp:number;timezone:string;dayOffset:number;orders:any[]};
-function groupCustomerOrdersByPickupDate(orders:any[],now:number):CustomerOrderDateGroup[] {
-  const byDate=new Map<string,{key:string;stamp:number;timezone:string;orders:any[]}>();
+function orderPickupLabel(order:CustomerOrder) {
+  return new Intl.DateTimeFormat('en-US',{
+    timeZone:safeOrderTimezone(order.restaurant_timezone),weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',
+  }).format(new Date(order.pickup_starts_at));
+}
+
+function orderRestaurant(order:CustomerOrder) {
+  return Array.isArray(order.restaurants)?order.restaurants[0]:order.restaurants;
+}
+
+function orderDetails(order:CustomerOrder):React.ComponentProps<typeof OrderDetails>['order'] {
+  const restaurant=orderRestaurant(order);
+  const discount='discount_cents' in order?order.discount_cents??0:0;
+  const promo='promo_code_snapshot' in order?order.promo_code_snapshot:null;
+  return {
+    code:order.id.slice(0,8).toUpperCase(), restaurant:restaurant?.name||'Cena kitchen', address:restaurant?.address,
+    status:customerOrderStatus(order), refunded:order.payment_status==='refunded', pickup:orderPickupLabel(order),
+    pickupMode:order.pickup_mode==='curbside'?'Curbside pickup':'Counter pickup', total:dollars((order.total_cents??order.subtotal_cents)/100),
+    savings:discount>0?`${promo?`${promo} · `:''}You saved ${dollars(discount/100)}`:undefined,
+    items:(order.order_items??[]).map((item,index)=>({
+      key:`${item.item_id}:${index}`, name:item.name_snapshot, quantity:item.quantity,
+      options:recentOrderOptionCombos(item.options_snapshot,item.quantity).filter(combo=>combo.label).map(combo=>`${combo.quantity}× ${combo.label}`),
+      steps:Array.isArray(item.prep_steps_snapshot)?item.prep_steps_snapshot.filter((step):step is string=>typeof step==='string'&&step.trim().length>0):[],
+    })),
+  };
+}
+
+type CustomerOrderDateGroup={key:string;stamp:number;timezone:string;dayOffset:number;orders:CustomerOrder[]};
+function groupCustomerOrdersByPickupDate(orders:CustomerOrder[],now:number):CustomerOrderDateGroup[] {
+  const byDate=new Map<string,{key:string;stamp:number;timezone:string;orders:CustomerOrder[]}>();
   for(const order of orders){
     const timezone=safeOrderTimezone(order.restaurant_timezone);
     const parts=orderDateParts(order.pickup_starts_at,timezone);
@@ -1256,9 +1302,16 @@ function groupCustomerOrdersByPickupDate(orders:any[],now:number):CustomerOrderD
   });
 }
 
-function LiveOrders({orders,topSpace,orderNow}:{orders:any[];topSpace:number;orderNow:number}) {
-  const [expandedOrders,setExpandedOrders]=useState<Set<string>>(()=>new Set());
-  const [expandedPrep,setExpandedPrep]=useState<Set<string>>(()=>new Set());
+function LiveOrders({orders,topSpace,orderNow,scrollOffset,onOpenOrder}:{
+  orders:CustomerOrder[];topSpace:number;orderNow:number;scrollOffset:{current:number};onOpenOrder:(id:string)=>void;
+}) {
+  const scrollView=useRef<ScrollView>(null);
+  const initialPosition=useRef({x:0,y:scrollOffset.current}).current;
+  useEffect(()=>{
+    if(Platform.OS!=='web'||!initialPosition.y)return;
+    const frame=requestAnimationFrame(()=>scrollView.current?.scrollTo({...initialPosition,animated:false}));
+    return()=>cancelAnimationFrame(frame);
+  },[initialPosition]);
   const upcomingOrders=useMemo(()=>orders.filter(order=>isUpcomingCustomerOrder(order,orderNow)),[orders,orderNow]);
   const historyOrders=useMemo(()=>orders.filter(order=>!isUpcomingCustomerOrder(order,orderNow)),[orders,orderNow]);
   const upcomingGroups=useMemo(()=>groupCustomerOrdersByPickupDate(upcomingOrders,orderNow),[upcomingOrders,orderNow]);
@@ -1274,62 +1327,29 @@ function LiveOrders({orders,topSpace,orderNow}:{orders:any[];topSpace:number;ord
     }).format(new Date(group.stamp));
   };
 
-  const toggleOrder=(orderId:string)=>setExpandedOrders(current=>{
-    const next=new Set(current);
-    if(next.has(orderId))next.delete(orderId);else next.add(orderId);
-    return next;
-  });
-  const togglePrep=(key:string)=>setExpandedPrep(current=>{
-    const next=new Set(current);
-    if(next.has(key))next.delete(key);else next.add(key);
-    return next;
-  });
-
   const renderGroups=(groups:CustomerOrderDateGroup[])=>groups.map(group=><View key={group.key}>
     <Text accessibilityRole="header" style={{fontSize:18,lineHeight:23,fontWeight:'500',color:ink,marginTop:8,marginBottom:10}}>{groupLabel(group)}</Text>
     {group.orders.map(order=>{
-      const rest=Array.isArray(order.restaurants)?order.restaurants[0]:order.restaurants;
-      const items=order.order_items||[];
-      const timezone=safeOrderTimezone(order.restaurant_timezone);
-      const pickup=new Intl.DateTimeFormat('en-US',{timeZone:timezone,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(order.pickup_starts_at));
-      const expanded=expandedOrders.has(order.id);
-      return <View key={order.id} style={s.orderHistoryCard}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`${rest?.name||'Cena kitchen'}, ${pickup}, ${customerOrderStatus(order)}, ${dollars((order.total_cents??order.subtotal_cents)/100)}`}
-          accessibilityState={{expanded}} aria-expanded={expanded} onPress={()=>toggleOrder(order.id)} style={[s.historyHead,{minHeight:48}]}>
+      const name=orderRestaurant(order)?.name||'Cena kitchen';
+      const pickup=orderPickupLabel(order);
+      const status=customerOrderStatus(order);
+      const total=dollars((order.total_cents??order.subtotal_cents)/100);
+      return <Pressable key={order.id} nativeID={`customer-order-${order.id}`} testID="customer-order-card"
+        accessibilityRole="button" accessibilityLabel={`${name}, ${pickup}, ${status}, ${total}`}
+        accessibilityHint="Opens preparation instructions and pickup details" onPress={()=>onOpenOrder(order.id)} style={s.orderHistoryCard}>
+        <View style={[s.historyHead,{minHeight:48}]}>
           <View style={[s.historyIcon,{width:34,height:34,borderRadius:10}]}><PackageCheck size={19} color={green}/></View>
-          <View style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={s.historyName}>{rest?.name||'Cena kitchen'}</Text><Text numberOfLines={1} style={s.historyDate}>{pickup} · {order.pickup_mode==='curbside'?'Curbside':'Pickup'}</Text></View>
-          <View style={{alignItems:'flex-end',gap:3}}><Text style={s.historyPrice}>{dollars((order.total_cents??order.subtotal_cents)/100)}</Text><Text style={[s.statusText,order.payment_status==='refunded'&&{color:'#A1382C'}]}>{customerOrderStatus(order)}</Text></View>
-          <ChevronRight size={17} color={muted} style={{transform:[{rotate:expanded?'90deg':'0deg'}]}} aria-hidden/>
-        </Pressable>
-        {expanded&&<View style={{borderTopWidth:1,borderTopColor:line,marginTop:10,paddingTop:9}}>
-          <Text style={{fontSize:12,color:muted,marginBottom:7}}>{pickup} · {order.pickup_mode==='curbside'?'Curbside pickup':'Counter pickup'}{rest?.address?` · ${rest.address}`:''}</Text>
-          {items.map((item:any,index:number)=>{
-            const optionCombos=recentOrderOptionCombos(item.options_snapshot,item.quantity);
-            const steps=Array.isArray(item.prep_steps_snapshot)?item.prep_steps_snapshot:[];
-            const prepKey=`${order.id}:${item.item_id}:${index}`;
-            const prepExpanded=expandedPrep.has(prepKey);
-            return <View key={`${item.item_id}-${index}`} style={{paddingVertical:7,borderBottomWidth:index<items.length-1?1:0,borderBottomColor:line}}>
-              <Text style={s.historyDish}>{item.quantity}× {item.name_snapshot}</Text>
-              {optionCombos.filter(combo=>combo.label).map((combo,comboIndex)=><Text key={`${item.item_id}-option-${comboIndex}`} style={s.historyPrefs}>{combo.quantity}× {combo.label}</Text>)}
-              {steps.length>0&&<View>
-                <Pressable accessibilityRole="button" accessibilityLabel={`${prepExpanded?'Hide':'Show'} preparation instructions for ${item.name_snapshot}`}
-                  accessibilityState={{expanded:prepExpanded}} aria-expanded={prepExpanded} onPress={()=>togglePrep(prepKey)} style={{minHeight:44,flexDirection:'row',alignItems:'center',gap:5}}>
-                  <ChevronRight size={15} color={maroon} style={{transform:[{rotate:prepExpanded?'90deg':'0deg'}]}} aria-hidden/>
-                  <Text style={{fontSize:13,color:maroon,fontWeight:'500'}}>Preparation instructions</Text>
-                  <Text style={{fontSize:12,color:muted}}>({steps.length})</Text>
-                </Pressable>
-                {prepExpanded&&steps.map((step:string,stepIndex:number)=><Text key={`${prepKey}-prep-${stepIndex}`} style={[s.historyPrefs,{marginLeft:20,lineHeight:19}]}>• {step}</Text>)}
-              </View>}
-            </View>;
-          })}
-          {order.discount_cents>0&&<Text style={[s.historyPrefs,{color:green,marginTop:9}]}>{order.promo_code_snapshot?order.promo_code_snapshot+' · ':''}You saved {dollars(order.discount_cents/100)}</Text>}
-          <Text style={[s.statusCode,{marginTop:8,marginLeft:0}]}>Order {order.id.slice(0,8).toUpperCase()}</Text>
-        </View>}
-      </View>;
+          <View style={{flex:1,minWidth:0}}><Text numberOfLines={1} style={s.historyName}>{name}</Text><Text numberOfLines={1} style={s.historyDate}>{pickup} · {order.pickup_mode==='curbside'?'Curbside':'Pickup'}</Text></View>
+          <View style={{alignItems:'flex-end',gap:3}}><Text style={s.historyPrice}>{total}</Text><Text style={[s.statusText,order.payment_status==='refunded'&&{color:'#A1382C'}]}>{status}</Text></View>
+          <ChevronRight size={17} color={muted} aria-hidden/>
+        </View>
+      </Pressable>;
     })}
   </View>);
 
-  return <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingHorizontal:22,paddingTop:topSpace+20,paddingBottom:120}}>
+  return <ScrollView ref={scrollView} contentOffset={initialPosition} showsVerticalScrollIndicator={false} scrollEventThrottle={32}
+    onScroll={event=>{scrollOffset.current=Math.max(0,event.nativeEvent.contentOffset.y);}}
+    contentContainerStyle={{paddingHorizontal:22,paddingTop:topSpace+20,paddingBottom:120}}>
     <Text style={s.pageTitle}>Orders</Text>
     {orders.length===0?<View style={s.profileHero}><View style={s.historyIcon}><PackageCheck size={21} color={green}/></View><View style={{flex:1}}><Text style={s.historyName}>No orders yet</Text><Text style={s.historyDate}>Your pickup orders and prep instructions will show here.</Text></View></View>
       :<>

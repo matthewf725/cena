@@ -227,10 +227,10 @@ export function DiscoveryFeed({ width, side, radius, query, reduced, origin, rec
   );
   const content = (
     <>
-      {!resultsMode && promoItems.length > 0 && <>
+      {!resultsMode && promoItems.length > 0 && <View style={styles.promotions}>
         <FeaturedCarousel items={promoItems} width={Math.max(1,width-side*2)} radius={radius} reduced={reduced} suspended={suspended} open={open} offset={0} lastAdvance={lastPromoAdvance}/>
         <FeaturedCarousel items={promoItems.length > 1 ? [...promoItems.slice(1),promoItems[0]] : promoItems} width={Math.max(1,width-side*2)} radius={radius} reduced={reduced} suspended={suspended} open={open} offset={1} lastAdvance={lastPromoAdvance}/>
-      </>}
+      </View>}
       {filterControls}
       {resultsMode ? filteredContent : page && (
         <>
@@ -371,6 +371,7 @@ const styles = StyleSheet.create({
   emptyResults: { paddingVertical: 18, marginBottom: 12 },
   moreButton: { minHeight: 44, borderRadius: 10, borderWidth: 1, borderColor: '#D9C2B9', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 20 },
   moreText: { color: maroon, fontSize: 14, fontWeight: '600' },
+  promotions: { paddingTop: 12 },
   promoSection: { marginBottom: 14 },
   promoTrack: { gap: 10 },
   featuredPromo: { minHeight: 108, height: 108, overflow: 'hidden', flexDirection: 'row', backgroundColor: maroon },
