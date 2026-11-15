@@ -7,18 +7,17 @@ import { Text, TextInput } from './type';
 export const searchGap = 12;
 export const homeContentMaxWidth = 760;
 export const headerContentGap = 12;
+export const headerTint = '#FFE1D5';
 
 const maroon = '#46110E';
 const muted = '#77645B';
 const controlSize = 44;
-const headerTint = '#FFE1D5';
-
-export function PageHeader({ children, identityHeight, topInset, overlay = false, clipFadeAtContent = false }: {
+export function PageHeader({ children, identityHeight, topInset, overlay = false, solid = false }: {
   children: ReactNode;
   identityHeight: number;
   topInset: number;
   overlay?: boolean;
-  clipFadeAtContent?: boolean;
+  solid?: boolean;
 }) {
   const tintId = useId();
   const barHeight = identityHeight + topInset;
@@ -27,9 +26,10 @@ export function PageHeader({ children, identityHeight, topInset, overlay = false
     overlay ? s.headerOverlay : { minHeight: identityHeight + headerContentGap },
   ]}>
     <View pointerEvents="none" aria-hidden style={[s.surface, {
-      top: -topInset, height: clipFadeAtContent ? barHeight + headerContentGap : fadeHeight,
+      top: -topInset, height: solid ? barHeight + headerContentGap : fadeHeight,
+      backgroundColor: solid ? headerTint : undefined,
     }]}>
-      <Svg width="100%" height={fadeHeight} style={s.gradient}>
+      {!solid && <Svg width="100%" height="100%">
         <Defs>
           <LinearGradient id={tintId} x1="0%" y1="0%" x2="0%" y2="100%">
             <Stop offset={0} stopColor={headerTint} />
@@ -39,7 +39,7 @@ export function PageHeader({ children, identityHeight, topInset, overlay = false
           </LinearGradient>
         </Defs>
         <Rect width="100%" height="100%" fill={`url(#${tintId})`} />
-      </Svg>
+      </Svg>}
     </View>
     {children}
   </View>;
@@ -215,8 +215,7 @@ export function HomeSearch({ query, setQuery, bottom, radius, side, height, redu
 const s = StyleSheet.create({
   header: { zIndex: 1, overflow: 'visible' },
   headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0 },
-  surface: { position: 'absolute', left: 0, right: 0, overflow: 'hidden' },
-  gradient: { flexShrink: 0 },
+  surface: { position: 'absolute', left: 0, right: 0 },
   wordmark: { marginRight: 'auto' },
   pressTarget: { flexShrink: 0 },
   control: { backgroundColor: '#FFFFFF', borderRadius: controlSize / 2, minWidth: controlSize, height: controlSize, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
